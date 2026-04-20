@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# 环境变量（含 API Key）
+.env
+
+# 本地数据与缓存
+local_data/
+dataflows/data_cache/
+
+# 分析结果
+results/
+
+# OS
+Thumbs.db
+.DS_Store

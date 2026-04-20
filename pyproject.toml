@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "index-fund-advisor"
+version = "0.1.0"
+description = "IFA: AI-Powered Index Fund Analysis and Portfolio Advisory"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # 数据
+    "akshare>=1.18.49",
+    "pandas>=2.3.0",
+    "stockstats>=0.6.5",
+    "requests>=2.32.4",
+    "pytz>=2025.2",
+    # LLM
+    "langchain-core>=0.3.81",
+    "langchain-openai>=0.3.23",
+    "langchain-anthropic>=0.3.15",
+    "langchain-google-genai>=2.1.5",
+    "langgraph>=0.4.8",
+    # Agent
+    "rank-bm25>=0.2.2",
+    # CLI
+    "typer>=0.21.0",
+    "rich>=14.0.0",
+    "questionary>=2.1.0",
+    # API
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    # Web
+    "streamlit>=1.45",
+    "plotly>=6.0",
+    # 类型
+    "typing-extensions>=4.14.0",
+]
+
+[project.scripts]
+ifa = "cli.main:app"
+ifa-web = "streamlit:main"
+ifa-api = "uvicorn api.main:app --host 0.0.0.0 --port 8000"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.11",
+    "mypy>=1.15",
+    "pre-commit>=4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ifa*", "api*", "web*", "cli*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501", "F403", "F405", "E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ifa", "api", "cli", "web"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

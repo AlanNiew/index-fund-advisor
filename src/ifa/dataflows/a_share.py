@@ -1,0 +1,192 @@
+"""
+A 股数据获取基础设施层。
+
+提供 AkShare 接口调用的通用工具：代理绕过、自动重试、进度条抑制、
+表格格式化、数值四舍五入、异常文本化等。具体的 ETF/指数基金、场外基金
+数据获取函数分别在 a_share_index_fund.py 和 a_share_public_fund.py 中。
+"""
+from __future__ import annotations
+
+import sys
+import time
+from contextlib import contextmanager
+from http.client import RemoteDisconnected
+
+import akshare as ak
+import pandas as pd
+import requests
+from akshare.utils import tqdm as ak_tqdm
+
+from .a_share_common import no_proxy
+
+
+# ---------------------------------------------------------------------------
+#  通用工具函数（基础设施层）
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _temporary_string_storage(storage: str):
+    """
+    临时切换 pandas 字符串存储模式，并在退出后恢复原配置。
+
+    参数：
+        storage: 临时使用的字符串存储模式。
+
+    返回：
+        None: 无返回值。
+    """
+    original = pd.get_option("mode.string_storage")
+    pd.set_option("mode.string_storage", storage)
+    try:
+        yield
+    finally:
+        pd.set_option("mode.string_storage", original)
+
+
+@contextmanager
+def _suppress_akshare_progress():
+    """
+    临时关闭 AkShare 内部 tqdm 进度条输出。
+
+    返回：
+        None: 无返回值。
+    """
+    replacements = {}
+
+    def silent_get_tqdm(enable=True):
+        return lambda iterable, *args, **kwargs: iterable
+
+    replacements[(ak_tqdm, "get_tqdm")] = ak_tqdm.get_tqdm
+    ak_tqdm.get_tqdm = silent_get_tqdm
+
+    for module in list(sys.modules.values()):
+        module_name = getattr(module, "__name__", "")
+        if not module_name.startswith("akshare."):
+            continue
+        if hasattr(module, "get_tqdm"):
+            replacements[(module, "get_tqdm")] = module.get_tqdm
+            module.get_tqdm = silent_get_tqdm
+    try:
+        yield
+    finally:
+        for (module, attr), original in replacements.items():
+            setattr(module, attr, original)
+
+
+def _format_table(df: pd.DataFrame, title: str, rows: int = 10) -> str:
+    """
+    格式化表格输出。
+
+    参数：
+        df: 需要格式化、筛选或转换的数据表。
+        title: 表格标题。
+        rows: 格式化输出中保留的最大行数。
+
+    返回：
+        str: 格式化后的字符串结果。
+    """
+    if df.empty:
+        return f"{title}\n\n暂无数据。"
+    return f"{title}\n\n{df.head(rows).to_csv(index=False)}"
+
+
+def _round_numeric_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    对数值型数据表执行四舍五入。
+
+    参数：
+        df: 需要格式化、筛选或转换的数据表。
+
+    返回：
+        pd.DataFrame: 处理后的数据表。
+    """
+    rounded = df.copy()
+    for column in rounded.columns:
+        if pd.api.types.is_numeric_dtype(rounded[column]):
+            rounded[column] = rounded[column].round(4)
+    return rounded
+
+
+def _safe_truncate(text: str, limit: int = 160) -> str:
+    """
+    安全截断文本。
+
+    参数：
+        text: 需要截断或处理的输入文本。
+        limit: 结果中允许保留的最大长度。
+
+    返回：
+        str: 安全处理后的字符串结果。
+    """
+    clean = " ".join(str(text).split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3] + "..."
+
+
+def _is_retryable_akshare_error(exc: Exception) -> bool:
+    """
+    判断异常是否属于可重试的 AkShare 网络错误。
+
+    参数：
+        exc: 待判断的异常对象。
+
+    返回：
+        bool: 条件满足时返回 True，否则返回 False。
+    """
+    if isinstance(exc, (requests.exceptions.RequestException, RemoteDisconnected, TimeoutError)):
+        return True
+
+    message = str(exc)
+    retryable_markers = (
+        "Remote end closed connection without response",
+        "Connection aborted",
+        "Read timed out",
+        "ConnectTimeout",
+        "Max retries exceeded",
+        "temporarily unavailable",
+    )
+    return any(marker in message for marker in retryable_markers)
+
+
+def _call_akshare_api(func, *args, retries: int = 3, retry_delay: float = 1.0, **kwargs):
+    """
+    调用 AkShare 接口，并对网络抖动执行有限次重试。
+    请求期间临时绕过系统代理，避免代理不通导致失败。
+
+    参数：
+        func: 需要执行的 AkShare 函数。
+        args: 传给 AkShare 函数的位置参数。
+        retries: 最大重试次数。
+        retry_delay: 首次重试前的等待秒数，后续按次数递增。
+        kwargs: 传给 AkShare 函数的关键字参数。
+
+    返回：
+        Any: AkShare 原始返回结果。
+    """
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            with no_proxy():
+                return func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt >= retries or not _is_retryable_akshare_error(exc):
+                raise
+            time.sleep(retry_delay * attempt)
+    raise last_exc
+
+
+def _format_data_error(title: str, exc: Exception) -> str:
+    """
+    将外部数据源异常转换为可读文本，避免工具节点直接崩溃。
+
+    参数：
+        title: 当前数据块标题。
+        exc: 原始异常对象。
+
+    返回：
+        str: 适合直接返回给上层代理的错误说明。
+    """
+    return f"{title}\n\n数据源访问失败：{type(exc).__name__}: {_safe_truncate(str(exc), 220)}"

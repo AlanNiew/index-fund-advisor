@@ -45,6 +45,8 @@ Your goal is to deliver detailed insights into fund recommendations and highligh
 
     def _reflect_on_component(self, component_type: str, report: str, situation: str, returns_losses) -> str:
         """生成单个组件的反思。"""
+        from ifa.agents.utils import invoke_llm_safely
+
         messages = [
             ("system", self.reflection_system_prompt),
             (
@@ -52,33 +54,49 @@ Your goal is to deliver detailed insights into fund recommendations and highligh
                 f"Actual Returns: {returns_losses}\n\nAnalysis/Decision: {report}\n\nFund Analysis Context: {situation}",
             ),
         ]
-        result = self.quick_thinking_llm.invoke(messages).content
-        return result
+        result = invoke_llm_safely(self.quick_thinking_llm, messages)
+        return result.content if hasattr(result, "content") else str(result)
 
     def reflect_bull_researcher(self, current_state, returns_losses, bull_memory):
         """反思看涨研究员的分析并更新记忆。"""
         situation = self._extract_current_situation(current_state)
-        bull_history = current_state["fund_debate_state"]["bull_history"]
+        bull_history = self._safe_get_debate(current_state, "fund_debate_state", "bull_history")
+        if not bull_history:
+            return
         result = self._reflect_on_component("BULL", bull_history, situation, returns_losses)
         bull_memory.add_situations([(situation, result)])
 
     def reflect_bear_researcher(self, current_state, returns_losses, bear_memory):
         """反思看跌研究员的分析并更新记忆。"""
         situation = self._extract_current_situation(current_state)
-        bear_history = current_state["fund_debate_state"]["bear_history"]
+        bear_history = self._safe_get_debate(current_state, "fund_debate_state", "bear_history")
+        if not bear_history:
+            return
         result = self._reflect_on_component("BEAR", bear_history, situation, returns_losses)
         bear_memory.add_situations([(situation, result)])
 
     def reflect_research_manager(self, current_state, returns_losses, manager_memory):
         """反思研究经理的裁决并更新记忆。"""
         situation = self._extract_current_situation(current_state)
-        judge_decision = current_state["fund_debate_state"]["judge_decision"]
+        judge_decision = self._safe_get_debate(current_state, "fund_debate_state", "judge_decision")
+        if not judge_decision:
+            return
         result = self._reflect_on_component("RESEARCH MANAGER", judge_decision, situation, returns_losses)
         manager_memory.add_situations([(situation, result)])
 
     def reflect_portfolio_manager(self, current_state, returns_losses, pm_memory):
         """反思投资组合经理的最终决策并更新记忆。"""
         situation = self._extract_current_situation(current_state)
-        judge_decision = current_state["risk_debate_state"]["judge_decision"]
+        judge_decision = self._safe_get_debate(current_state, "risk_debate_state", "judge_decision")
+        if not judge_decision:
+            return
         result = self._reflect_on_component("PORTFOLIO MANAGER", judge_decision, situation, returns_losses)
         pm_memory.add_situations([(situation, result)])
+
+    @staticmethod
+    def _safe_get_debate(state: dict, debate_key: str, field: str, default=""):
+        """安全访问嵌套的辩论状态。"""
+        debate = state.get(debate_key, {})
+        if not isinstance(debate, dict):
+            return default
+        return debate.get(field, default)

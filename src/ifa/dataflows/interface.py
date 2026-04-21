@@ -35,7 +35,11 @@ from .a_share_public_fund import (
     get_money_fund_daily as get_akshare_money_fund_daily,
     get_open_fund_rank as get_akshare_open_fund_rank,
 )
+import logging
+
 from .config import get_config
+
+logger = logging.getLogger(__name__)
 
 TOOLS_CATEGORIES = {
     "etf_index_apis": {
@@ -220,6 +224,7 @@ def route_to_vendor(method: str, *args, **kwargs):
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
+    last_error = None
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
@@ -227,6 +232,17 @@ def route_to_vendor(method: str, *args, **kwargs):
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
-        return impl_func(*args, **kwargs)
+        try:
+            return impl_func(*args, **kwargs)
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "供应商 '%s' 执行 '%s' 失败: %s%s",
+                vendor,
+                method,
+                e,
+                "，尝试下一个供应商" if vendor != fallback_vendors[-1] else "",
+            )
+            continue
 
-    raise RuntimeError(f"No available vendor for '{method}'")
+    raise RuntimeError(f"No available vendor for '{method}'") from last_error

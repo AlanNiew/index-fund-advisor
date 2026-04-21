@@ -162,7 +162,6 @@ class AdvisorGraph:
         bear_researcher = create_bear_researcher(self.quick_llm, self.bear_memory)
         research_manager = create_research_manager(self.deep_llm, self.research_manager_memory)
 
-        workflow = StateGraph(type("IFAdvisorState", (), {"__annotations__": {}}))
         from ifa.agents.types import IFAdvisorState
 
         workflow = StateGraph(IFAdvisorState)
@@ -458,22 +457,58 @@ class AdvisorGraph:
     # ════════════════════════════════════════════
 
     def run(self, mode: str, state: dict) -> dict:
-        """执行分析图并返回最终状态。"""
+        """执行分析图并返回最终状态。
+
+        顶层异常保护：即使图执行失败，也尝试保存已有日志并返回错误信息。
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         fund_codes = state.get("fund_codes", "")
         first_code = fund_codes.split(",")[0].strip() if fund_codes else ""
         if first_code:
-            asset_type = detect_asset_type(first_code)
-            state["asset_type"] = asset_type.value
+            try:
+                asset_type = detect_asset_type(first_code)
+                state["asset_type"] = asset_type.value
+            except Exception as e:
+                logger.warning("资产类型检测失败 (%s): %s，继续执行", first_code, e)
 
         graph = self.build_graph(mode)
         args = self.propagator.get_graph_args(self.callbacks)
 
-        final_state = graph.invoke(state, **args)
+        try:
+            final_state = graph.invoke(state, **args)
+        except Exception as e:
+            logger.error("图执行失败: %s", e)
+            # 即使失败也尝试保存已有状态
+            partial_state = {**state, "error": str(e)}
+            self.curr_state = partial_state
+            try:
+                self._log_state(partial_state)
+            except Exception:
+                logger.error("日志保存也失败，放弃")
+            return partial_state
 
         self.curr_state = final_state
-        self._log_state(final_state)
+        try:
+            self._log_state(final_state)
+        except Exception as e:
+            logger.warning("日志保存失败: %s（不影响分析结果）", e)
 
         return final_state
+
+    @staticmethod
+    def _safe_get_nested(state: dict, *keys, default=""):
+        """安全访问嵌套字典，任一层缺失返回 default。"""
+        current = state
+        for key in keys:
+            if not isinstance(current, dict):
+                return default
+            current = current.get(key, default)
+            if current is default:
+                return default
+        return current
 
     def _log_state(self, final_state: dict):
         """将完整状态保存为结构化 JSON 日志。"""
@@ -481,6 +516,8 @@ class AdvisorGraph:
         fund_codes = final_state.get("fund_codes", "unknown").replace(",", "_").strip()
         analysis_date = final_state.get("analysis_date", "unknown")
         mode = final_state.get("mode", "unknown")
+
+        g = self._safe_get_nested
 
         log_entry = {
             "fund_codes": final_state.get("fund_codes", ""),
@@ -491,21 +528,22 @@ class AdvisorGraph:
             "index_analysis_report": final_state.get("index_analysis_report", ""),
             "portfolio_advice": final_state.get("portfolio_advice", ""),
             "fund_debate_state": {
-                "bull_history": final_state["fund_debate_state"]["bull_history"],
-                "bear_history": final_state["fund_debate_state"]["bear_history"],
-                "history": final_state["fund_debate_state"]["history"],
-                "judge_decision": final_state["fund_debate_state"]["judge_decision"],
-                "count": final_state["fund_debate_state"]["count"],
+                "bull_history": g(final_state, "fund_debate_state", "bull_history"),
+                "bear_history": g(final_state, "fund_debate_state", "bear_history"),
+                "history": g(final_state, "fund_debate_state", "history"),
+                "judge_decision": g(final_state, "fund_debate_state", "judge_decision"),
+                "count": g(final_state, "fund_debate_state", "count", default=0),
             },
             "risk_debate_state": {
-                "aggressive_history": final_state["risk_debate_state"]["aggressive_history"],
-                "conservative_history": final_state["risk_debate_state"]["conservative_history"],
-                "neutral_history": final_state["risk_debate_state"]["neutral_history"],
-                "history": final_state["risk_debate_state"]["history"],
-                "judge_decision": final_state["risk_debate_state"]["judge_decision"],
-                "count": final_state["risk_debate_state"]["count"],
+                "aggressive_history": g(final_state, "risk_debate_state", "aggressive_history"),
+                "conservative_history": g(final_state, "risk_debate_state", "conservative_history"),
+                "neutral_history": g(final_state, "risk_debate_state", "neutral_history"),
+                "history": g(final_state, "risk_debate_state", "history"),
+                "judge_decision": g(final_state, "risk_debate_state", "judge_decision"),
+                "count": g(final_state, "risk_debate_state", "count", default=0),
             },
             "final_report": final_state.get("final_report", ""),
+            "error": final_state.get("error", ""),
         }
 
         directory = Path(results_dir) / fund_codes / "ifa_logs"

@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from typing import Any
@@ -6,9 +7,14 @@ from ifa.data_tools.registry import DataToolRegistry
 from ifa.data_tools.storage import LocalArtifactStore
 from ifa.data_tools.types import ToolExecutionResult
 
+logger = logging.getLogger(__name__)
+
 
 class CachedDataToolExecutor:
-    """提供带缓存与快照能力的数据工具执行器。"""
+    """提供带缓存与快照能力的数据工具执行器。
+
+    缓存操作（读取/写入/快照）均有异常隔离，磁盘故障不会阻塞正常工具执行。
+    """
 
     def __init__(self, registry: DataToolRegistry, artifact_store: LocalArtifactStore):
         self.registry = registry
@@ -31,14 +37,19 @@ class CachedDataToolExecutor:
             "description": definition.description,
         }
 
-        # 尝试读取缓存
+        # 尝试读取缓存（异常时降级为直接执行）
         if use_cache and definition.cache_enabled:
-            cached = self._try_read_cache(tool_name, params, max_age_seconds, metadata, persist_snapshot)
-            if cached:
-                return cached
+            try:
+                cached = self._try_read_cache(tool_name, params, max_age_seconds, metadata, persist_snapshot)
+                if cached:
+                    return cached
+            except Exception as e:
+                logger.warning("缓存读取失败，降级为直接执行 (%s): %s", tool_name, e)
 
-        # 执行工具并保存结果
+        # 执行工具
         value = definition.handler(**params)
+
+        # 保存结果（异常时不影响返回值）
         return self._store_result(tool_name, params, value, definition, metadata, persist_snapshot, snapshot_group, snapshot_date)
 
     def _try_read_cache(
@@ -91,9 +102,12 @@ class CachedDataToolExecutor:
 
         artifact_path = None
         if definition.cache_enabled:
-            artifact_path = str(
-                self.artifact_store.save_cache(tool_name, params, value, metadata=metadata)
-            )
+            try:
+                artifact_path = str(
+                    self.artifact_store.save_cache(tool_name, params, value, metadata=metadata)
+                )
+            except Exception as e:
+                logger.warning("缓存写入失败 (%s): %s", tool_name, e)
 
         snapshot_path = self._save_snapshot_if_needed(tool_name, params, value, persist_snapshot, metadata,
                                                       snapshot_group, snapshot_date)
@@ -119,14 +133,18 @@ class CachedDataToolExecutor:
         snapshot_group: str = "daily",
         snapshot_date: str | None = None,
     ) -> str | None:
-        """按需保存快照，返回快照路径或 None。"""
+        """按需保存快照，返回快照路径或 None。快照失败不影响工具执行。"""
         if not persist_snapshot:
             return None
-        return str(
-            self.artifact_store.save_snapshot(
-                tool_name, params, value,
-                snapshot_group=snapshot_group,
-                snapshot_date=snapshot_date,
-                metadata=metadata,
+        try:
+            return str(
+                self.artifact_store.save_snapshot(
+                    tool_name, params, value,
+                    snapshot_group=snapshot_group,
+                    snapshot_date=snapshot_date,
+                    metadata=metadata,
+                )
             )
-        )
+        except Exception as e:
+            logger.warning("快照保存失败 (%s): %s", tool_name, e)
+            return None

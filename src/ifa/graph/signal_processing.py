@@ -19,6 +19,8 @@ class SignalProcessor:
         返回:
             标准化评级: STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL
         """
+        from ifa.agents.utils import invoke_llm_safely
+
         messages = [
             (
                 "system",
@@ -28,10 +30,14 @@ class SignalProcessor:
             ),
             ("human", full_signal),
         ]
-        return self.quick_thinking_llm.invoke(messages).content
+        result = invoke_llm_safely(self.quick_thinking_llm, messages)
+        content = result.content if hasattr(result, "content") else str(result)
+        return content.strip()
 
     def process_confidence(self, full_signal: str) -> str:
         """从决策文本中提取置信度。"""
+        from ifa.agents.utils import invoke_llm_safely
+
         messages = [
             (
                 "system",
@@ -41,4 +47,6 @@ class SignalProcessor:
             ),
             ("human", full_signal),
         ]
-        return self.quick_thinking_llm.invoke(messages).content
+        result = invoke_llm_safely(self.quick_thinking_llm, messages)
+        content = result.content if hasattr(result, "content") else str(result)
+        return content.strip()

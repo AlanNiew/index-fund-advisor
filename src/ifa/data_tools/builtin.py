@@ -146,219 +146,55 @@ def get_lof_spot_data_tool():
     return route_to_vendor("get_lof_spot_data")
 
 
+# ── 声明式工具注册表（name, handler, description） ──
+_TOOL_SPECS: list[tuple[str, callable, str]] = [
+    # ETF / 指数 / 场外基金
+    ("get_etf_data", get_etf_data_tool, "ETF 基金日线行情工具"),
+    ("get_index_data", get_index_data_tool, "A 股指数日线行情工具"),
+    ("get_etf_fund_info", get_etf_fund_info_tool, "ETF 基金基本信息工具"),
+    ("get_index_constituents", get_index_constituents_tool, "指数成分股工具"),
+    ("get_fund_nav", get_fund_nav_tool, "场外基金净值工具"),
+    # 公募基金
+    ("get_fund_list", get_fund_list_tool, "公募基金列表查询工具"),
+    ("get_fund_basic_info", get_fund_basic_info_tool, "公募基金基本信息工具"),
+    ("get_open_fund_rank", get_open_fund_rank_tool, "开放式基金排行工具"),
+    ("get_fund_stock_holdings", get_fund_stock_holdings_tool, "基金股票持仓工具"),
+    ("get_fund_bond_holdings", get_fund_bond_holdings_tool, "基金债券持仓工具"),
+    ("get_fund_industry_allocation", get_fund_industry_allocation_tool, "基金行业配置工具"),
+    ("get_fund_risk_analysis", get_fund_risk_analysis_tool, "基金风险分析工具"),
+    ("get_fund_achievement", get_fund_achievement_tool, "基金业绩工具"),
+    ("get_etf_spot_data", get_etf_spot_data_tool, "ETF 实时行情工具"),
+    ("get_fund_history_nav", get_fund_history_nav_tool, "基金历史净值工具"),
+    # 公募基金（增强）
+    ("get_fund_value_estimation", get_fund_value_estimation_tool, "基金净值估算工具"),
+    ("get_fund_dividend", get_fund_dividend_tool, "基金分红数据工具"),
+    ("get_fund_purchase_status", get_fund_purchase_status_tool, "基金申购状态工具"),
+    ("get_fund_fee", get_fund_fee_tool, "基金交易费率工具"),
+    ("get_index_fund_filter", get_index_fund_filter_tool, "指数型基金筛选工具"),
+    # 公募基金（补充）
+    ("get_money_fund_daily", get_money_fund_daily_tool, "货币基金实时数据工具"),
+    ("get_fund_profit_probability", get_fund_profit_probability_tool, "基金盈利概率工具"),
+    ("get_fund_asset_allocation", get_fund_asset_allocation_tool, "基金资产配置比例工具"),
+    ("get_etf_intraday", get_etf_intraday_tool, "ETF 分时行情工具"),
+    ("get_lof_spot_data", get_lof_spot_data_tool, "LOF 实时行情工具"),
+]
+
+
 def create_default_data_tool_registry() -> DataToolRegistry:
     """
     创建带有默认 A 股数据工具的注册表。
-
-    参数：
-        无。
 
     返回：
         DataToolRegistry: 初始化完成的工具注册表。
     """
     registry = DataToolRegistry()
-    # ── ETF / 指数 / 场外基金 ──
-    registry.register(
-        DataToolDefinition(
-            name="get_etf_data",
-            handler=get_etf_data_tool,
-            description="ETF 基金日线行情工具",
-            namespace="a_share",
+    for name, handler, description in _TOOL_SPECS:
+        registry.register(
+            DataToolDefinition(
+                name=name,
+                handler=handler,
+                description=description,
+                namespace="a_share",
+            )
         )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_index_data",
-            handler=get_index_data_tool,
-            description="A 股指数日线行情工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_etf_fund_info",
-            handler=get_etf_fund_info_tool,
-            description="ETF 基金基本信息工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_index_constituents",
-            handler=get_index_constituents_tool,
-            description="指数成分股工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_nav",
-            handler=get_fund_nav_tool,
-            description="场外基金净值工具",
-            namespace="a_share",
-        )
-    )
-    # ── 公募基金 ──
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_list",
-            handler=get_fund_list_tool,
-            description="公募基金列表查询工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_basic_info",
-            handler=get_fund_basic_info_tool,
-            description="公募基金基本信息工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_open_fund_rank",
-            handler=get_open_fund_rank_tool,
-            description="开放式基金排行工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_stock_holdings",
-            handler=get_fund_stock_holdings_tool,
-            description="基金股票持仓工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_bond_holdings",
-            handler=get_fund_bond_holdings_tool,
-            description="基金债券持仓工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_industry_allocation",
-            handler=get_fund_industry_allocation_tool,
-            description="基金行业配置工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_risk_analysis",
-            handler=get_fund_risk_analysis_tool,
-            description="基金风险分析工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_achievement",
-            handler=get_fund_achievement_tool,
-            description="基金业绩工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_etf_spot_data",
-            handler=get_etf_spot_data_tool,
-            description="ETF 实时行情工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_history_nav",
-            handler=get_fund_history_nav_tool,
-            description="基金历史净值工具",
-            namespace="a_share",
-        )
-    )
-    # ── 公募基金（增强） ──
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_value_estimation",
-            handler=get_fund_value_estimation_tool,
-            description="基金净值估算工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_dividend",
-            handler=get_fund_dividend_tool,
-            description="基金分红数据工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_purchase_status",
-            handler=get_fund_purchase_status_tool,
-            description="基金申购状态工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_fee",
-            handler=get_fund_fee_tool,
-            description="基金交易费率工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_index_fund_filter",
-            handler=get_index_fund_filter_tool,
-            description="指数型基金筛选工具",
-            namespace="a_share",
-        )
-    )
-    # ── 公募基金（补充） ──
-    registry.register(
-        DataToolDefinition(
-            name="get_money_fund_daily",
-            handler=get_money_fund_daily_tool,
-            description="货币基金实时数据工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_profit_probability",
-            handler=get_fund_profit_probability_tool,
-            description="基金盈利概率工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_fund_asset_allocation",
-            handler=get_fund_asset_allocation_tool,
-            description="基金资产配置比例工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_etf_intraday",
-            handler=get_etf_intraday_tool,
-            description="ETF 分时行情工具",
-            namespace="a_share",
-        )
-    )
-    registry.register(
-        DataToolDefinition(
-            name="get_lof_spot_data",
-            handler=get_lof_spot_data_tool,
-            description="LOF 实时行情工具",
-            namespace="a_share",
-        )
-    )
     return registry

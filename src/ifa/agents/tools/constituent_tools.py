@@ -67,11 +67,7 @@ def get_constituent_overview(
 
     # 取前 10 大权重股
     top_n = 10
-    weight_col = None
-    for col_name in ("权重", "weight", "指数权重"):
-        if col_name in df.columns:
-            weight_col = col_name
-            break
+    weight_col = _find_column(df, "权重", "weight", "指数权重")
 
     if weight_col:
         df = df.sort_values(weight_col, ascending=False).head(top_n)
@@ -113,11 +109,7 @@ def get_constituent_sector_distribution(
     if df is None or df.empty:
         return f"未找到 {display} 的成分股行业分布数据。"
 
-    sector_col = None
-    for col_name in ("行业", "行业代码", "industry", "一级行业"):
-        if col_name in df.columns:
-            sector_col = col_name
-            break
+    sector_col = _find_column(df, "行业", "行业代码", "industry", "一级行业")
 
     if not sector_col:
         return f"成分股数据中未找到行业分类字段。可用列: {list(df.columns)}"
@@ -126,11 +118,7 @@ def get_constituent_sector_distribution(
     sector_counts.columns = ["行业", "成分股数量"]
     sector_counts["占比(%)"] = (sector_counts["成分股数量"] / sector_counts["成分股数量"].sum() * 100).round(2)
 
-    weight_col = None
-    for col_name in ("权重", "weight", "指数权重"):
-        if col_name in df.columns:
-            weight_col = col_name
-            break
+    weight_col = _find_column(df, "权重", "weight", "指数权重")
 
     if weight_col:
         df[weight_col] = df[weight_col].astype(float)
@@ -172,25 +160,12 @@ def get_constituent_performance(
     if df is None or df.empty:
         return f"未找到 {display} 的成分股数据。"
 
-    code_col = None
-    name_col = None
-    for col_name in ("成分券代码", "股票代码", "code"):
-        if col_name in df.columns:
-            code_col = col_name
-            break
-    for col_name in ("成分券名称", "股票名称", "name"):
-        if col_name in df.columns:
-            name_col = col_name
-            break
+    code_col = _find_column(df, "成分券代码", "股票代码", "code")
+    name_col = _find_column(df, "成分券名称", "股票名称", "name")
+    weight_col = _find_column(df, "权重", "weight", "指数权重")
 
     if not code_col:
         return f"成分股数据中未找到代码字段。可用列: {list(df.columns)}"
-
-    weight_col = None
-    for col_name in ("权重", "weight", "指数权重"):
-        if col_name in df.columns:
-            weight_col = col_name
-            break
 
     if weight_col:
         top_stocks = df.nlargest(10, weight_col)
@@ -215,6 +190,14 @@ def get_constituent_performance(
 
     header = f"# Top 10 Constituent Performance for {display} (Last {look_back_days} days)\n\n"
     return header + "\n\n".join(results)
+
+
+def _find_column(df, *candidates: str) -> str | None:
+    """在 DataFrame 列中按候选名称依次查找，返回第一个匹配的列名。"""
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
 
 
 def _get_today_str() -> str:

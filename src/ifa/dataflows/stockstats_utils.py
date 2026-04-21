@@ -252,66 +252,70 @@ def _fetch_ohlcv_by_asset_type(
     返回：
         pd.DataFrame: 原始 OHLCV 数据。
     """
-    if asset_type == AssetType.ETF:
-        # ETF 使用 fund_etf_hist_em 接口
-        with no_proxy():
-            return fetch_with_cache(
-                lambda: ak.fund_etf_hist_em(
-                    symbol=to_plain_symbol(symbol),
-                    period="daily",
-                    start_date=format_date_for_api(start_str),
-                    end_date=format_date_for_api(end_str),
-                    adjust="qfq",
-                ),
-                retries=3,
-                log_failure_as_exception=False,
-            )
+    fetcher = _OHLCV_FETCHERS.get(asset_type)
+    if fetcher:
+        return fetcher(symbol, start_str, end_str)
+    return _fetch_stock_ohlcv(symbol, start_str, end_str)
 
-    if asset_type == AssetType.INDEX:
-        # 指数使用 index_zh_a_hist 接口
-        with no_proxy():
-            return fetch_with_cache(
-                lambda: ak.index_zh_a_hist(
-                    symbol=to_plain_symbol(symbol),
-                    period="daily",
-                    start_date=format_date_for_api(start_str),
-                    end_date=format_date_for_api(end_str),
-                ),
-                retries=3,
-                log_failure_as_exception=False,
-            )
 
-    if asset_type == AssetType.OFFSHORE_FUND:
-        # 场外基金只有净值数据，使用 fund_open_fund_info_em 获取
-        # 将净值映射为伪 OHLCV（Open=High=Low=Close=净值，Volume=0）
-        # 这样技术指标（SMA/RSI/MACD）仍可基于"收盘净值"计算
-        plain = _safe_plain_code(symbol)
-        with no_proxy():
-            raw = fetch_with_cache(
-                lambda: ak.fund_open_fund_info_em(
-                    symbol=plain,
-                    indicator="单位净值走势",
-                ),
-                retries=3,
-                log_failure_as_exception=False,
-            )
-        if raw is None or raw.empty:
-            return pd.DataFrame()
+def _fetch_etf_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFrame:
+    """ETF 使用 fund_etf_hist_em 接口。"""
+    with no_proxy():
+        return fetch_with_cache(
+            lambda: ak.fund_etf_hist_em(
+                symbol=to_plain_symbol(symbol),
+                period="daily",
+                start_date=format_date_for_api(start_str),
+                end_date=format_date_for_api(end_str),
+                adjust="qfq",
+            ),
+            retries=3,
+            log_failure_as_exception=False,
+        )
 
-        # 构建伪 OHLCV DataFrame
-        fund_df = pd.DataFrame()
-        fund_df["日期"] = raw["净值日期"]
-        fund_df["收盘"] = raw["单位净值"]
-        fund_df["开盘"] = raw["单位净值"]
-        fund_df["最高"] = raw["单位净值"]
-        fund_df["最低"] = raw["单位净值"]
-        fund_df["成交量"] = 0
-        return fund_df
 
-    # 默认：个股（保持原有逻辑：东方财富源 + 腾讯源回退）
+def _fetch_index_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFrame:
+    """指数使用 index_zh_a_hist 接口。"""
+    with no_proxy():
+        return fetch_with_cache(
+            lambda: ak.index_zh_a_hist(
+                symbol=to_plain_symbol(symbol),
+                period="daily",
+                start_date=format_date_for_api(start_str),
+                end_date=format_date_for_api(end_str),
+            ),
+            retries=3,
+            log_failure_as_exception=False,
+        )
+
+
+def _fetch_offshore_fund_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFrame:
+    """场外基金净值映射为伪 OHLCV。"""
+    plain = _safe_plain_code(symbol)
+    with no_proxy():
+        raw = fetch_with_cache(
+            lambda: ak.fund_open_fund_info_em(symbol=plain, indicator="单位净值走势"),
+            retries=3,
+            log_failure_as_exception=False,
+        )
+    if raw is None or raw.empty:
+        return pd.DataFrame()
+
+    fund_df = pd.DataFrame()
+    fund_df["日期"] = raw["净值日期"]
+    fund_df["收盘"] = raw["单位净值"]
+    fund_df["开盘"] = raw["单位净值"]
+    fund_df["最高"] = raw["单位净值"]
+    fund_df["最低"] = raw["单位净值"]
+    fund_df["成交量"] = 0
+    return fund_df
+
+
+def _fetch_stock_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFrame:
+    """个股：东方财富源 + 腾讯源回退。"""
     with no_proxy():
         try:
-            data = fetch_with_cache(
+            return fetch_with_cache(
                 lambda: ak.stock_zh_a_hist(
                     symbol=to_plain_symbol(symbol),
                     period="daily",
@@ -325,7 +329,7 @@ def _fetch_ohlcv_by_asset_type(
         except Exception:  # noqa: BLE001
             with no_proxy():
                 with _suppress_akshare_progress():
-                    data = fetch_with_cache(
+                    return fetch_with_cache(
                         lambda: ak.stock_zh_a_hist_tx(
                             symbol=to_exchange_prefixed_symbol(symbol).lower(),
                             start_date=format_date_for_api(start_str),
@@ -334,7 +338,14 @@ def _fetch_ohlcv_by_asset_type(
                         ),
                         log_failure_as_exception=False,
                     )
-    return data
+
+
+# 资产类型 → OHLCV 获取策略
+_OHLCV_FETCHERS: dict[AssetType, callable] = {
+    AssetType.ETF: _fetch_etf_ohlcv,
+    AssetType.INDEX: _fetch_index_ohlcv,
+    AssetType.OFFSHORE_FUND: _fetch_offshore_fund_ohlcv,
+}
 
 
 def filter_financials_by_date(data: pd.DataFrame, curr_date: str) -> pd.DataFrame:

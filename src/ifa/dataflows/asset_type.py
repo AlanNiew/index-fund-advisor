@@ -145,63 +145,76 @@ def detect_asset_type(symbol: str) -> AssetType:
     """
     import re
 
-    # 提取纯6位代码
-    normalized = symbol.strip().upper().replace(" ", "")
-    if not normalized:
+    plain_code, explicit_exchange = _extract_code_and_exchange(symbol)
+    if not plain_code:
         return AssetType.STOCK
 
-    # 从各种格式中提取纯代码和交易所
-    digits_match = re.search(r"\d{6}", normalized)
-    if not digits_match:
-        return AssetType.STOCK
-    plain_code = digits_match.group(0)
-
-    # 检查用户是否明确指定了交易所
-    has_explicit_sh = bool(re.search(r"(?:^SH|\.SH$)", normalized))
-    has_explicit_sz = bool(re.search(r"(?:^SZ|\.SZ$)", normalized))
-    has_explicit_exchange = has_explicit_sh or has_explicit_sz
-
-    # 1. 检查已知指数白名单
-    # 模糊代码（如 000001）需要用户明确指定交易所
-    # 非模糊代码（如 000300）可直接匹配，因为无对应个股
-    is_ambiguous = plain_code in _AMBIGUOUS_INDEX_CODES
-
-    if has_explicit_sh and f"{plain_code}.SH" in _KNOWN_INDEX_CODES:
+    # 1. 检查已知指数白名单（模糊代码需明确交易所）
+    if _match_index_whitelist(plain_code, explicit_exchange):
         return AssetType.INDEX
-    if has_explicit_sz and f"{plain_code}.SZ" in _KNOWN_INDEX_CODES:
-        return AssetType.INDEX
-    # 非模糊代码：在白名单中即判定为指数
-    if not is_ambiguous:
-        if f"{plain_code}.SH" in _KNOWN_INDEX_CODES or f"{plain_code}.SZ" in _KNOWN_INDEX_CODES:
-            return AssetType.INDEX
 
-    # 2. 规范化代码
+    # 2. 规范化代码，失败则判定为场外基金
     try:
         normalized_symbol = normalize_ashare_symbol(symbol)
     except (ValueError, TypeError):
-        # 无法识别交易所前缀 → 可能是场外基金代码（如 012414、007540）
         return AssetType.OFFSHORE_FUND
 
     code, _, exchange = normalized_symbol.partition(".")
 
-    # 3. ETF 前缀判定（需结合交易所）
-    if exchange == "SH" and code.startswith(_ETF_SH_PREFIXES):
-        return AssetType.ETF
-    if exchange == "SZ" and code.startswith(_ETF_SZ_PREFIXES):
-        return AssetType.ETF
+    # 3. 按前缀查表判定
+    result = _classify_by_prefix(code, exchange)
+    return result if result else AssetType.STOCK
 
-    # 4. LOF/场外基金前缀判定
-    if exchange == "SH" and code.startswith(_LOF_SH_PREFIXES):
-        return AssetType.OFFSHORE_FUND
-    if exchange == "SZ" and code.startswith(_LOF_SZ_PREFIXES):
-        return AssetType.OFFSHORE_FUND
 
-    # 5. 深市指数：399xxx 均为指数
-    if exchange == "SZ" and code.startswith("399"):
-        return AssetType.INDEX
+def _extract_code_and_exchange(symbol: str) -> tuple[str, str | None]:
+    """从各种格式的证券代码中提取纯6位数字和显式交易所后缀。"""
+    import re
 
-    # 6. 默认返回个股
-    return AssetType.STOCK
+    normalized = symbol.strip().upper().replace(" ", "")
+    if not normalized:
+        return "", None
+
+    digits_match = re.search(r"\d{6}", normalized)
+    if not digits_match:
+        return "", None
+    plain_code = digits_match.group(0)
+
+    if re.search(r"(?:^SH|\.SH$)", normalized):
+        return plain_code, "SH"
+    if re.search(r"(?:^SZ|\.SZ$)", normalized):
+        return plain_code, "SZ"
+    return plain_code, None
+
+
+def _match_index_whitelist(plain_code: str, explicit_exchange: str | None) -> bool:
+    """检查代码是否匹配已知指数白名单。"""
+    is_ambiguous = plain_code in _AMBIGUOUS_INDEX_CODES
+    if explicit_exchange:
+        return f"{plain_code}.{explicit_exchange}" in _KNOWN_INDEX_CODES
+    if not is_ambiguous:
+        return f"{plain_code}.SH" in _KNOWN_INDEX_CODES or f"{plain_code}.SZ" in _KNOWN_INDEX_CODES
+    return False
+
+
+# 交易所 × 前缀 → 资产类型查表
+_PREFIX_TYPE_MAP: list[tuple[str, str, AssetType]] = [
+    # ETF
+    *[(ex, pfx, AssetType.ETF) for ex in ("SH",) for pfx in _ETF_SH_PREFIXES],
+    *[(ex, pfx, AssetType.ETF) for ex in ("SZ",) for pfx in _ETF_SZ_PREFIXES],
+    # LOF / 场外基金
+    *[(ex, pfx, AssetType.OFFSHORE_FUND) for ex in ("SH",) for pfx in _LOF_SH_PREFIXES],
+    *[(ex, pfx, AssetType.OFFSHORE_FUND) for ex in ("SZ",) for pfx in _LOF_SZ_PREFIXES],
+    # 深市指数
+    ("SZ", "399", AssetType.INDEX),
+]
+
+
+def _classify_by_prefix(code: str, exchange: str) -> AssetType | None:
+    """根据代码前缀 + 交易所查表判定资产类型，未匹配返回 None。"""
+    for map_exchange, map_prefix, asset_type in _PREFIX_TYPE_MAP:
+        if exchange == map_exchange and code.startswith(map_prefix):
+            return asset_type
+    return None
 
 
 def get_asset_label(asset_type: AssetType | str) -> dict[str, str]:

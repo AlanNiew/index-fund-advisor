@@ -30,8 +30,8 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（tests/ 目录，当前尚无测试文件）
-pytest tests/test_foo.py::test_bar   # 运行单个测试
+pytest                # 全部测试（41 个，覆盖 8 个模块）
+pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
 
@@ -82,7 +82,9 @@ CLI / Web / API 三个接口层共用四个函数：
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
   - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
 - **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu），另有 Anthropic/Google 独立客户端
-- **接口层** — `cli/`（Typer）、`web/`（Streamlit 多页应用）、`api/`（FastAPI 异步任务）
+- **接口层** — `cli/`（Typer）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务）
+- **回测引擎** (`src/ifa/backtest/`) — 买入-持有策略回测，`run_backtest()` 输出年化收益、最大回撤、Sharpe、月度收益、净值曲线
+- **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
 
 ### 状态模型
 
@@ -96,6 +98,7 @@ CLI / Web / API 三个接口层共用四个函数：
 
 - 每个 Agent 可携带 `FinancialSituationMemory` 实例，基于 BM25 检索历史相似情景
 - `Reflector` 在决策后根据实际收益/亏损反思并更新各 Agent 的记忆（`reflect_and_remember()`）
+- `Reflector.reflect_all()` 按模式条件性反思：deep_simple 跳过，portfolio 额外反思 risk_debate
 - 记忆内容为历史情景+经验教训的 tuple，供后续分析时检索参考
 
 ### 日志系统
@@ -129,5 +132,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "cli", "web"]`
-- 测试基础设施已配置（pytest + pytest-cov + pytest-mock），但 `tests/` 目录当前为空
-- 优化路线图见 `TODO.md`：P0/P1 已完成，P2（回测、测试、反思增强）和 P3（可观测性、多数据源）待推进
+- 测试：41 个测试覆盖数据清洗、回测引擎、状态初始化、条件边、反思、安全访问、工具注册表、资产类型（`tests/test_core.py`）
+- 优化路线图见 `TODO.md`：P0-P3 全部完成

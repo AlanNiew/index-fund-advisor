@@ -1,5 +1,5 @@
 # ifa/default_config.py
-"""IFA 默认配置，精简自 tradingagents，移除辩论/个股相关配置项。"""
+"""IFA 默认配置，融合 TradingAgents 的辩论和反思配置。"""
 
 import importlib.util
 import os
@@ -7,7 +7,22 @@ from pathlib import Path
 from pprint import pformat
 
 LAST_CONFIG_PATH = Path(__file__).with_name("last_config.py")
-PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+
+def _find_project_dir() -> str:
+    """从 default_config.py 向上查找项目根目录（含 pyproject.toml）。"""
+    current = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(5):
+        if os.path.isfile(os.path.join(current, "pyproject.toml")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+PROJECT_DIR = _find_project_dir()
 LOCAL_DATA_DIR = os.getenv(
     "IFA_LOCAL_DATA_DIR",
     os.path.join(PROJECT_DIR, "local_data"),
@@ -24,34 +39,35 @@ DEFAULT_CONFIG = {
     "data_tools_snapshot_dir": os.path.join(LOCAL_DATA_DIR, "data_tools", "snapshots"),
     "agent_output_dir": os.path.join(LOCAL_DATA_DIR, "agents"),
     "market_region": "cn_a",
-    # LLM 配置
-    "llm_provider": "azure",
-    "deep_think_llm": "gpt-5.4",
-    "quick_think_llm": "gpt-5.4-mini",
-    "backend_url": "YOUR_AZURE_API_URL",
-    "azure_api_version": "2024-12-01-preview",
-    "content_filter_max_retries": 2,
-    "content_filter_skip_message": "Skipped due to Azure content policy filter.",
-    # 不同提供方的思考参数配置
+    # ── LLM 配置 ──
+    "llm_provider": "zhipu",
+    "deep_think_llm": "glm-5.1",
+    "quick_think_llm": "glm-5-turbo",
+    "backend_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+    # ── 提供方专属思考参数 ──
     "google_thinking_level": "high",
     "openai_reasoning_effort": "high",
     "anthropic_effort": "high",
-    # 输出语言配置
+    # ── 输出语言配置 ──
     "internal_language": "English",
     "final_output_language": "Chinese",
     "output_language": "Chinese",
-    # IFA 专用配置（替代 selected_analysts / debate / risk）
-    "analysis_mode": "deep",  # deep / screen / portfolio
-    # 超时配置（秒）
+    # ── 分析模式 ──
+    "analysis_mode": "deep",
+    # ── 辩论设置（借鉴 TradingAgents）──
+    "enable_debate": True,
+    "max_debate_rounds": 1,
+    "max_risk_discuss_rounds": 1,
+    # ── 图执行 ──
+    "max_recur_limit": 150,
     "timeout": 180,
-    # 数据供应商配置
+    # ── 数据供应商配置 ──
     "data_vendors": {
         "etf_index_apis": "akshare",
         "public_fund": "akshare",
     },
-    # 工具级配置（优先级高于类别级）
     "tool_vendors": {},
-    # 缓存有效期（秒），0 表示永久缓存
+    # ── 缓存有效期（秒）──
     "ohlcv_cache_ttl_seconds": 86400,
 }
 
@@ -75,7 +91,7 @@ def load_last_config() -> dict:
 
 
 def validate_config(config: dict) -> None:
-    """校验配置字典的合法性，不合法时抛出 ValueError。"""
+    """校验配置字典的合法性。"""
     errors = []
 
     timeout = config.get("timeout")

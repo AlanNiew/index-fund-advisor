@@ -46,7 +46,7 @@ _PROVIDER_CONFIG = {
     "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "ollama": ("http://localhost:11434/v1", None),
     "qwen": ("https://coding.dashscope.aliyuncs.com/v1", "QWEN_API_KEY"),
-    "zhipu": ("https://open.bigmodel.cn/api/coding/paas/v4", "ZHIPU_API_KEY"),
+    "zhipu": ("https://open.bigmodel.cn/api/coding/paas/v4", "ZHIPUAI_API_KEY"),
 }
 
 

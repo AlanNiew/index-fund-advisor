@@ -39,8 +39,7 @@ dependencies = [
 
 [project.scripts]
 ifa = "cli.main:app"
-ifa-web = "streamlit:main"
-ifa-api = "uvicorn api.main:app --host 0.0.0.0 --port 8000"
+ifa-web = "cli.web_entry:main"
 
 [project.optional-dependencies]
 dev = [

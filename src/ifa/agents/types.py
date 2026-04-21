@@ -1,10 +1,40 @@
 # ifa/agents/types.py
-"""IFA 专用 Agent 状态类型定义。"""
+"""IFA 专用 Agent 状态类型定义。
 
-from typing import Annotated, Literal
+借鉴 TradingAgents 的 InvestDebateState / RiskDebateState 嵌套状态设计，
+为 IFA 增加基金研究辩论状态和风险评估辩论状态。
+"""
+
+from typing import Annotated
 
 from langgraph.graph import MessagesState
 from typing_extensions import TypedDict
+
+
+class FundDebateState(TypedDict):
+    """基金研究辩论状态 —— 看涨/看跌双方辩论。"""
+
+    bull_history: Annotated[str, "看涨方论证历史"]
+    bear_history: Annotated[str, "看跌方论证历史"]
+    history: Annotated[str, "完整对话历史"]
+    current_response: Annotated[str, "最新一轮回复"]
+    judge_decision: Annotated[str, "研究经理的最终裁决"]
+    count: Annotated[int, "当前对话轮次计数"]
+
+
+class RiskDebateState(TypedDict):
+    """风险评估辩论状态 —— 积极/保守/中立三方辩论。"""
+
+    aggressive_history: Annotated[str, "积极方论证历史"]
+    conservative_history: Annotated[str, "保守方论证历史"]
+    neutral_history: Annotated[str, "中立方论证历史"]
+    history: Annotated[str, "完整对话历史"]
+    latest_speaker: Annotated[str, "上一次发言者"]
+    current_aggressive_response: Annotated[str, "积极方最新回复"]
+    current_conservative_response: Annotated[str, "保守方最新回复"]
+    current_neutral_response: Annotated[str, "中立方最新回复"]
+    judge_decision: Annotated[str, "投资组合经理的最终裁决"]
+    count: Annotated[int, "当前对话轮次计数"]
 
 
 class IFAdvisorState(MessagesState):
@@ -24,7 +54,13 @@ class IFAdvisorState(MessagesState):
     screen_results: Annotated[str, "筛选结果（候选基金列表）"]
     fund_analysis_report: Annotated[str, "基金分析报告"]
     index_analysis_report: Annotated[str, "成分股/指数分析报告"]
-    portfolio_advice: Annotated[str, "组合配置建议"]
+    portfolio_advice: Annotated[str, "组合配置建议（投资组合顾问）"]
+
+    # ── 辩论状态 ──
+    fund_debate_state: Annotated[FundDebateState, "基金研究辩论状态（看涨/看跌）"]
+    risk_debate_state: Annotated[RiskDebateState, "风险评估辩论状态（积极/保守/中立）"]
 
     # ── 最终输出 ──
     final_report: Annotated[str, "Markdown 格式最终报告"]
+    final_rating: Annotated[str, "标准化评级: STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL"]
+    final_confidence: Annotated[str, "置信度说明"]

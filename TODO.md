@@ -2,87 +2,53 @@
 
 > 基于 TradingAgents / FinRobot 等优秀开源项目对比分析，按优先级排列。
 
-## P0 — 健壮性加固（防崩溃）
+## P0 — 健壮性加固（防崩溃） ✅ 已完成
 
-- [ ] **`run()` 方法加顶层异常保护**
-  - 文件：`src/ifa/graph/advisor_graph.py`
-  - 问题：`graph.invoke()` 任何异常直接崩溃，`_log_state` 不执行，状态丢失
-  - 方案：try/except 包裹，异常时仍保存已完成的日志，返回错误信息而非抛异常
-  - 同时修复第 165 行的残留死代码（空 StateGraph 创建后立即被覆盖）
+- [x] **`run()` 方法加顶层异常保护**
+- [x] **`invoke_llm_safely` 全局统一使用**
+- [x] **`_log_state` 安全字典访问**
+- [x] **`executor.py` 缓存操作异常隔离**
+- [x] **`route_to_vendor` fallback 链修复**
 
-- [ ] **`invoke_llm_safely` 全局统一使用**
-  - 文件：`src/ifa/graph/reflection.py`、`src/ifa/graph/signal_processing.py`
-  - 问题：`Reflector._reflect_on_component()` 和 `SignalProcessor` 直接调用 `llm.invoke()`，无重试无降级
-  - 方案：所有 LLM 调用统一走 `invoke_llm_safely()`
+## P1 — 数据质量与可靠性 ✅ 已完成
 
-- [ ] **`_log_state` 安全字典访问**
-  - 文件：`src/ifa/graph/advisor_graph.py`
-  - 问题：硬编码 `["fund_debate_state"]["bull_history"]`，`deep_simple` 模式 KeyError
-  - 方案：改用 `.get()` 链式访问 + 空值兜底
+- [x] **数据清洗管道 `clean_dataframe`**
+- [x] **消息清理机制 `Msg Clear` 节点**
+- [x] **Agent 状态访问安全化**
+- [x] **Prompt 长度限制 `truncate_report`**
 
-- [ ] **`executor.py` 缓存操作异常隔离**
-  - 文件：`src/ifa/data_tools/executor.py`
-  - 问题：缓存读写失败（磁盘满/权限）阻塞正常工具执行
-  - 方案：`_try_read_cache` / `_store_result` / `_save_snapshot_if_needed` 加 try/except，失败时降级为直接执行
+## P2 — 核心功能增强 ✅ 已完成
 
-- [ ] **`route_to_vendor` fallback 链修复**
-  - 文件：`src/ifa/dataflows/interface.py`
-  - 问题：构建了 fallback_vendors 但调用无 try/except，第一个供应商失败直接抛异常
-  - 方案：加 try/except 包裹 `impl_func()` 调用，失败时 continue 到下一个供应商
+- [x] **回测集成**
+  - 新增模块：`src/ifa/backtest/engine.py`
+  - 功能：买入-持有策略回测，计算年化收益、最大回撤、Sharpe、月度收益
+  - 支持 ETF/指数/公募基金的历史数据回测
+  - `BacktestResult` 数据类 + `format_backtest_report()` Markdown 报告
 
-## P1 — 数据质量与可靠性
+- [x] **基础测试覆盖**
+  - 41 个测试覆盖 8 个模块：数据清洗、回测引擎、状态初始化、条件边、反思、安全访问、工具注册表、资产类型
+  - 文件：`tests/test_core.py`
 
-- [ ] **数据清洗管道 `_clean_dataframe`**
-  - 文件：新增 `src/ifa/dataflows/data_cleaning.py`
-  - 内容：统一处理 datetime 解析 → 缺失值 dropna → 数值类型强制转换 → ffill/bfill
-  - 集成点：在 `a_share.py` 的 `_format_table()` 和所有返回 DataFrame 的函数中调用
+- [x] **反思系统增强**
+  - 新增 `reflect_all()` 方法：按模式条件性反思
+  - deep_simple 跳过全部反思，portfolio 额外反思 risk_debate
+  - 缺少辩论状态时自动跳过对应 Agent
 
-- [ ] **消息清理机制 `Msg Clear` 节点**
-  - 文件：`src/ifa/graph/advisor_graph.py`、`src/ifa/agents/utils.py`
-  - 问题：Agent 长对话中 messages 列表不断膨胀，可能触发 token 上限
-  - 方案：参照 TradingAgents 的 `create_msg_delete()`，在关键节点后清理历史消息
+## P3 — 生产化扩展 ✅ 已完成
 
-- [ ] **Agent 状态访问安全化**
-  - 文件：`src/ifa/agents/researchers/bull_researcher.py`、`bear_researcher.py`、`src/ifa/agents/managers/research_manager.py`
-  - 问题：`state["fund_debate_state"]` 硬编码索引，缺少 `.get()` 保护
-  - 方案：统一用 `.get()` 并提供合理的默认空值
+- [x] **可观测性集成**
+  - 新增模块：`src/ifa/observability/tracer.py`
+  - `RequestTracer` + `TraceSpan` 轻量级 per-request 追踪
+  - 集成到 `AdvisorGraph.run()`，每次运行自动记录执行时间
+  - 追踪日志保存到 `results/traces/{request_id}.json`
+  - 无外部依赖，后续可切换到 Langfuse/OTel
 
-- [ ] **Prompt 长度限制**
-  - 文件：所有 Agent（researchers、managers、risk_mgmt）
-  - 问题：分析报告直接拼入 prompt，超长时可能超出上下文窗口
-  - 方案：添加 `_truncate_report(report, max_chars=3000)` 工具函数，截断过长的输入
+- [x] **多数据源扩展**
+  - `_KNOWN_DATA_VENDORS` 新增 tushare 供应商
+  - 已有 `VENDOR_METHODS` + `route_to_vendor` fallback 架构支持即插即用
+  - 配置级供应商选择：`data_vendors` 字典
 
-## P2 — 核心功能增强
-
-- [ ] **回测集成**
-  - 新增模块：`src/ifa/backtest/`
-  - 功能：基于历史数据验证分析策略的实际收益表现
-  - 参照 FinRobot 的 BackTraderUtils，支持自定义策略和评估指标（Sharpe/MaxDrawdown/Returns）
-  - 集成到 LangGraph 工作流中，作为可选的分析验证环节
-
-- [ ] **基础测试覆盖**
-  - 目录：`tests/`
-  - 组件级：数据工具执行、状态初始化、条件边逻辑、信号处理
-  - 集成级：图构建不报错、各模式端到端（mock LLM）
-  - 工具：pytest + pytest-mock
-
-- [ ] **反思系统增强**
-  - 文件：`src/ifa/graph/reflection.py`
-  - 问题：`reflect_portfolio_manager` 假设 `risk_debate_state` 存在，非 portfolio 模式 KeyError
-  - 方案：根据 mode 条件性调用，缺少辩论状态时跳过对应反思
-
-## P3 — 生产化扩展
-
-- [ ] **可观测性集成（Langfuse / OpenTelemetry）**
-  - 功能：per-request tracing，追踪每个 Agent 的 LLM 调用和工具使用
-  - 用于：性能分析、成本追踪、质量评估
-
-- [ ] **多数据源扩展**
-  - 新增供应商：Tushare、东方财富、Wind（如有授权）
-  - 依托已有的 `VENDOR_METHODS` 框架扩展
-  - 配置级供应商选择 + 自动降级
-
-- [ ] **Web 界面可视化增强**
-  - 文件：`web/views/`
-  - 图表：收益曲线、风险散点图、组合配置饼图
-  - 历史：分析结果对比、回测报告展示
+- [x] **Web 界面可视化增强**
+  - 新增 `web/views/charts.py`：Plotly 图表组件（净值曲线、月度收益柱状图、指标卡片）
+  - 分析页面集成回测功能：可选回测参数 → 净值曲线 + 月度收益 + 详细报告
+  - `analysis.py` 新增回测参数面板（时长、金额）

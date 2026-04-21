@@ -462,10 +462,17 @@ class AdvisorGraph:
         顶层异常保护：即使图执行失败，也尝试保存已有日志并返回错误信息。
         """
         import logging
+        import uuid
+
+        from ifa.observability.tracer import end_trace, start_trace
 
         logger = logging.getLogger(__name__)
 
+        # 开始请求追踪
         fund_codes = state.get("fund_codes", "")
+        trace = start_trace(uuid.uuid4().hex[:12], mode, fund_codes)
+        trace.start_span("AdvisorGraph.run", "orchestrator")
+
         first_code = fund_codes.split(",")[0].strip() if fund_codes else ""
         if first_code:
             try:
@@ -479,8 +486,10 @@ class AdvisorGraph:
 
         try:
             final_state = graph.invoke(state, **args)
+            trace.finish_current(status="ok")
         except Exception as e:
             logger.error("图执行失败: %s", e)
+            trace.fail_current(str(e))
             # 即使失败也尝试保存已有状态
             partial_state = {**state, "error": str(e)}
             self.curr_state = partial_state
@@ -488,6 +497,7 @@ class AdvisorGraph:
                 self._log_state(partial_state)
             except Exception:
                 logger.error("日志保存也失败，放弃")
+            end_trace()
             return partial_state
 
         self.curr_state = final_state
@@ -496,6 +506,7 @@ class AdvisorGraph:
         except Exception as e:
             logger.warning("日志保存失败: %s（不影响分析结果）", e)
 
+        end_trace()
         return final_state
 
     @staticmethod
@@ -562,10 +573,14 @@ class AdvisorGraph:
         return self.signal_processor.process_confidence(full_signal)
 
     def reflect_and_remember(self, returns_losses):
-        """基于实际收益/亏损反思决策并更新记忆。"""
+        """基于实际收益/亏损反思决策并更新记忆（按模式条件性执行）。"""
         if self.curr_state is None:
             return
-        self.reflector.reflect_bull_researcher(self.curr_state, returns_losses, self.bull_memory)
-        self.reflector.reflect_bear_researcher(self.curr_state, returns_losses, self.bear_memory)
-        self.reflector.reflect_research_manager(self.curr_state, returns_losses, self.research_manager_memory)
-        self.reflector.reflect_portfolio_manager(self.curr_state, returns_losses, self.portfolio_manager_memory)
+        self.reflector.reflect_all(
+            self.curr_state,
+            returns_losses,
+            self.bull_memory,
+            self.bear_memory,
+            self.research_manager_memory,
+            self.portfolio_manager_memory,
+        )

@@ -28,7 +28,7 @@ LOCAL_DATA_DIR = os.getenv(
     os.path.join(PROJECT_DIR, "local_data"),
 )
 
-_KNOWN_DATA_VENDORS = {"akshare"}
+_KNOWN_DATA_VENDORS = {"akshare", "tushare"}
 
 DEFAULT_CONFIG = {
     "project_dir": PROJECT_DIR,

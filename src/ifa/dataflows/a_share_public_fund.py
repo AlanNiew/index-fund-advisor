@@ -6,7 +6,6 @@ from __future__ import annotations
 import re
 
 import akshare as ak
-import pandas as pd
 
 from .a_share import (
     _call_akshare_api,

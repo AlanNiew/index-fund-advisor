@@ -111,7 +111,7 @@ def search(
     console.print(f"搜索基金: {keyword}")
     result = run_data_tool("get_fund_list")
     lines = result.strip().split("\n")
-    matched = [l for l in lines if keyword.upper() in l.upper()][:limit]
+    matched = [line for line in lines if keyword.upper() in line.upper()][:limit]
     if matched:
         console.print("\n".join(matched))
     else:
@@ -140,7 +140,7 @@ def config_cmd(
 
     if key and value:
         console.print(f"[yellow]设置 {key} = {value}（需要手动编辑配置文件）[/yellow]")
-        console.print(f"配置文件位置: ifa/last_config.py")
+        console.print("配置文件位置: ifa/last_config.py")
     else:
         cfg = build_runtime_config()
         for k, v in cfg.items():

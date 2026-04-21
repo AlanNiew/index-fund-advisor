@@ -327,17 +327,16 @@ def _fetch_stock_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFram
                 log_failure_as_exception=False,
             )
         except Exception:  # noqa: BLE001
-            with no_proxy():
-                with _suppress_akshare_progress():
-                    return fetch_with_cache(
-                        lambda: ak.stock_zh_a_hist_tx(
-                            symbol=to_exchange_prefixed_symbol(symbol).lower(),
-                            start_date=format_date_for_api(start_str),
-                            end_date=format_date_for_api(end_str),
-                            adjust="qfq",
-                        ),
-                        log_failure_as_exception=False,
-                    )
+            with no_proxy(), _suppress_akshare_progress():
+                return fetch_with_cache(
+                    lambda: ak.stock_zh_a_hist_tx(
+                        symbol=to_exchange_prefixed_symbol(symbol).lower(),
+                        start_date=format_date_for_api(start_str),
+                        end_date=format_date_for_api(end_str),
+                        adjust="qfq",
+                    ),
+                    log_failure_as_exception=False,
+                )
 
 
 # 资产类型 → OHLCV 获取策略

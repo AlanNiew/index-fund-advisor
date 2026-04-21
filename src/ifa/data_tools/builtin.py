@@ -2,7 +2,6 @@ from ifa.data_tools.registry import DataToolRegistry
 from ifa.data_tools.types import DataToolDefinition
 from ifa.dataflows.interface import route_to_vendor
 
-
 # ── ETF / 指数 / 场外基金工具 ─────────────────────────────
 
 

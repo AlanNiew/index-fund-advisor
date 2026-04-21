@@ -4,7 +4,6 @@
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,12 +31,12 @@ _tasks: dict[str, dict] = {}
 
 class DeepAnalyzeRequest(BaseModel):
     fund_code: str = Field(..., description="基金代码，如 510300")
-    analysis_date: Optional[str] = Field(None, description="分析日期 YYYY-MM-DD")
+    analysis_date: str | None = Field(None, description="分析日期 YYYY-MM-DD")
     language: str = Field("zh", description="输出语言")
 
 
 class ScreenRequest(BaseModel):
-    conditions: Optional[str] = Field(None, description="自然语言筛选条件")
+    conditions: str | None = Field(None, description="自然语言筛选条件")
     index_category: str = Field("全部", description="指数类别")
     tracking_method: str = Field("全部", description="跟踪方式")
     max_results: int = Field(10, description="最大返回数量")
@@ -46,7 +45,7 @@ class ScreenRequest(BaseModel):
 
 class PortfolioRequest(BaseModel):
     risk_profile: str = Field("moderate", description="风险偏好")
-    investment_amount: Optional[float] = Field(None, description="投资金额")
+    investment_amount: float | None = Field(None, description="投资金额")
     preferences: dict = Field(default_factory=dict, description="附加偏好")
     language: str = Field("zh", description="输出语言")
 
@@ -63,9 +62,9 @@ class TaskDetailResponse(BaseModel):
     status: str
     mode: str
     created_at: str
-    completed_at: Optional[str] = None
-    result: Optional[dict] = None
-    error: Optional[str] = None
+    completed_at: str | None = None
+    result: dict | None = None
+    error: str | None = None
 
 
 # ── 核心分析端点 ──
@@ -150,7 +149,7 @@ async def search_funds(q: str = "", limit: int = 20):
     from ifa.data_tools.api import run_data_tool
     result = run_data_tool("get_fund_list")
     lines = result.strip().split("\n")
-    matched = [l for l in lines if q.upper() in l.upper()][:limit]
+    matched = [line for line in lines if q.upper() in line.upper()][:limit]
     return {"results": matched, "total": len(matched)}
 
 

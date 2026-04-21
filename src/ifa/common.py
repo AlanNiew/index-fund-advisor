@@ -102,10 +102,7 @@ def save_report(state: dict) -> str | None:
     date = state.get("analysis_date", datetime.now().strftime("%Y-%m-%d"))
     fund_codes = state.get("fund_codes", "").replace(",", "_").strip()
 
-    if fund_codes:
-        filename = f"{fund_codes}_{date}_{mode}.md"
-    else:
-        filename = f"{_MODE_LABEL.get(mode, mode)}_{date}.md"
+    filename = f"{fund_codes}_{date}_{mode}.md" if fund_codes else f"{_MODE_LABEL.get(mode, mode)}_{date}.md"
 
     os.makedirs(results_dir, exist_ok=True)
     filepath = os.path.join(results_dir, filename)

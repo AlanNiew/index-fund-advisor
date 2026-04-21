@@ -13,7 +13,6 @@ from .a_share import (
     _format_data_error,
     _format_table,
     _round_numeric_frame,
-    _safe_truncate,
 )
 from .a_share_common import (
     format_date_for_api,

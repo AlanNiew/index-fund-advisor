@@ -1,9 +1,8 @@
 """IFA 基础测试 — 数据清洗、回测引擎、状态初始化、条件边、信号处理、反思。"""
 
-import pytest
 import numpy as np
 import pandas as pd
-
+import pytest
 
 # ════════════════════════════════════════════
 #  数据清洗测试
@@ -351,7 +350,7 @@ class TestDataToolRegistry:
         from ifa.data_tools.builtin import create_default_data_tool_registry
 
         registry = create_default_data_tool_registry()
-        with pytest.raises(Exception):
+        with pytest.raises((KeyError, ValueError)):
             registry.get("nonexistent_tool")
 
 

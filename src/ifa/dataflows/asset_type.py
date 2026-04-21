@@ -143,7 +143,6 @@ def detect_asset_type(symbol: str) -> AssetType:
     返回：
         AssetType: 检测到的资产类型。
     """
-    import re
 
     plain_code, explicit_exchange = _extract_code_and_exchange(symbol)
     if not plain_code:

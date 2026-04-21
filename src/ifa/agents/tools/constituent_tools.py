@@ -69,10 +69,7 @@ def get_constituent_overview(
     top_n = 10
     weight_col = _find_column(df, "权重", "weight", "指数权重")
 
-    if weight_col:
-        df = df.sort_values(weight_col, ascending=False).head(top_n)
-    else:
-        df = df.head(top_n)
+    df = df.sort_values(weight_col, ascending=False).head(top_n) if weight_col else df.head(top_n)
 
     selected_cols = [col for col in ["日期", "指数代码", "指数名称", "成分券代码", "成分券名称", "权重"] if col in df.columns]
     if not selected_cols:
@@ -167,10 +164,7 @@ def get_constituent_performance(
     if not code_col:
         return f"成分股数据中未找到代码字段。可用列: {list(df.columns)}"
 
-    if weight_col:
-        top_stocks = df.nlargest(10, weight_col)
-    else:
-        top_stocks = df.head(10)
+    top_stocks = df.nlargest(10, weight_col) if weight_col else df.head(10)
 
     results = []
     for _, row in top_stocks.iterrows():

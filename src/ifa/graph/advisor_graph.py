@@ -146,6 +146,91 @@ class AdvisorGraph:
         )
 
     # ════════════════════════════════════════════
+    #  图构建辅助方法
+    # ════════════════════════════════════════════
+
+    @staticmethod
+    def _tools_key(name: str) -> str:
+        """将 Agent 名转为工具节点 key（如 'Fund Analyst' → 'tools_fund_analyst'）。"""
+        return f"tools_{name.lower().replace(' ', '_')}"
+
+    @staticmethod
+    def _clear_key(name: str) -> str:
+        """将 Agent 名转为消息清理节点 key（如 'Fund Analyst' → 'Msg Clear Fund Analyst'）。"""
+        return f"Msg Clear {name}"
+
+    def _add_tool_agent(
+        self,
+        workflow: StateGraph,
+        name: str,
+        agent_fn,
+        tool_node: ToolNode,
+    ) -> None:
+        """添加带工具调用的 Agent 节点组（Agent + Tools + MsgClear）。"""
+        workflow.add_node(name, agent_fn)
+        workflow.add_node(self._tools_key(name), tool_node)
+        workflow.add_node(self._clear_key(name), create_msg_delete())
+
+    def _add_tool_loop(
+        self,
+        workflow: StateGraph,
+        name: str,
+        continue_fn,
+        next_node: str,
+    ) -> None:
+        """为 Agent 添加工具循环 + 条件跳转（tools → agent 循环, clear → next）。"""
+        workflow.add_conditional_edges(
+            name,
+            continue_fn,
+            [self._tools_key(name), self._clear_key(name)],
+        )
+        workflow.add_edge(self._tools_key(name), name)
+        workflow.add_edge(self._clear_key(name), next_node)
+
+    def _add_fund_debate(
+        self,
+        workflow: StateGraph,
+        manager_name: str = "Research Manager",
+    ) -> None:
+        """添加 Bull/Bear 研究辩论循环。"""
+        condition_fn = self.conditional_logic.should_continue_fund_debate
+        workflow.add_conditional_edges(
+            "Bull Researcher", condition_fn,
+            {"Bear Researcher": "Bear Researcher", manager_name: manager_name},
+        )
+        workflow.add_conditional_edges(
+            "Bear Researcher", condition_fn,
+            {"Bull Researcher": "Bull Researcher", manager_name: manager_name},
+        )
+
+    def _add_risk_debate(self, workflow: StateGraph, manager_name: str) -> None:
+        """添加 Aggressive/Conservative/Neutral 三方风险辩论循环。"""
+        condition_fn = self.conditional_logic.should_continue_risk_analysis
+        workflow.add_conditional_edges(
+            "Aggressive Analyst", condition_fn,
+            {"Conservative Analyst": "Conservative Analyst", manager_name: manager_name},
+        )
+        workflow.add_conditional_edges(
+            "Conservative Analyst", condition_fn,
+            {"Neutral Analyst": "Neutral Analyst", manager_name: manager_name},
+        )
+        workflow.add_conditional_edges(
+            "Neutral Analyst", condition_fn,
+            {"Aggressive Analyst": "Aggressive Analyst", manager_name: manager_name},
+        )
+
+    def _add_to_report(
+        self,
+        workflow: StateGraph,
+        manager_name: str,
+        report_name: str = "Report Generator",
+    ) -> None:
+        """添加 manager → msg_clear → report → END 链路。"""
+        workflow.add_edge(manager_name, self._clear_key(manager_name))
+        workflow.add_edge(self._clear_key(manager_name), report_name)
+        workflow.add_edge(report_name, END)
+
+    # ════════════════════════════════════════════
     #  图构建方法
     # ════════════════════════════════════════════
 
@@ -167,19 +252,14 @@ class AdvisorGraph:
         workflow = StateGraph(IFAdvisorState)
 
         # ── 分析阶段 ──
-        workflow.add_node("Fund Analyst", fund_analyst)
-        workflow.add_node("tools_fund_analyst", self.fund_analyst_tools)
-        workflow.add_node("Msg Clear Fund Analyst", create_msg_delete())
-
-        workflow.add_node("Index Analyst", index_analyst)
-        workflow.add_node("tools_index_analyst", self.index_analyst_tools)
-        workflow.add_node("Msg Clear Index Analyst", create_msg_delete())
+        self._add_tool_agent(workflow, "Fund Analyst", fund_analyst, self.fund_analyst_tools)
+        self._add_tool_agent(workflow, "Index Analyst", index_analyst, self.index_analyst_tools)
 
         # ── 辩论阶段 ──
         workflow.add_node("Bull Researcher", bull_researcher)
         workflow.add_node("Bear Researcher", bear_researcher)
         workflow.add_node("Research Manager", research_manager)
-        workflow.add_node("Msg Clear Research Manager", create_msg_delete())
+        workflow.add_node(self._clear_key("Research Manager"), create_msg_delete())
 
         # ── 报告阶段 ──
         workflow.add_node("Report Generator", report_generator)
@@ -187,15 +267,16 @@ class AdvisorGraph:
         # ── 边 ──
         workflow.add_edge(START, "Fund Analyst")
 
+        # Fund Analyst 工具循环 → Index Analyst 条件跳转
         workflow.add_conditional_edges(
             "Fund Analyst",
             self.conditional_logic.should_continue_fund_analyst,
-            ["tools_fund_analyst", "Msg Clear Fund Analyst"],
+            [self._tools_key("Fund Analyst"), self._clear_key("Fund Analyst")],
         )
-        workflow.add_edge("tools_fund_analyst", "Fund Analyst")
+        workflow.add_edge(self._tools_key("Fund Analyst"), "Fund Analyst")
 
         workflow.add_conditional_edges(
-            "Msg Clear Fund Analyst",
+            self._clear_key("Fund Analyst"),
             self.conditional_logic.should_skip_index_analyst,
             {"Index Analyst": "Index Analyst", "Skip Index Analyst": "Bull Researcher"},
         )
@@ -203,26 +284,14 @@ class AdvisorGraph:
         workflow.add_conditional_edges(
             "Index Analyst",
             self.conditional_logic.should_continue_index_analyst,
-            ["tools_index_analyst", "Msg Clear Index Analyst"],
+            [self._tools_key("Index Analyst"), self._clear_key("Index Analyst")],
         )
-        workflow.add_edge("tools_index_analyst", "Index Analyst")
-        workflow.add_edge("Msg Clear Index Analyst", "Bull Researcher")
+        workflow.add_edge(self._tools_key("Index Analyst"), "Index Analyst")
+        workflow.add_edge(self._clear_key("Index Analyst"), "Bull Researcher")
 
         # ── 辩论循环 ──
-        workflow.add_conditional_edges(
-            "Bull Researcher",
-            self.conditional_logic.should_continue_fund_debate,
-            {"Bear Researcher": "Bear Researcher", "Research Manager": "Research Manager"},
-        )
-        workflow.add_conditional_edges(
-            "Bear Researcher",
-            self.conditional_logic.should_continue_fund_debate,
-            {"Bull Researcher": "Bull Researcher", "Research Manager": "Research Manager"},
-        )
-
-        workflow.add_edge("Research Manager", "Msg Clear Research Manager")
-        workflow.add_edge("Msg Clear Research Manager", "Report Generator")
-        workflow.add_edge("Report Generator", END)
+        self._add_fund_debate(workflow)
+        self._add_to_report(workflow, "Research Manager")
 
         return workflow.compile()
 
@@ -239,27 +308,22 @@ class AdvisorGraph:
 
         workflow = StateGraph(IFAdvisorState)
 
-        workflow.add_node("Fund Analyst", fund_analyst)
-        workflow.add_node("tools_fund_analyst", self.fund_analyst_tools)
-        workflow.add_node("Msg Clear Fund Analyst", create_msg_delete())
-
-        workflow.add_node("Index Analyst", index_analyst)
-        workflow.add_node("tools_index_analyst", self.index_analyst_tools)
-        workflow.add_node("Msg Clear Index Analyst", create_msg_delete())
-
+        self._add_tool_agent(workflow, "Fund Analyst", fund_analyst, self.fund_analyst_tools)
+        self._add_tool_agent(workflow, "Index Analyst", index_analyst, self.index_analyst_tools)
         workflow.add_node("Report Generator", report_generator)
 
         workflow.add_edge(START, "Fund Analyst")
 
+        # Fund Analyst 工具循环 → Index Analyst 条件跳转
         workflow.add_conditional_edges(
             "Fund Analyst",
             self.conditional_logic.should_continue_fund_analyst,
-            ["tools_fund_analyst", "Msg Clear Fund Analyst"],
+            [self._tools_key("Fund Analyst"), self._clear_key("Fund Analyst")],
         )
-        workflow.add_edge("tools_fund_analyst", "Fund Analyst")
+        workflow.add_edge(self._tools_key("Fund Analyst"), "Fund Analyst")
 
         workflow.add_conditional_edges(
-            "Msg Clear Fund Analyst",
+            self._clear_key("Fund Analyst"),
             self.conditional_logic.should_skip_index_analyst,
             {"Index Analyst": "Index Analyst", "Skip Index Analyst": "Report Generator"},
         )
@@ -267,10 +331,10 @@ class AdvisorGraph:
         workflow.add_conditional_edges(
             "Index Analyst",
             self.conditional_logic.should_continue_index_analyst,
-            ["tools_index_analyst", "Msg Clear Index Analyst"],
+            [self._tools_key("Index Analyst"), self._clear_key("Index Analyst")],
         )
-        workflow.add_edge("tools_index_analyst", "Index Analyst")
-        workflow.add_edge("Msg Clear Index Analyst", "Report Generator")
+        workflow.add_edge(self._tools_key("Index Analyst"), "Index Analyst")
+        workflow.add_edge(self._clear_key("Index Analyst"), "Report Generator")
 
         workflow.add_edge("Report Generator", END)
 
@@ -293,53 +357,23 @@ class AdvisorGraph:
 
         workflow = StateGraph(IFAdvisorState)
 
-        workflow.add_node("Fund Screener", fund_screener)
-        workflow.add_node("tools_fund_screener", self.fund_screener_tools)
-        workflow.add_node("Msg Clear Fund Screener", create_msg_delete())
-
-        workflow.add_node("Fund Analyst", fund_analyst)
-        workflow.add_node("tools_fund_analyst", self.fund_analyst_tools)
-        workflow.add_node("Msg Clear Fund Analyst", create_msg_delete())
+        self._add_tool_agent(workflow, "Fund Screener", fund_screener, self.fund_screener_tools)
+        self._add_tool_agent(workflow, "Fund Analyst", fund_analyst, self.fund_analyst_tools)
 
         workflow.add_node("Bull Researcher", bull_researcher)
         workflow.add_node("Bear Researcher", bear_researcher)
         workflow.add_node("Research Manager", research_manager)
-        workflow.add_node("Msg Clear Research Manager", create_msg_delete())
-
+        workflow.add_node(self._clear_key("Research Manager"), create_msg_delete())
         workflow.add_node("Report Generator", report_generator)
 
         workflow.add_edge(START, "Fund Screener")
+        self._add_tool_loop(workflow, "Fund Screener",
+                            self.conditional_logic.should_continue_fund_screener, "Fund Analyst")
+        self._add_tool_loop(workflow, "Fund Analyst",
+                            self.conditional_logic.should_continue_fund_analyst, "Bull Researcher")
 
-        workflow.add_conditional_edges(
-            "Fund Screener",
-            self.conditional_logic.should_continue_fund_screener,
-            ["tools_fund_screener", "Msg Clear Fund Screener"],
-        )
-        workflow.add_edge("tools_fund_screener", "Fund Screener")
-        workflow.add_edge("Msg Clear Fund Screener", "Fund Analyst")
-
-        workflow.add_conditional_edges(
-            "Fund Analyst",
-            self.conditional_logic.should_continue_fund_analyst,
-            ["tools_fund_analyst", "Msg Clear Fund Analyst"],
-        )
-        workflow.add_edge("tools_fund_analyst", "Fund Analyst")
-        workflow.add_edge("Msg Clear Fund Analyst", "Bull Researcher")
-
-        workflow.add_conditional_edges(
-            "Bull Researcher",
-            self.conditional_logic.should_continue_fund_debate,
-            {"Bear Researcher": "Bear Researcher", "Research Manager": "Research Manager"},
-        )
-        workflow.add_conditional_edges(
-            "Bear Researcher",
-            self.conditional_logic.should_continue_fund_debate,
-            {"Bull Researcher": "Bull Researcher", "Research Manager": "Research Manager"},
-        )
-
-        workflow.add_edge("Research Manager", "Msg Clear Research Manager")
-        workflow.add_edge("Msg Clear Research Manager", "Report Generator")
-        workflow.add_edge("Report Generator", END)
+        self._add_fund_debate(workflow)
+        self._add_to_report(workflow, "Research Manager")
 
         return workflow.compile()
 
@@ -364,23 +398,18 @@ class AdvisorGraph:
         workflow = StateGraph(IFAdvisorState)
 
         workflow.add_node("Portfolio Advisor R1", portfolio_advisor)
-        workflow.add_node("Fund Screener", fund_screener)
-        workflow.add_node("tools_fund_screener", self.fund_screener_tools)
-        workflow.add_node("Msg Clear Fund Screener", create_msg_delete())
-
-        workflow.add_node("Fund Analyst", fund_analyst)
-        workflow.add_node("tools_fund_analyst", self.fund_analyst_tools)
-        workflow.add_node("Msg Clear Fund Analyst", create_msg_delete())
+        self._add_tool_agent(workflow, "Fund Screener", fund_screener, self.fund_screener_tools)
+        self._add_tool_agent(workflow, "Fund Analyst", fund_analyst, self.fund_analyst_tools)
 
         workflow.add_node("Portfolio Advisor R2", portfolio_advisor)
-        workflow.add_node("Msg Clear Portfolio Advisor R2", create_msg_delete())
+        workflow.add_node(self._clear_key("Portfolio Advisor R2"), create_msg_delete())
 
         # ── 风险辩论 ──
         workflow.add_node("Aggressive Analyst", aggressive_analyst)
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Neutral Analyst", neutral_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager)
-        workflow.add_node("Msg Clear Portfolio Manager", create_msg_delete())
+        workflow.add_node(self._clear_key("Portfolio Manager"), create_msg_delete())
 
         workflow.add_node("Report Generator", report_generator)
 
@@ -388,53 +417,16 @@ class AdvisorGraph:
         workflow.add_edge(START, "Portfolio Advisor R1")
         workflow.add_edge("Portfolio Advisor R1", "Fund Screener")
 
-        workflow.add_conditional_edges(
-            "Fund Screener",
-            self.conditional_logic.should_continue_fund_screener,
-            ["tools_fund_screener", "Msg Clear Fund Screener"],
-        )
-        workflow.add_edge("tools_fund_screener", "Fund Screener")
-        workflow.add_edge("Msg Clear Fund Screener", "Fund Analyst")
-
-        workflow.add_conditional_edges(
-            "Fund Analyst",
-            self.conditional_logic.should_continue_fund_analyst,
-            ["tools_fund_analyst", "Msg Clear Fund Analyst"],
-        )
-        workflow.add_edge("tools_fund_analyst", "Fund Analyst")
-        workflow.add_edge("Msg Clear Fund Analyst", "Portfolio Advisor R2")
-        workflow.add_edge("Portfolio Advisor R2", "Msg Clear Portfolio Advisor R2")
-        workflow.add_edge("Msg Clear Portfolio Advisor R2", "Aggressive Analyst")
+        self._add_tool_loop(workflow, "Fund Screener",
+                            self.conditional_logic.should_continue_fund_screener, "Fund Analyst")
+        self._add_tool_loop(workflow, "Fund Analyst",
+                            self.conditional_logic.should_continue_fund_analyst, "Portfolio Advisor R2")
+        workflow.add_edge("Portfolio Advisor R2", self._clear_key("Portfolio Advisor R2"))
+        workflow.add_edge(self._clear_key("Portfolio Advisor R2"), "Aggressive Analyst")
 
         # ── 风险辩论循环 ──
-        workflow.add_conditional_edges(
-            "Aggressive Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Conservative Analyst": "Conservative Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Conservative Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Neutral Analyst": "Neutral Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Neutral Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Aggressive Analyst": "Aggressive Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-
-        workflow.add_edge("Portfolio Manager", "Msg Clear Portfolio Manager")
-        workflow.add_edge("Msg Clear Portfolio Manager", "Report Generator")
-        workflow.add_edge("Report Generator", END)
+        self._add_risk_debate(workflow, "Portfolio Manager")
+        self._add_to_report(workflow, "Portfolio Manager")
 
         return workflow.compile()
 

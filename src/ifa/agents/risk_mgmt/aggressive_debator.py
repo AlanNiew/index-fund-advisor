@@ -1,6 +1,7 @@
 # ifa/agents/risk_mgmt/aggressive_debator.py
 """积极风险评估 —— 从积极角度评估组合风险，主张进取配置。"""
 
+from ifa.agents.prompts.risk_mgmt import AGGRESSIVE_DEBATOR_PROMPT
 from ifa.agents.utils import (
     invoke_llm_safely,
 )
@@ -21,26 +22,14 @@ def create_aggressive_debator(llm):
         fund_analysis = state.get("fund_analysis_report", "")
         fund_codes = state.get("fund_codes", "")
 
-        prompt = f"""As the Aggressive Risk Analyst, your role is to actively champion high-reward opportunities in the proposed index fund portfolio, emphasizing bold strategies and growth potential.
-
-When evaluating the portfolio advisor's proposal:
-- Focus on upside potential, expected returns, and growth sectors.
-- Challenge the conservative and neutral analysts' caution with data-driven rebuttals.
-- Highlight where their caution might miss critical opportunities.
-
-Portfolio Advisor's Proposal:
-{portfolio_advice}
-
-Fund Analysis Context:
-{fund_analysis}
-
-Target Fund(s): {fund_codes}
-
-Conversation history: {history}
-Last conservative argument: {current_conservative_response}
-Last neutral argument: {current_neutral_response}
-
-If no responses from other viewpoints yet, present your own argument based on the available data. Engage actively by refuting counterpoints and asserting the benefits of risk-taking. Output conversationally without special formatting."""
+        prompt = AGGRESSIVE_DEBATOR_PROMPT.format(
+            portfolio_advice=portfolio_advice,
+            fund_analysis=fund_analysis,
+            fund_codes=fund_codes,
+            history=history,
+            current_conservative_response=current_conservative_response,
+            current_neutral_response=current_neutral_response,
+        )
 
         response = invoke_llm_safely(llm, prompt)
 

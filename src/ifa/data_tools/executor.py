@@ -5,7 +5,7 @@ from typing import Any
 
 from ifa.data_tools.registry import DataToolRegistry
 from ifa.data_tools.storage import LocalArtifactStore
-from ifa.data_tools.types import ToolExecutionResult
+from ifa.data_tools.types import SnapshotConfig, ToolExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +24,13 @@ class CachedDataToolExecutor:
         self,
         tool_name: str,
         use_cache: bool = True,
-        persist_snapshot: bool = False,
-        snapshot_group: str = "daily",
-        snapshot_date: str | None = None,
+        *,
+        snapshot: SnapshotConfig | None = None,
         max_age_seconds: float | None = None,
         **params: Any,
     ) -> ToolExecutionResult:
         """执行一个数据工具，并按需进行缓存和快照。"""
+        snapshot = snapshot or SnapshotConfig()
         definition = self.registry.get(tool_name)
         metadata = {
             "namespace": definition.namespace,
@@ -40,7 +40,7 @@ class CachedDataToolExecutor:
         # 尝试读取缓存（异常时降级为直接执行）
         if use_cache and definition.cache_enabled:
             try:
-                cached = self._try_read_cache(tool_name, params, max_age_seconds, metadata, persist_snapshot)
+                cached = self._try_read_cache(tool_name, params, max_age_seconds, metadata, snapshot)
                 if cached:
                     return cached
             except Exception as e:
@@ -50,7 +50,7 @@ class CachedDataToolExecutor:
         value = definition.handler(**params)
 
         # 保存结果（异常时不影响返回值）
-        return self._store_result(tool_name, params, value, definition, metadata, persist_snapshot, snapshot_group, snapshot_date)
+        return self._store_result(tool_name, params, value, definition, metadata, snapshot)
 
     def _try_read_cache(
         self,
@@ -58,7 +58,7 @@ class CachedDataToolExecutor:
         params: dict,
         max_age_seconds: float | None,
         metadata: dict,
-        persist_snapshot: bool,
+        snapshot: SnapshotConfig,
     ) -> ToolExecutionResult | None:
         """尝试从缓存读取结果，缓存有效则返回 ToolExecutionResult，否则返回 None。"""
         cached = self.artifact_store.load_cache(tool_name, params)
@@ -71,7 +71,7 @@ class CachedDataToolExecutor:
         if max_age_seconds is not None and os.path.exists(artifact_path) and time.time() - os.path.getmtime(artifact_path) > max_age_seconds:
             return None
 
-        snapshot_path = self._save_snapshot_if_needed(tool_name, params, cached_value, persist_snapshot, metadata)
+        snapshot_path = self._save_snapshot_if_needed(tool_name, params, cached_value, snapshot, metadata)
         cache_key = self.artifact_store.build_cache_key(tool_name, params)
 
         return ToolExecutionResult(
@@ -92,9 +92,7 @@ class CachedDataToolExecutor:
         value: Any,
         definition: Any,
         metadata: dict,
-        persist_snapshot: bool,
-        snapshot_group: str,
-        snapshot_date: str | None,
+        snapshot: SnapshotConfig,
     ) -> ToolExecutionResult:
         """执行工具后保存缓存和快照，返回 ToolExecutionResult。"""
         cache_key = self.artifact_store.build_cache_key(tool_name, params)
@@ -108,8 +106,7 @@ class CachedDataToolExecutor:
             except Exception as e:
                 logger.warning("缓存写入失败 (%s): %s", tool_name, e)
 
-        snapshot_path = self._save_snapshot_if_needed(tool_name, params, value, persist_snapshot, metadata,
-                                                      snapshot_group, snapshot_date)
+        snapshot_path = self._save_snapshot_if_needed(tool_name, params, value, snapshot, metadata)
 
         return ToolExecutionResult(
             tool_name=tool_name,
@@ -127,20 +124,18 @@ class CachedDataToolExecutor:
         tool_name: str,
         params: dict,
         value: Any,
-        persist_snapshot: bool,
+        snapshot: SnapshotConfig,
         metadata: dict,
-        snapshot_group: str = "daily",
-        snapshot_date: str | None = None,
     ) -> str | None:
         """按需保存快照，返回快照路径或 None。快照失败不影响工具执行。"""
-        if not persist_snapshot:
+        if not snapshot.persist:
             return None
         try:
             return str(
                 self.artifact_store.save_snapshot(
                     tool_name, params, value,
-                    snapshot_group=snapshot_group,
-                    snapshot_date=snapshot_date,
+                    snapshot_group=snapshot.group,
+                    snapshot_date=snapshot.date,
                     metadata=metadata,
                 )
             )

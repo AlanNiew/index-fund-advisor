@@ -1,6 +1,7 @@
 # ifa/agents/risk_mgmt/conservative_debator.py
 """保守风险评估 —— 从防守角度评估组合风险，主张稳健配置。"""
 
+from ifa.agents.prompts.risk_mgmt import CONSERVATIVE_DEBATOR_PROMPT
 from ifa.agents.utils import (
     invoke_llm_safely,
 )
@@ -21,26 +22,14 @@ def create_conservative_debator(llm):
         fund_analysis = state.get("fund_analysis_report", "")
         fund_codes = state.get("fund_codes", "")
 
-        prompt = f"""As the Conservative Risk Analyst, your role is to prioritize capital preservation and risk mitigation. Emphasize downside protection, volatility management, and defensive positioning.
-
-When evaluating the portfolio advisor's proposal:
-- Focus on drawdown scenarios, correlation risks, and tail events.
-- Challenge the aggressive analyst's optimism with historical data on market corrections.
-- Evaluate whether the proposed allocation matches the user's stated risk tolerance.
-
-Portfolio Advisor's Proposal:
-{portfolio_advice}
-
-Fund Analysis Context:
-{fund_analysis}
-
-Target Fund(s): {fund_codes}
-
-Conversation history: {history}
-Last aggressive argument: {current_aggressive_response}
-Last neutral argument: {current_neutral_response}
-
-If no responses from other viewpoints yet, present your own argument based on the available data. Engage actively by refuting counterpoints and emphasizing the importance of downside protection. Output conversationally without special formatting."""
+        prompt = CONSERVATIVE_DEBATOR_PROMPT.format(
+            portfolio_advice=portfolio_advice,
+            fund_analysis=fund_analysis,
+            fund_codes=fund_codes,
+            history=history,
+            current_aggressive_response=current_aggressive_response,
+            current_neutral_response=current_neutral_response,
+        )
 
         response = invoke_llm_safely(llm, prompt)
 

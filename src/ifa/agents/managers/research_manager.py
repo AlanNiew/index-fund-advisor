@@ -1,6 +1,7 @@
 # ifa/agents/managers/research_manager.py
 """研究经理 —— 评估看涨/看跌辩论，做出投资方向裁决。"""
 
+from ifa.agents.prompts.managers import RESEARCH_MANAGER_PROMPT
 from ifa.agents.utils import (
     get_final_language_instruction,
     invoke_llm_safely,
@@ -37,23 +38,11 @@ def create_research_manager(llm, memory=None):
 
         language_instruction = get_final_language_instruction()
 
-        prompt = f"""As the Research Manager and debate facilitator, your role is to critically evaluate this round of debate between the Bull and Bear researchers and make a definitive decision: align with the bull researcher (invest/recommend), the bear researcher (caution/redeem), or choose Hold only if strongly justified.
-
-Summarize the key points from both sides concisely. Your recommendation — STRONG BUY / BUY / HOLD / UNDERWEIGHT / SELL — must be clear and actionable. Avoid defaulting to Hold simply because both sides have valid points; commit to a stance grounded in the debate's strongest arguments.
-
-Additionally, provide:
-1. Your Recommendation: A decisive stance with the rating.
-2. Rationale: Why these arguments lead to your conclusion.
-3. Key Risks: Top 2-3 risks regardless of your recommendation.
-4. Time Horizon: Recommended holding period.
-
-Take into account your past mistakes on similar situations:
-\"{past_memory_str}\"
-
-Here is the debate history:
-{history}
-
-{language_instruction}"""
+        prompt = RESEARCH_MANAGER_PROMPT.format(
+            past_memory_str=past_memory_str,
+            history=history,
+            language_instruction=language_instruction,
+        )
 
         response = invoke_llm_safely(llm, prompt)
 

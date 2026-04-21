@@ -15,6 +15,15 @@ class DataToolDefinition:
 
 
 @dataclass(frozen=True)
+class SnapshotConfig:
+    """快照配置参数，封装快照相关的三个参数为一个概念单元。"""
+
+    persist: bool = False
+    group: str = "daily"
+    date: str | None = None
+
+
+@dataclass(frozen=True)
 class DataCollectionJob:
     """描述一次可独立运行的数据采集任务。"""
 

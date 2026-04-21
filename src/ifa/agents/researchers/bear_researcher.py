@@ -1,6 +1,7 @@
 # ifa/agents/researchers/bear_researcher.py
 """看跌研究员 —— 从风险角度论证基金投资隐患，与看涨研究员进行对抗辩论。"""
 
+from ifa.agents.prompts.researchers import BEAR_RESEARCHER_PROMPT
 from ifa.agents.utils import (
     get_final_language_instruction,
     invoke_llm_safely,
@@ -41,26 +42,15 @@ def create_bear_researcher(llm, memory=None):
 
         language_instruction = get_final_language_instruction()
 
-        prompt = f"""You are a Bear Fund Researcher making the case against investing in the target index fund. Your goal is to present a well-reasoned argument emphasizing risks, challenges, and negative indicators. Leverage the provided analysis data to highlight potential downsides and counter bullish arguments effectively.
-
-Key points to focus on:
-- Tracking Error and Deviation: Highlight any significant tracking error, or fund-specific risks that differ from the underlying index.
-- Sector Concentration Risk: Emphasize over-concentration in specific sectors or stocks within the index.
-- Market Timing Risks: Use current market valuations, macroeconomic headwinds, and sentiment data to support a cautious stance.
-- Fund Manager Risk: For actively managed index funds, highlight manager turnover, style drift, or underperformance vs benchmark.
-- Downside Scenarios: Model potential drawdown scenarios based on historical data and current conditions.
-- Bull Counterpoints: Critically analyze the bull argument with specific data, exposing over-optimistic assumptions.
-- Engagement: Present your argument in a conversational style, directly engaging with the bull researcher's points.
-
-Resources available:
-Fund code(s): {fund_codes}
-Fund analysis report: {fund_analysis}
-Index/Constituent analysis report: {index_analysis}
-Conversation history of the debate: {history}
-Last bull argument: {current_response}
-Reflections from similar situations: {past_memory_str}
-
-Use this information to deliver a compelling bear argument, refute the bull's claims, and engage in a dynamic debate.{language_instruction}"""
+        prompt = BEAR_RESEARCHER_PROMPT.format(
+            fund_codes=fund_codes,
+            fund_analysis=fund_analysis,
+            index_analysis=index_analysis,
+            history=history,
+            current_response=current_response,
+            past_memory_str=past_memory_str,
+            language_instruction=language_instruction,
+        )
 
         response = invoke_llm_safely(llm, prompt)
 

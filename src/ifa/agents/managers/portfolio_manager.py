@@ -1,6 +1,7 @@
 # ifa/agents/managers/portfolio_manager.py
 """投资组合经理 —— 综合风险评估辩论结果，做出最终投资决策。"""
 
+from ifa.agents.prompts.managers import PORTFOLIO_MANAGER_PROMPT
 from ifa.agents.utils import (
     get_final_language_instruction,
     invoke_llm_safely,
@@ -36,33 +37,14 @@ def create_portfolio_manager(llm, memory=None):
 
         research_decision = fund_debate_state.get("judge_decision", "无")
 
-        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final investment decision for the index fund portfolio.
-
-**Rating Scale** (use exactly one):
-- **STRONG_BUY**: Strong conviction, allocate above target weight
-- **BUY**: Favorable outlook, recommended for inclusion
-- **HOLD**: Maintain current allocation, no action needed
-- **UNDERWEIGHT**: Reduce exposure, take partial profits
-- **SELL**: Exit position or avoid entry
-
-**Context:**
-- Fund code(s): {fund_codes}
-- Research Manager's decision: {research_decision}
-- Portfolio Advisor's proposal: {portfolio_advice}
-- Lessons from past decisions: {past_memory_str}
-
-**Required Output Structure:**
-1. **Rating**: State one of STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL.
-2. **Executive Summary**: Concise action plan covering allocation, key risk levels, and time horizon.
-3. **Investment Thesis**: Detailed reasoning anchored in the analysts' debate and past reflections.
-4. **Confidence**: Rate your confidence as High / Medium / Low with brief justification.
-
----
-
-**Risk Analysts Debate History:**
-{history}
-
-Be decisive and ground every conclusion in specific evidence from the analysts.{language_instruction}"""
+        prompt = PORTFOLIO_MANAGER_PROMPT.format(
+            fund_codes=fund_codes,
+            research_decision=research_decision,
+            portfolio_advice=portfolio_advice,
+            past_memory_str=past_memory_str,
+            history=history,
+            language_instruction=language_instruction,
+        )
 
         response = invoke_llm_safely(llm, prompt)
 

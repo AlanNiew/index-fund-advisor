@@ -39,6 +39,75 @@ class BacktestResult:
     error: str = ""
 
 
+def _parse_raw_to_dataframe(raw) -> pd.DataFrame | None:
+    """将原始数据（CSV 字符串或 DataFrame）解析为 DataFrame。"""
+    if isinstance(raw, str) and "暂无数据" in raw:
+        return None
+    if isinstance(raw, str):
+        from io import StringIO
+
+        return pd.read_csv(StringIO(raw))
+    if isinstance(raw, pd.DataFrame):
+        return raw.copy()
+    return None
+
+
+def _fetch_etf_index_data(
+    symbol: str, start_date: str, end_date: str, asset_type,
+) -> pd.DataFrame | None:
+    """获取 ETF/指数价格数据。"""
+    from ifa.dataflows.a_share_index_fund import get_etf_data, get_index_data
+
+    raw = get_etf_data(symbol, start_date, end_date) if asset_type.name == "ETF" \
+        else get_index_data(symbol, start_date, end_date)
+
+    df = _parse_raw_to_dataframe(raw)
+    if df is None:
+        return None
+
+    date_col = _find_column(df, "date", "日期", "trade_date")
+    close_col = _find_column(df, "close", "收盘", "close_price")
+    if date_col is None or close_col is None:
+        return None
+
+    df = df[[date_col, close_col]].copy()
+    df.columns = ["date", "close"]
+    df = clean_dataframe(df, context=f"回测 {symbol}")
+    if df.empty:
+        return None
+
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["close"])
+    return df
+
+
+def _fetch_fund_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame | None:
+    """获取公募基金/场外基金净值数据。"""
+    from ifa.dataflows.a_share_public_fund import get_fund_history_nav
+
+    raw = get_fund_history_nav(symbol)
+    df = _parse_raw_to_dataframe(raw)
+    if df is None:
+        return None
+
+    date_col = _find_column(df, "净值日期", "date", "日期")
+    close_col = _find_column(df, "单位净值", "nav", "close")
+    if date_col is None or close_col is None:
+        return None
+
+    df = df[[date_col, close_col]].copy()
+    df.columns = ["date", "close"]
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["date", "close"])
+
+    start = pd.to_datetime(start_date)
+    end = pd.to_datetime(end_date)
+    df = df[(df["date"] >= start) & (df["date"] <= end)]
+    df = df.sort_values("date").reset_index(drop=True)
+    return df
+
+
 def _fetch_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame | None:
     """获取历史价格数据。"""
     from ifa.dataflows.asset_type import AssetType, detect_asset_type
@@ -49,77 +118,10 @@ def _fetch_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFra
         asset_type = AssetType.ETF
 
     if asset_type in (AssetType.ETF, AssetType.INDEX):
-        from ifa.dataflows.a_share_index_fund import get_etf_data, get_index_data
+        return _fetch_etf_index_data(symbol, start_date, end_date, asset_type)
 
-        if asset_type == AssetType.ETF:
-            raw = get_etf_data(symbol, start_date, end_date)
-        else:
-            raw = get_index_data(symbol, start_date, end_date)
-
-        # raw 是 CSV 字符串
-        if isinstance(raw, str) and "暂无数据" in raw:
-            return None
-        if isinstance(raw, str):
-            from io import StringIO
-
-            df = pd.read_csv(StringIO(raw))
-        elif isinstance(raw, pd.DataFrame):
-            df = raw.copy()
-        else:
-            return None
-
-        # 查找日期和收盘价列
-        date_col = _find_column(df, "date", "日期", "trade_date")
-        close_col = _find_column(df, "close", "收盘", "close_price")
-
-        if date_col is None or close_col is None:
-            return None
-
-        df = df[[date_col, close_col]].copy()
-        df.columns = ["date", "close"]
-        df = clean_dataframe(df, context=f"回测 {symbol}")
-
-        if df.empty:
-            return None
-
-        # 确保价格是数值型
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["close"])
-        return df
-
-    elif asset_type in (AssetType.PUBLIC_FUND, AssetType.OFFSHORE_FUND):
-        from ifa.dataflows.a_share_public_fund import get_fund_history_nav
-
-        raw = get_fund_history_nav(symbol)
-        if isinstance(raw, str) and "暂无数据" in raw:
-            return None
-        if isinstance(raw, str):
-            from io import StringIO
-
-            df = pd.read_csv(StringIO(raw))
-        elif isinstance(raw, pd.DataFrame):
-            df = raw.copy()
-        else:
-            return None
-
-        date_col = _find_column(df, "净值日期", "date", "日期")
-        close_col = _find_column(df, "单位净值", "nav", "close")
-
-        if date_col is None or close_col is None:
-            return None
-
-        df = df[[date_col, close_col]].copy()
-        df.columns = ["date", "close"]
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["date", "close"])
-
-        # 过滤日期范围
-        start = pd.to_datetime(start_date)
-        end = pd.to_datetime(end_date)
-        df = df[(df["date"] >= start) & (df["date"] <= end)]
-        df = df.sort_values("date").reset_index(drop=True)
-        return df
+    if asset_type in (AssetType.PUBLIC_FUND, AssetType.OFFSHORE_FUND):
+        return _fetch_fund_data(symbol, start_date, end_date)
 
     return None
 

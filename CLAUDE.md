@@ -80,6 +80,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - `executor.py` 的 `CachedDataToolExecutor` 提供缓存和快照
   - 所有工具通过 `route_to_vendor()` 路由到具体数据源
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
+  - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
 - **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu），另有 Anthropic/Google 独立客户端
 - **接口层** — `cli/`（Typer）、`web/`（Streamlit 多页应用）、`api/`（FastAPI 异步任务）
 
@@ -110,6 +111,17 @@ CLI / Web / API 三个接口层共用四个函数：
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数）、`max_risk_discuss_rounds`（风险辩论轮数）
 
+### 健壮性模式
+
+项目已建立的错误处理约定，修改代码时应遵循：
+
+- **LLM 调用统一走 `invoke_llm_safely()`** — 定义在 `src/ifa/agents/utils.py`，带指数退避重试。所有 Agent 和图模块中的 LLM 调用都必须使用它，禁止裸调用 `llm.invoke()`
+- **`run()` 顶层异常保护** — `AdvisorGraph.run()` 用 try/except 包裹 `graph.invoke()`，失败时仍保存日志并返回含 `error` 字段的状态
+- **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
+- **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
+- **安全字典访问** — `_safe_get_nested()` 用于日志中的嵌套状态访问，`Reflector._safe_get_debate()` 用于反思中的辩论状态访问，缺失键返回空值而非 KeyError
+- **Prompt 长度限制** — Agent 中输入的分析报告通过 `truncate_report(report, max_chars=3000)` 截断，防止 token 溢出
+
 ### 关键约定
 
 - 包布局：`pyproject.toml` 的 `packages.find` 配置 `where=["src"]`，`src/ifa` 是主包；`cli/`、`api/`、`web/` 位于项目顶层，通过 editable install (`pip install -e .`) 使其可导入
@@ -118,3 +130,4 @@ CLI / Web / API 三个接口层共用四个函数：
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "cli", "web"]`
 - 测试基础设施已配置（pytest + pytest-cov + pytest-mock），但 `tests/` 目录当前为空
+- 优化路线图见 `TODO.md`：P0/P1 已完成，P2（回测、测试、反思增强）和 P3（可观测性、多数据源）待推进

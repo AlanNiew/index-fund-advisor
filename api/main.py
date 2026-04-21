@@ -73,7 +73,7 @@ class TaskDetailResponse(BaseModel):
 @app.post("/api/v1/analyze/deep", response_model=TaskResponse)
 async def analyze_deep(req: DeepAnalyzeRequest):
     """提交单只基金深度分析任务（异步）。"""
-    task_id = str(uuid4())
+    task_id = str(uuid.uuid4())
     task = {
         "task_id": task_id,
         "status": "pending",
@@ -91,7 +91,7 @@ async def analyze_deep(req: DeepAnalyzeRequest):
 @app.post("/api/v1/analyze/screen", response_model=TaskResponse)
 async def analyze_screen(req: ScreenRequest):
     """提交筛选对比分析任务（异步）。"""
-    task_id = str(uuid4())
+    task_id = str(uuid.uuid4())
     conditions = req.conditions or f"类别: {req.index_category}, 跟踪方式: {req.tracking_method}, 前 {req.max_results} 只"
     task = {
         "task_id": task_id,
@@ -110,7 +110,7 @@ async def analyze_screen(req: ScreenRequest):
 @app.post("/api/v1/analyze/portfolio", response_model=TaskResponse)
 async def analyze_portfolio(req: PortfolioRequest):
     """提交组合配置建议任务（异步）。"""
-    task_id = str(uuid4())
+    task_id = str(uuid.uuid4())
     task = {
         "task_id": task_id,
         "status": "pending",
@@ -194,42 +194,20 @@ def _execute_graph(task: dict) -> dict:
     from dotenv import load_dotenv
     load_dotenv()
 
-    from ifa.default_config import build_runtime_config
-    from ifa.llm_clients.factory import create_llm_client
-    from ifa.graph.advisor_graph import AdvisorGraph
+    from ifa.common import build_advisor, build_state
 
-    config = build_runtime_config()
-    provider_kwargs = _get_provider_kwargs(config)
-
-    quick_llm = create_llm_client(
-        provider=config["llm_provider"],
-        model=config["quick_think_llm"],
-        base_url=config.get("backend_url"),
-        **provider_kwargs,
-    )
-    deep_llm = create_llm_client(
-        provider=config["llm_provider"],
-        model=config["deep_think_llm"],
-        base_url=config.get("backend_url"),
-        **provider_kwargs,
-    )
-
-    advisor = AdvisorGraph(
-        quick_llm=quick_llm.get_llm(),
-        deep_llm=deep_llm.get_llm(),
-        config=config,
-    )
+    advisor = build_advisor()
 
     params = task["params"]
     mode = task["mode"]
 
     if mode == "deep":
-        fund_code = params.get("fund_code", "")
-        state = _build_state(mode, fund_codes=fund_code, analysis_date=params.get("analysis_date", datetime.now().strftime("%Y-%m-%d")))
+        state = build_state(mode, fund_codes=params.get("fund_code", ""),
+                            analysis_date=params.get("analysis_date", datetime.now().strftime("%Y-%m-%d")))
     elif mode == "screen":
-        state = _build_state(mode, screen_conditions=params.get("conditions", ""))
+        state = build_state(mode, screen_conditions=params.get("conditions", ""))
     elif mode == "portfolio":
-        state = _build_state(mode, risk_profile=params.get("risk_profile", "moderate"))
+        state = build_state(mode, risk_profile=params.get("risk_profile", "moderate"))
     else:
         raise ValueError(f"未知模式: {mode}")
 
@@ -238,55 +216,3 @@ def _execute_graph(task: dict) -> dict:
         "report_md": final_state.get("final_report", ""),
         "mode": mode,
     }
-
-
-def _build_state(mode: str, **kwargs) -> dict:
-    """构建图状态。"""
-    from ifa.dataflows.asset_type import detect_asset_type
-
-    fund_codes = kwargs.get("fund_codes", "")
-    first_code = fund_codes.split(",")[0].strip() if fund_codes else ""
-    asset_type = ""
-    if first_code:
-        asset_type = detect_asset_type(first_code).value
-
-    return {
-        "fund_codes": fund_codes,
-        "analysis_date": kwargs.get("analysis_date", datetime.now().strftime("%Y-%m-%d")),
-        "mode": mode,
-        "asset_type": asset_type,
-        "screen_conditions": kwargs.get("screen_conditions", ""),
-        "risk_profile": kwargs.get("risk_profile", ""),
-        "screen_results": "",
-        "fund_analysis_report": "",
-        "index_analysis_report": "",
-        "portfolio_advice": "",
-        "final_report": "",
-        "messages": [],
-    }
-
-
-def _get_provider_kwargs(config: dict) -> dict:
-    """获取 LLM 客户端提供方参数。"""
-    kwargs = {}
-    provider = config.get("llm_provider", "").lower()
-    if provider == "google":
-        thinking = config.get("google_thinking_level")
-        if thinking:
-            kwargs["thinking_level"] = thinking
-    elif provider in ("openai", "azure"):
-        effort = config.get("openai_reasoning_effort")
-        if effort:
-            kwargs["reasoning_effort"] = effort
-        if provider == "azure":
-            api_version = config.get("azure_api_version")
-            if api_version:
-                kwargs["azure_api_version"] = api_version
-    elif provider == "anthropic":
-        effort = config.get("anthropic_effort")
-        if effort:
-            kwargs["effort"] = effort
-    timeout = config.get("timeout")
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    return kwargs

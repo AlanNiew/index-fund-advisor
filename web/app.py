@@ -5,9 +5,15 @@ import os
 import sys
 
 import streamlit as st
+from dotenv import load_dotenv
 
-# 确保项目根目录在 sys.path 中
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# 确保项目根目录和 src 目录都在 sys.path 中
+_PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
+sys.path.insert(0, _PROJECT_ROOT)
+
+# 加载 .env 文件（CLI 入口 cli/main.py 也会加载，但 Streamlit 子进程需要单独加载）
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 
 st.set_page_config(
     page_title="IFA - 指数基金分析",
@@ -40,15 +46,15 @@ if page == "🏠 首页":
     """)
 
 elif page == "🔍 基金分析":
-    from web.pages.analysis import render_analysis_page
+    from web.views.analysis import render_analysis_page
     render_analysis_page()
 
 elif page == "📊 筛选对比":
-    from web.pages.screen import render_screen_page
+    from web.views.screen import render_screen_page
     render_screen_page()
 
 elif page == "💰 组合配置":
-    from web.pages.portfolio import render_portfolio_page
+    from web.views.portfolio import render_portfolio_page
     render_portfolio_page()
 
 elif page == "📋 历史记录":

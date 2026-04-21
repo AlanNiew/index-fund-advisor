@@ -19,16 +19,21 @@ def create_research_manager(llm, memory=None):
         fund_codes = state.get("fund_codes", "")
         fund_analysis = state.get("fund_analysis_report", "")
         index_analysis = state.get("index_analysis_report", "")
-        fund_debate_state = state["fund_debate_state"]
+        fund_debate_state = state.get("fund_debate_state", {})
+        if not isinstance(fund_debate_state, dict):
+            fund_debate_state = {}
         history = fund_debate_state.get("history", "")
 
         curr_situation = f"基金代码: {fund_codes}\n\n基金分析报告:\n{fund_analysis}\n\n指数分析报告:\n{index_analysis}"
 
         past_memory_str = ""
         if memory:
-            past_memories = memory.get_memories(curr_situation, n_matches=2)
-            for rec in past_memories:
-                past_memory_str += rec["recommendation"] + "\n\n"
+            try:
+                past_memories = memory.get_memories(curr_situation, n_matches=2)
+                for rec in past_memories:
+                    past_memory_str += rec["recommendation"] + "\n\n"
+            except Exception:
+                past_memory_str = ""
 
         language_instruction = get_final_language_instruction()
 
@@ -58,7 +63,7 @@ Here is the debate history:
             "bull_history": fund_debate_state.get("bull_history", ""),
             "bear_history": fund_debate_state.get("bear_history", ""),
             "current_response": response.content,
-            "count": fund_debate_state["count"],
+            "count": fund_debate_state.get("count", 0),
         }
 
         return {

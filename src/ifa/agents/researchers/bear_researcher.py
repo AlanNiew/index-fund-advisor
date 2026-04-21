@@ -5,6 +5,7 @@ from ifa.agents.utils import (
     get_final_language_instruction,
     invoke_llm_safely,
 )
+from ifa.dataflows.data_cleaning import truncate_report
 
 
 def create_bear_researcher(llm, memory=None):
@@ -16,22 +17,27 @@ def create_bear_researcher(llm, memory=None):
     """
 
     def bear_researcher_node(state) -> dict:
-        fund_debate_state = state["fund_debate_state"]
+        fund_debate_state = state.get("fund_debate_state", {})
+        if not isinstance(fund_debate_state, dict):
+            fund_debate_state = {}
         history = fund_debate_state.get("history", "")
         bear_history = fund_debate_state.get("bear_history", "")
         current_response = fund_debate_state.get("current_response", "")
 
         fund_codes = state.get("fund_codes", "")
-        fund_analysis = state.get("fund_analysis_report", "")
-        index_analysis = state.get("index_analysis_report", "")
+        fund_analysis = truncate_report(state.get("fund_analysis_report", ""))
+        index_analysis = truncate_report(state.get("index_analysis_report", ""))
 
         curr_situation = f"基金代码: {fund_codes}\n\n基金分析报告:\n{fund_analysis}\n\n指数分析报告:\n{index_analysis}"
 
         past_memory_str = ""
         if memory:
-            past_memories = memory.get_memories(curr_situation, n_matches=2)
-            for rec in past_memories:
-                past_memory_str += rec["recommendation"] + "\n\n"
+            try:
+                past_memories = memory.get_memories(curr_situation, n_matches=2)
+                for rec in past_memories:
+                    past_memory_str += rec["recommendation"] + "\n\n"
+            except Exception:
+                past_memory_str = ""
 
         language_instruction = get_final_language_instruction()
 
@@ -60,13 +66,14 @@ Use this information to deliver a compelling bear argument, refute the bull's cl
 
         argument = f"Bear Researcher: {response.content}"
 
+        count = fund_debate_state.get("count", 0)
         new_fund_debate_state = {
             "history": history + "\n" + argument,
             "bear_history": bear_history + "\n" + argument,
             "bull_history": fund_debate_state.get("bull_history", ""),
             "current_response": argument,
             "judge_decision": fund_debate_state.get("judge_decision", ""),
-            "count": fund_debate_state["count"] + 1,
+            "count": count + 1,
         }
 
         return {"fund_debate_state": new_fund_debate_state}

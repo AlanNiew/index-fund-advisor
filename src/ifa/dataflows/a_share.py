@@ -76,7 +76,7 @@ def _suppress_akshare_progress():
 
 def _format_table(df: pd.DataFrame, title: str, rows: int = 10) -> str:
     """
-    格式化表格输出。
+    格式化表格输出。自动清洗数据后再展示。
 
     参数：
         df: 需要格式化、筛选或转换的数据表。
@@ -86,8 +86,15 @@ def _format_table(df: pd.DataFrame, title: str, rows: int = 10) -> str:
     返回：
         str: 格式化后的字符串结果。
     """
-    if df.empty:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return f"{title}\n\n暂无数据。"
+
+    from .data_cleaning import clean_dataframe
+
+    df = clean_dataframe(df, context=title)
+    if df.empty:
+        return f"{title}\n\n暂无数据（清洗后为空）。"
+
     return f"{title}\n\n{df.head(rows).to_csv(index=False)}"
 
 

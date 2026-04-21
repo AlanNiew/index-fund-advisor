@@ -68,9 +68,8 @@ class CachedDataToolExecutor:
         cached_value, artifact_path = cached
 
         # 检查缓存有效期
-        if max_age_seconds is not None and os.path.exists(artifact_path):
-            if time.time() - os.path.getmtime(artifact_path) > max_age_seconds:
-                return None
+        if max_age_seconds is not None and os.path.exists(artifact_path) and time.time() - os.path.getmtime(artifact_path) > max_age_seconds:
+            return None
 
         snapshot_path = self._save_snapshot_if_needed(tool_name, params, cached_value, persist_snapshot, metadata)
         cache_key = self.artifact_store.build_cache_key(tool_name, params)

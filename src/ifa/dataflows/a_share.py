@@ -12,13 +12,11 @@ import time
 from contextlib import contextmanager
 from http.client import RemoteDisconnected
 
-import akshare as ak
 import pandas as pd
 import requests
 from akshare.utils import tqdm as ak_tqdm
 
 from .a_share_common import no_proxy
-
 
 # ---------------------------------------------------------------------------
 #  通用工具函数（基础设施层）

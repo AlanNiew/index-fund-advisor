@@ -5,6 +5,7 @@
 datetime 解析 → 缺失值处理 → 数值类型强制转换 → ffill/bfill
 """
 
+import contextlib
 import logging
 
 import pandas as pd
@@ -47,10 +48,8 @@ def clean_dataframe(df: pd.DataFrame, context: str = "") -> pd.DataFrame:
     # 4. 按日期排序（如有日期列）
     for col in df.columns:
         if col.lower() in _DATE_COLUMNS:
-            try:
+            with contextlib.suppress(Exception):
                 df = df.sort_values(col).reset_index(drop=True)
-            except Exception:
-                pass
             break
 
     cleaned_len = len(df)

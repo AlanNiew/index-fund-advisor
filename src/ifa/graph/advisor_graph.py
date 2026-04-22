@@ -67,6 +67,31 @@ from .propagation import Propagator
 from .reflection import Reflector
 from .signal_processing import SignalProcessor
 
+# ── 节点名称 → 用户友好的中文进度描述 ──
+_NODE_DESCRIPTIONS: dict[str, str] = {
+    "Fund Analyst": "基金分析师正在分析...",
+    "Index Analyst": "指数分析师正在分析...",
+    "Fund Screener": "正在筛选基金...",
+    "Bull Researcher": "看涨研究员辩论中...",
+    "Bear Researcher": "看跌研究员辩论中...",
+    "Research Manager": "研究经理正在裁决...",
+    "Report Generator": "正在生成分析报告...",
+    "Portfolio Advisor R1": "组合顾问正在初步规划...",
+    "Portfolio Advisor R2": "组合顾问正在优化方案...",
+    "Aggressive Analyst": "积极分析师辩论中...",
+    "Conservative Analyst": "保守分析师辩论中...",
+    "Neutral Analyst": "中立分析师辩论中...",
+    "Portfolio Manager": "组合经理正在决策...",
+}
+
+# 需要跳过进度报告的节点前缀（内部节点，不向用户展示）
+_SKIP_NODE_PREFIXES = ("Msg Clear ", "tools_")
+
+
+def _should_skip_node(name: str) -> bool:
+    """判断节点是否应跳过进度报告。"""
+    return any(name.startswith(p) for p in _SKIP_NODE_PREFIXES)
+
 
 class AdvisorGraph:
     """IFA 工作流编排器，支持四种分析模式。"""
@@ -448,8 +473,14 @@ class AdvisorGraph:
     #  运行与日志
     # ════════════════════════════════════════════
 
-    def run(self, mode: str, state: dict) -> dict:
+    def run(self, mode: str, state: dict, on_progress=None) -> dict:
         """执行分析图并返回最终状态。
+
+        参数:
+            mode: 分析模式 (deep/screen/portfolio/deep_simple)
+            state: 图的初始状态
+            on_progress: 可选进度回调，签名为 (node_name, description) -> None。
+                         为 None 时使用原 invoke 路径（向后兼容）。
 
         顶层异常保护：即使图执行失败，也尝试保存已有日志并返回错误信息。
         """
@@ -474,10 +505,30 @@ class AdvisorGraph:
                 logger.warning("资产类型检测失败 (%s): %s，继续执行", first_code, e)
 
         graph = self.build_graph(mode)
-        args = self.propagator.get_graph_args(self.callbacks)
 
         try:
-            final_state = graph.invoke(state, **args)
+            if on_progress is not None:
+                # ── 流式路径：逐节点报告进度 ──
+                config: dict[str, Any] = {"recursion_limit": self.propagator.max_recur_limit}
+                if self.callbacks:
+                    config["callbacks"] = self.callbacks
+
+                final_state: dict = state
+                for stream_mode, chunk in graph.stream(
+                    state, config=config, stream_mode=["values", "updates"]
+                ):
+                    if stream_mode == "updates":
+                        node_name = next(iter(chunk))
+                        if not _should_skip_node(node_name):
+                            desc = _NODE_DESCRIPTIONS.get(node_name, node_name)
+                            on_progress(node_name, desc)
+                    elif stream_mode == "values":
+                        final_state = chunk
+            else:
+                # ── 原有 invoke 路径，保持不变 ──
+                args = self.propagator.get_graph_args(self.callbacks)
+                final_state = graph.invoke(state, **args)
+
             trace.finish_current(status="ok")
         except Exception as e:
             logger.error("图执行失败: %s", e)

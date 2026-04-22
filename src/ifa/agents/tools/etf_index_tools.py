@@ -6,6 +6,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 
 from ifa.data_tools.api import run_data_tool
+from ifa.dataflows.data_cleaning import cap_tool_result
 
 
 @tool
@@ -24,12 +25,12 @@ def get_etf_data(
     返回：
         str: 指定 ETF 在给定日期区间内的格式化行情数据表。
     """
-    return run_data_tool(
+    return cap_tool_result(run_data_tool(
         "get_etf_data",
         symbol=symbol,
         start_date=start_date,
         end_date=end_date,
-    )
+    ))
 
 
 @tool
@@ -48,12 +49,12 @@ def get_index_data(
     返回：
         str: 指定指数在给定日期区间内的格式化行情数据表。
     """
-    return run_data_tool(
+    return cap_tool_result(run_data_tool(
         "get_index_data",
         symbol=symbol,
         start_date=start_date,
         end_date=end_date,
-    )
+    ))
 
 
 @tool
@@ -67,7 +68,7 @@ def get_etf_fund_info(
     返回：
         str: ETF 基金基本信息文本。
     """
-    return run_data_tool("get_etf_fund_info", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_etf_fund_info", symbol=symbol))
 
 
 @tool
@@ -81,7 +82,7 @@ def get_index_constituents(
     返回：
         str: 成分股代码、名称及权重分布。
     """
-    return run_data_tool("get_index_constituents", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_index_constituents", symbol=symbol))
 
 
 @tool
@@ -95,4 +96,4 @@ def get_fund_nav(
     返回：
         str: 基金历史净值数据文本。
     """
-    return run_data_tool("get_fund_nav", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_fund_nav", symbol=symbol))

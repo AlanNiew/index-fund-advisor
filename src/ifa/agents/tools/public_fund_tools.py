@@ -6,6 +6,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 
 from ifa.data_tools.api import run_data_tool
+from ifa.dataflows.data_cleaning import cap_tool_result
 
 
 @tool
@@ -16,7 +17,7 @@ def get_fund_list() -> str:
     返回：
         str: 基金列表数据。
     """
-    return run_data_tool("get_fund_list")
+    return cap_tool_result(run_data_tool("get_fund_list"))
 
 
 @tool
@@ -30,7 +31,7 @@ def get_fund_basic_info(
     返回：
         str: 基金基本信息文本。
     """
-    return run_data_tool("get_fund_basic_info", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_fund_basic_info", symbol=symbol))
 
 
 @tool
@@ -47,7 +48,7 @@ def get_open_fund_rank(
     返回：
         str: 基金排行 CSV 数据。
     """
-    return run_data_tool("get_open_fund_rank", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_open_fund_rank", symbol=symbol))
 
 
 @tool
@@ -66,7 +67,7 @@ def get_fund_stock_holdings(
     返回：
         str: 股票持仓 CSV 数据。
     """
-    return run_data_tool("get_fund_stock_holdings", symbol=symbol, date=date)
+    return cap_tool_result(run_data_tool("get_fund_stock_holdings", symbol=symbol, date=date))
 
 
 @tool
@@ -85,7 +86,7 @@ def get_fund_bond_holdings(
     返回：
         str: 债券持仓 CSV 数据。
     """
-    return run_data_tool("get_fund_bond_holdings", symbol=symbol, date=date)
+    return cap_tool_result(run_data_tool("get_fund_bond_holdings", symbol=symbol, date=date))
 
 
 @tool
@@ -104,7 +105,7 @@ def get_fund_industry_allocation(
     返回：
         str: 行业配置分布文本。
     """
-    return run_data_tool("get_fund_industry_allocation", symbol=symbol, date=date)
+    return cap_tool_result(run_data_tool("get_fund_industry_allocation", symbol=symbol, date=date))
 
 
 @tool
@@ -118,7 +119,7 @@ def get_fund_risk_analysis(
     返回：
         str: 风险分析指标文本。
     """
-    return run_data_tool("get_fund_risk_analysis", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_fund_risk_analysis", symbol=symbol))
 
 
 @tool
@@ -132,7 +133,7 @@ def get_fund_achievement(
     返回：
         str: 业绩数据文本。
     """
-    return run_data_tool("get_fund_achievement", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_fund_achievement", symbol=symbol))
 
 
 @tool
@@ -142,7 +143,7 @@ def get_etf_spot_data() -> str:
     返回：
         str: ETF 实时行情 CSV 数据。
     """
-    return run_data_tool("get_etf_spot_data")
+    return cap_tool_result(run_data_tool("get_etf_spot_data"))
 
 
 @tool
@@ -161,7 +162,7 @@ def get_fund_history_nav(
     返回：
         str: 历史数据文本。
     """
-    return run_data_tool("get_fund_history_nav", symbol=symbol, indicator=indicator)
+    return cap_tool_result(run_data_tool("get_fund_history_nav", symbol=symbol, indicator=indicator))
 
 
 # ── Phase 2 增强工具 ──────────────────────────────────────────
@@ -181,7 +182,7 @@ def get_fund_value_estimation(
     返回：
         str: 净值估算 CSV 数据。
     """
-    return run_data_tool("get_fund_value_estimation", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_fund_value_estimation", symbol=symbol))
 
 
 @tool
@@ -195,7 +196,7 @@ def get_fund_dividend(
     返回：
         str: 基金分红 CSV 数据。
     """
-    return run_data_tool("get_fund_dividend", year=year)
+    return cap_tool_result(run_data_tool("get_fund_dividend", year=year))
 
 
 @tool
@@ -205,7 +206,7 @@ def get_fund_purchase_status() -> str:
     返回：
         str: 申购状态 CSV 数据。
     """
-    return run_data_tool("get_fund_purchase_status")
+    return cap_tool_result(run_data_tool("get_fund_purchase_status"))
 
 
 @tool
@@ -224,7 +225,7 @@ def get_fund_fee(
     返回：
         str: 费率信息文本。
     """
-    return run_data_tool("get_fund_fee", symbol=symbol, indicator=indicator)
+    return cap_tool_result(run_data_tool("get_fund_fee", symbol=symbol, indicator=indicator))
 
 
 @tool
@@ -247,7 +248,7 @@ def get_index_fund_filter(
     返回：
         str: 指数基金 CSV 数据。
     """
-    return run_data_tool("get_index_fund_filter", symbol=symbol, indicator=indicator)
+    return cap_tool_result(run_data_tool("get_index_fund_filter", symbol=symbol, indicator=indicator))
 
 
 # ── Phase 3 补充工具 ──────────────────────────────────────────
@@ -260,7 +261,7 @@ def get_money_fund_daily() -> str:
     返回：
         str: 货币基金 CSV 数据。
     """
-    return run_data_tool("get_money_fund_daily")
+    return cap_tool_result(run_data_tool("get_money_fund_daily"))
 
 
 @tool
@@ -274,7 +275,7 @@ def get_fund_profit_probability(
     返回：
         str: 盈利概率数据文本。
     """
-    return run_data_tool("get_fund_profit_probability", symbol=symbol)
+    return cap_tool_result(run_data_tool("get_fund_profit_probability", symbol=symbol))
 
 
 @tool
@@ -293,7 +294,7 @@ def get_fund_asset_allocation(
     返回：
         str: 资产配置比例文本。
     """
-    return run_data_tool("get_fund_asset_allocation", symbol=symbol, date=date)
+    return cap_tool_result(run_data_tool("get_fund_asset_allocation", symbol=symbol, date=date))
 
 
 @tool
@@ -321,14 +322,14 @@ def get_etf_intraday(
     返回：
         str: 分时行情 CSV 数据。
     """
-    return run_data_tool(
+    return cap_tool_result(run_data_tool(
         "get_etf_intraday",
         symbol=symbol,
         period=period,
         start_date=start_date,
         end_date=end_date,
         adjust=adjust,
-    )
+    ))
 
 
 @tool
@@ -338,4 +339,4 @@ def get_lof_spot_data() -> str:
     返回：
         str: LOF 实时行情 CSV 数据。
     """
-    return run_data_tool("get_lof_spot_data")
+    return cap_tool_result(run_data_tool("get_lof_spot_data"))

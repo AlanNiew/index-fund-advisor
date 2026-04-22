@@ -29,13 +29,16 @@ console = Console()
 def _run_analysis(mode: str, state: dict, title: str, **build_kwargs):
     """公共分析执行逻辑：初始化 AdvisorGraph 并运行。"""
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
-        progress.add_task("初始化...", total=None)
+        task = progress.add_task("初始化...", total=None)
         from ifa.common import build_advisor
 
         advisor = build_advisor(**build_kwargs)
 
-        progress.add_task("执行分析...", total=None)
-        final_state = advisor.run(mode, state)
+        # 定义进度回调，实时更新 Rich spinner 描述
+        def on_progress(node_name: str, description: str):
+            progress.update(task, description=description)
+
+        final_state = advisor.run(mode, state, on_progress=on_progress)
 
     report = final_state.get("final_report", "")
     if report:

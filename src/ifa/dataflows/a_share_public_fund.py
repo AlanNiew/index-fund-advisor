@@ -58,8 +58,11 @@ def get_fund_list() -> str:
         available_cols = list(df.columns[:4])
 
     selected = df[available_cols].copy()
-    header = f"# All Public Funds List\n# Records: {len(selected)}\n\n"
-    return header + selected.to_csv(index=False)
+    # 限制行数，避免返回全部 2 万+ 基金撑爆 LLM 上下文
+    total = len(selected)
+    sample = selected.head(30)
+    header = f"# All Public Funds List\n# Total: {total} funds (showing top 30)\n\n"
+    return header + sample.to_csv(index=False)
 
 
 # ── 2. 基金基本信息 ─────────────────────────────────────────────
@@ -156,7 +159,8 @@ def get_fund_stock_holdings(symbol: str, date: str = "") -> str:
         f"# Fund Stock Holdings for {display} ({report_date or 'latest'})\n"
         f"# Records: {len(df)}\n\n"
     )
-    return header + df.to_csv(index=False)
+    # 保留前 20 行（按持仓比例排序，前 20 = 十大重仓股，最有价值）
+    return header + df.head(20).to_csv(index=False)
 
 
 # ── 5. 基金债券持仓 ────────────────────────────────────────────
@@ -193,7 +197,8 @@ def get_fund_bond_holdings(symbol: str, date: str = "") -> str:
         f"# Fund Bond Holdings for {display} ({report_date or 'latest'})\n"
         f"# Records: {len(df)}\n\n"
     )
-    return header + df.to_csv(index=False)
+    # 保留前 20 行（前 20 = 主要债券持仓）
+    return header + df.head(20).to_csv(index=False)
 
 
 # ── 6. 行业配置 ────────────────────────────────────────────────

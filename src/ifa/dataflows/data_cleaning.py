@@ -108,3 +108,50 @@ def truncate_report(report: str, max_chars: int = 3000) -> str:
     if not report or len(report) <= max_chars:
         return report
     return report[:max_chars] + "\n\n[... 报告已截断，完整报告见日志 ...]"
+
+
+def cap_tool_result(result: str, max_chars: int = 5000) -> str:
+    """智能截断工具返回结果，保留标题行和数据行结构。
+
+    与 truncate_report 不同，此函数会保留结果中的标题行（# 开头的行），
+    然后截断数据部分，确保 LLM 仍然理解数据结构。
+
+    参数:
+        result: 工具返回的原始字符串
+        max_chars: 最大字符数（默认 5000）
+
+    返回:
+        截断后的结果（保留标题 + 尽可能多的数据行 + 省略提示）
+    """
+    if not result or len(result) <= max_chars:
+        return result
+
+    # 分离标题行（# 开头）和数据行
+    lines = result.split("\n")
+    header_lines = []
+    data_lines = []
+    for line in lines:
+        if line.startswith("#") or (not data_lines and not line.strip()):
+            header_lines.append(line)
+        else:
+            data_lines.append(line)
+
+    header_block = "\n".join(header_lines)
+    if not data_lines:
+        return result[:max_chars] + "\n\n[... 数据已截断 ...]"
+
+    # 计算数据部分可用空间
+    data_budget = max_chars - len(header_block) - 50  # 预留省略提示空间
+
+    # 逐行添加数据，直到超出预算
+    kept = []
+    for line in data_lines:
+        if sum(len(k) + 1 for k in kept) + len(line) + 1 > data_budget:
+            break
+        kept.append(line)
+
+    result = header_block + "\n".join(kept)
+    skipped = len(data_lines) - len(kept)
+    if skipped > 0:
+        result += f"\n\n[... 数据已截断，省略 {skipped} 行 ...]"
+    return result

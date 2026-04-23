@@ -1,0 +1,152 @@
+"""Agent 工具函数测试 — invoke_llm_safely, invoke_chain_safely, 语言指令, 标的上下文, 消息清理。"""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
+
+from ifa.agents.utils import (
+    AgentLLMError,
+    _build_language_instruction,
+    build_instrument_context,
+    create_msg_delete,
+    get_internal_language_instruction,
+    invoke_chain_safely,
+    invoke_llm_safely,
+)
+
+# ════════════════════════════════════════════
+#  invoke_llm_safely
+# ════════════════════════════════════════════
+
+
+class TestInvokeLLMSafely:
+    """invoke_llm_safely 重试逻辑测试。"""
+
+    def test_success_first_try(self):
+        """首次调用成功时直接返回结果。"""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = AIMessage(content="ok")
+        result = invoke_llm_safely(mock_llm, "test prompt", retries=2)
+        assert result.content == "ok"
+        assert mock_llm.invoke.call_count == 1
+
+    def test_retry_then_success(self):
+        """首次失败后重试成功。"""
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [Exception("timeout"), AIMessage(content="recovered")]
+        with patch("ifa.agents.utils.time.sleep"):
+            result = invoke_llm_safely(mock_llm, "prompt", retries=2)
+        assert result.content == "recovered"
+        assert mock_llm.invoke.call_count == 2
+
+    def test_all_retries_exhausted(self):
+        """所有重试用尽后抛出 AgentLLMError。"""
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = ConnectionError("network down")
+        with patch("ifa.agents.utils.time.sleep"), pytest.raises(AgentLLMError, match="LLM 调用失败"):
+            invoke_llm_safely(mock_llm, "prompt", retries=2)
+        assert mock_llm.invoke.call_count == 3  # 1 initial + 2 retries
+
+
+# ════════════════════════════════════════════
+#  invoke_chain_safely
+# ════════════════════════════════════════════
+
+
+class TestInvokeChainSafely:
+    """invoke_chain_safely 重试逻辑测试。"""
+
+    def test_chain_success(self):
+        """链调用成功。"""
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = {"result": "good"}
+        result = invoke_chain_safely(mock_chain, {"input": "x"})
+        assert result == {"result": "good"}
+
+    def test_chain_retry_exhausted(self):
+        """链调用重试耗尽后抛出 AgentLLMError。"""
+        mock_chain = MagicMock()
+        mock_chain.invoke.side_effect = RuntimeError("chain broken")
+        with patch("ifa.agents.utils.time.sleep"), pytest.raises(AgentLLMError, match="Chain 调用失败"):
+            invoke_chain_safely(mock_chain, {"input": "x"}, retries=1)
+        assert mock_chain.invoke.call_count == 2  # 1 initial + 1 retry
+
+
+# ════════════════════════════════════════════
+#  语言指令
+# ════════════════════════════════════════════
+
+
+class TestLanguageInstruction:
+    """语言提示语构建测试。"""
+
+    def test_english_returns_empty(self):
+        """英文不需要额外语言指令。"""
+        assert _build_language_instruction("English", "test") == ""
+
+    def test_chinese_returns_instruction(self):
+        """中文返回包含语言要求的提示语。"""
+        result = _build_language_instruction("Chinese", "output language")
+        assert "Chinese" in result
+        assert "output language" in result
+
+    def test_none_defaults_to_english(self):
+        """None 默认为英文，返回空字符串。"""
+        assert _build_language_instruction(None, "test") == ""
+
+    def test_internal_language_instruction(self):
+        """get_internal_language_instruction 返回格式正确。"""
+        with patch("ifa.agents.utils.get_internal_language", return_value="English"):
+            assert get_internal_language_instruction() == ""
+
+
+# ════════════════════════════════════════════
+#  build_instrument_context
+# ════════════════════════════════════════════
+
+
+class TestBuildInstrumentContext:
+    """标的上文构建测试。"""
+
+    def test_etf_context(self):
+        """ETF 基金描述包含 ETF 关键词。"""
+        result = build_instrument_context("510300.SH")
+        assert "510300.SH" in result
+        assert "ETF" in result
+
+    def test_public_fund_context(self):
+        """公募基金描述包含 fund 关键词。"""
+        # 110011 是典型公募基金代码，会被检测为 STOCK 或 OFFSHORE_FUND
+        result = build_instrument_context("110011")
+        assert "110011" in result
+
+    def test_index_context(self):
+        """指数描述包含 index 关键词。"""
+        result = build_instrument_context("000300.SH")
+        assert "000300.SH" in result
+        assert "index" in result.lower()
+
+
+# ════════════════════════════════════════════
+#  create_msg_delete
+# ════════════════════════════════════════════
+
+
+class TestCreateMsgDelete:
+    """消息清理函数测试。"""
+
+    def test_delete_all_messages(self):
+        """清理函数移除所有消息并添加占位符。"""
+        msg1 = HumanMessage(content="hello", id="1")
+        msg2 = AIMessage(content="world", id="2")
+        state = {"messages": [msg1, msg2]}
+
+        delete_fn = create_msg_delete()
+        result = delete_fn(state)
+
+        # 应包含 2 个 RemoveMessage + 1 个占位 HumanMessage
+        assert len(result["messages"]) == 3
+        assert isinstance(result["messages"][0], RemoveMessage)
+        assert isinstance(result["messages"][2], HumanMessage)
+        assert result["messages"][2].content == "Continue"

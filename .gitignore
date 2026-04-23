@@ -23,6 +23,10 @@ dataflows/data_cache/
 
 # 分析结果
 results/
+test_results/
+
+# Claude Code 会话缓存
+.claude/
 
 # OS
 Thumbs.db

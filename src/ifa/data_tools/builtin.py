@@ -145,6 +145,49 @@ def get_lof_spot_data_tool():
     return route_to_vendor("get_lof_spot_data")
 
 
+# ── 宏观经济 / 市场情绪 / 行业估值 ─────────────────────────────
+
+
+def get_macro_indicator_tool(indicator: str = "GDP"):
+    """执行宏观经济指标工具。"""
+    return route_to_vendor("get_macro_indicator", indicator)
+
+
+def get_north_flow_tool(symbol: str = "北向资金"):
+    """执行北向资金工具。"""
+    return route_to_vendor("get_north_flow", symbol)
+
+
+def get_market_fund_flow_tool():
+    """执行大盘资金流向工具。"""
+    return route_to_vendor("get_market_fund_flow")
+
+
+def get_margin_data_tool():
+    """执行融资融券工具。"""
+    return route_to_vendor("get_margin_data")
+
+
+def get_sector_fund_flow_tool(indicator: str = "今日", sector_type: str = "行业资金流"):
+    """执行板块资金流向工具。"""
+    return route_to_vendor("get_sector_fund_flow", indicator, sector_type)
+
+
+def get_market_valuation_tool(indicator: str = "上证PE"):
+    """执行市场估值工具。"""
+    return route_to_vendor("get_market_valuation", indicator)
+
+
+def get_index_valuation_tool(index_name: str = "沪深300"):
+    """执行指数综合估值分析工具。"""
+    return route_to_vendor("get_index_valuation", index_name)
+
+
+def get_valuation_signal_tool(index_name: str = "沪深300"):
+    """执行指数估值信号工具。"""
+    return route_to_vendor("get_valuation_signal", index_name)
+
+
 # ── 声明式工具注册表（name, handler, description） ──
 _TOOL_SPECS: list[tuple[str, callable, str]] = [
     # ETF / 指数 / 场外基金
@@ -176,6 +219,15 @@ _TOOL_SPECS: list[tuple[str, callable, str]] = [
     ("get_fund_asset_allocation", get_fund_asset_allocation_tool, "基金资产配置比例工具"),
     ("get_etf_intraday", get_etf_intraday_tool, "ETF 分时行情工具"),
     ("get_lof_spot_data", get_lof_spot_data_tool, "LOF 实时行情工具"),
+    # 宏观经济 / 市场情绪 / 行业估值
+    ("get_macro_indicator", get_macro_indicator_tool, "宏观经济指标工具"),
+    ("get_north_flow", get_north_flow_tool, "北向资金流向工具"),
+    ("get_market_fund_flow", get_market_fund_flow_tool, "大盘资金流向工具"),
+    ("get_margin_data", get_margin_data_tool, "融资融券数据工具"),
+    ("get_sector_fund_flow", get_sector_fund_flow_tool, "板块资金流向工具"),
+    ("get_market_valuation", get_market_valuation_tool, "市场估值数据工具"),
+    ("get_index_valuation", get_index_valuation_tool, "指数综合估值分析工具"),
+    ("get_valuation_signal", get_valuation_signal_tool, "指数估值信号分析工具"),
 ]
 
 

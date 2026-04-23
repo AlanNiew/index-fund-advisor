@@ -9,6 +9,15 @@ from ifa.agents.tools.constituent_tools import (
     get_constituent_sector_distribution,
 )
 from ifa.agents.tools.etf_index_tools import get_etf_fund_info
+from ifa.agents.tools.macro_tools import (
+    get_index_valuation,
+    get_macro_indicator,
+    get_market_fund_flow,
+    get_market_valuation,
+    get_north_flow,
+    get_sector_fund_flow,
+    get_valuation_signal,
+)
 from ifa.agents.utils import (
     build_instrument_context,
     get_internal_language_instruction,
@@ -29,7 +38,14 @@ _INDEX_ANALYST_SYSTEM_MESSAGE = (
     "- `get_constituent_overview` for top-weight stocks summary;\n"
     "- `get_constituent_sector_distribution` for industry breakdown;\n"
     "- `get_constituent_performance` for recent price action of key stocks;\n"
-    "- `get_etf_fund_info` for fund profile data.\n\n"
+    "- `get_etf_fund_info` for fund profile data.\n"
+    "- `get_macro_indicator` for macro environment context;\n"
+    "- `get_north_flow` for northbound capital flow;\n"
+    "- `get_market_fund_flow` for market-wide fund flow;\n"
+    "- `get_sector_fund_flow` for sector capital flow ranking;\n"
+    "- `get_market_valuation` for market/index PE/PB valuation.\n"
+    "- `get_index_valuation` for comprehensive index valuation analysis with historical percentiles.\n"
+    "- `get_valuation_signal` for valuation investment signals using EY/Bogle PE/Bogle PB methods.\n\n"
     "Append a Markdown table at the end."
 )
 
@@ -46,6 +62,14 @@ def create_index_analyst(llm):
             get_constituent_sector_distribution,
             get_constituent_performance,
             get_etf_fund_info,
+            # 宏观经济 / 市场情绪 / 行业估值
+            get_macro_indicator,
+            get_north_flow,
+            get_market_fund_flow,
+            get_sector_fund_flow,
+            get_market_valuation,
+            get_index_valuation,
+            get_valuation_signal,
         ]
 
         system_message = _INDEX_ANALYST_SYSTEM_MESSAGE + get_internal_language_instruction()

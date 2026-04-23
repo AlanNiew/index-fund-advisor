@@ -15,6 +15,30 @@ from .a_share_index_fund import (
 from .a_share_index_fund import (
     get_index_data as get_akshare_index_data,
 )
+from .a_share_macro import (
+    get_index_valuation as get_akshare_index_valuation,
+)
+from .a_share_macro import (
+    get_macro_indicator as get_akshare_macro_indicator,
+)
+from .a_share_macro import (
+    get_margin_data as get_akshare_margin_data,
+)
+from .a_share_macro import (
+    get_market_fund_flow as get_akshare_market_fund_flow,
+)
+from .a_share_macro import (
+    get_market_valuation as get_akshare_market_valuation,
+)
+from .a_share_macro import (
+    get_north_flow as get_akshare_north_flow,
+)
+from .a_share_macro import (
+    get_sector_fund_flow as get_akshare_sector_fund_flow,
+)
+from .a_share_macro import (
+    get_valuation_signal as get_akshare_valuation_signal,
+)
 from .a_share_public_fund import (
     get_etf_intraday as get_akshare_etf_intraday,
 )
@@ -111,6 +135,19 @@ TOOLS_CATEGORIES = {
             "get_lof_spot_data",
         ],
     },
+    "macro_market": {
+        "description": "Macro economy, market sentiment, and sector valuation data",
+        "tools": [
+            "get_macro_indicator",
+            "get_north_flow",
+            "get_market_fund_flow",
+            "get_margin_data",
+            "get_sector_fund_flow",
+            "get_market_valuation",
+            "get_index_valuation",
+            "get_valuation_signal",
+        ],
+    },
 }
 
 VENDOR_LIST = ["akshare"]
@@ -194,6 +231,31 @@ VENDOR_METHODS = {
     },
     "get_lof_spot_data": {
         "akshare": get_akshare_lof_spot_data,
+    },
+    # ── 宏观经济 / 市场情绪 / 行业估值 ──
+    "get_macro_indicator": {
+        "akshare": get_akshare_macro_indicator,
+    },
+    "get_north_flow": {
+        "akshare": get_akshare_north_flow,
+    },
+    "get_market_fund_flow": {
+        "akshare": get_akshare_market_fund_flow,
+    },
+    "get_margin_data": {
+        "akshare": get_akshare_margin_data,
+    },
+    "get_sector_fund_flow": {
+        "akshare": get_akshare_sector_fund_flow,
+    },
+    "get_market_valuation": {
+        "akshare": get_akshare_market_valuation,
+    },
+    "get_index_valuation": {
+        "akshare": get_akshare_index_valuation,
+    },
+    "get_valuation_signal": {
+        "akshare": get_akshare_valuation_signal,
     },
 }
 

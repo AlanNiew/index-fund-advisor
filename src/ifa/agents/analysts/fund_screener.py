@@ -3,6 +3,10 @@
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from ifa.agents.tools.macro_tools import (
+    get_market_valuation,
+    get_sector_fund_flow,
+)
 from ifa.agents.tools.public_fund_tools import (
     get_etf_spot_data,
     get_fund_basic_info,
@@ -23,7 +27,9 @@ _FUND_SCREENER_SYSTEM_MESSAGE = (
     "2. Call `get_index_fund_filter` with appropriate parameters;\n"
     "3. Optionally call `get_fund_list` or `get_open_fund_rank` for supplementary data;\n"
     "4. Call `get_fund_basic_info` for top candidates to get size and fee details;\n"
-    "5. Call `get_etf_spot_data` if ETF real-time data is needed.\n\n"
+    "5. Call `get_etf_spot_data` if ETF real-time data is needed.\n"
+    "6. Call `get_sector_fund_flow` for sector capital flow ranking to identify hot/cold sectors;\n"
+    "7. Call `get_market_valuation` for market/index PE/PB to assess valuation level.\n\n"
     "Output a ranked list of candidate funds with key metrics:\n"
     "- Fund code, name, type\n"
     "- Size (AUM)\n"
@@ -45,6 +51,9 @@ def create_fund_screener(llm):
             get_index_fund_filter,
             get_open_fund_rank,
             get_etf_spot_data,
+            # 板块资金 / 行业估值
+            get_sector_fund_flow,
+            get_market_valuation,
         ]
 
         system_message = _FUND_SCREENER_SYSTEM_MESSAGE + get_internal_language_instruction()

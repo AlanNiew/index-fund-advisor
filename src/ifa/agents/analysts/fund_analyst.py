@@ -3,6 +3,14 @@
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from ifa.agents.tools.macro_tools import (
+    get_index_valuation,
+    get_macro_indicator,
+    get_margin_data,
+    get_market_fund_flow,
+    get_north_flow,
+    get_valuation_signal,
+)
 from ifa.agents.tools.public_fund_tools import (
     get_fund_achievement,
     get_fund_asset_allocation,
@@ -47,7 +55,13 @@ _FUND_ANALYST_SYSTEM_MESSAGE = (
     "- `get_fund_fee` for fee details;\n"
     "- `get_fund_purchase_status` for subscription/redemption status;\n"
     "- `get_fund_profit_probability` for historical profit probability;\n"
-    "- `get_fund_list` and `get_open_fund_rank` for peer comparison.\n\n"
+    "- `get_fund_list` and `get_open_fund_rank` for peer comparison.\n"
+    "- `get_macro_indicator` for macroeconomic context (CPI/PPI/PMI/GDP/LPR/SHIBOR/Money Supply);\n"
+    "- `get_north_flow` for northbound capital flow;\n"
+    "- `get_market_fund_flow` for market-wide fund flow;\n"
+    "- `get_margin_data` for margin trading balance.\n"
+    "- `get_index_valuation` for comprehensive index valuation analysis with historical percentiles.\n"
+    "- `get_valuation_signal` for valuation investment signals using EY/Bogle PE/Bogle PB methods.\n\n"
     "Append a Markdown summary table at the end."
 )
 
@@ -73,6 +87,13 @@ def create_fund_analyst(llm):
             get_fund_purchase_status,
             get_fund_profit_probability,
             get_open_fund_rank,
+            # 宏观经济 / 市场情绪
+            get_macro_indicator,
+            get_north_flow,
+            get_market_fund_flow,
+            get_margin_data,
+            get_index_valuation,
+            get_valuation_signal,
         ]
 
         system_message = _FUND_ANALYST_SYSTEM_MESSAGE + get_internal_language_instruction()

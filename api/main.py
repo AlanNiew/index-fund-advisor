@@ -2,10 +2,11 @@
 """IFA FastAPI 服务入口。"""
 
 import asyncio
+import os
 import uuid
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── API Key 认证中间件 ──
+_API_KEY = os.environ.get("IFA_API_KEY", "")
+
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    """API Key 认证：IFA_API_KEY 环境变量非空时启用认证。"""
+    if _API_KEY:
+        key = request.headers.get("X-API-Key", "")
+        if key != _API_KEY:
+            raise HTTPException(status_code=401, detail="无效或缺失的 API Key（X-API-Key header）")
+    return await call_next(request)
 
 # ── 内存任务存储 ──
 _tasks: dict[str, dict] = {}

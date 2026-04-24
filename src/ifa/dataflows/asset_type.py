@@ -152,7 +152,11 @@ def detect_asset_type(symbol: str) -> AssetType:
     if _match_index_whitelist(plain_code, explicit_exchange):
         return AssetType.INDEX
 
-    # 2. 规范化代码，失败则判定为场外基金
+    # 2. 检查公募基金代码前缀（6位纯数字，不涉及交易所）
+    if _is_public_fund_code(plain_code):
+        return AssetType.PUBLIC_FUND
+
+    # 3. 规范化代码，失败则判定为场外基金
     try:
         normalized_symbol = normalize_ashare_symbol(symbol)
     except (ValueError, TypeError):
@@ -206,6 +210,21 @@ _PREFIX_TYPE_MAP: list[tuple[str, str, AssetType]] = [
     # 深市指数
     ("SZ", "399", AssetType.INDEX),
 ]
+
+
+def _is_public_fund_code(plain_code: str) -> bool:
+    """检查代码是否属于公募基金编码。
+
+    公募基金代码规则：
+    - 00xxxx ~ 09xxxx（场外开放式基金，含联接基金/指数基金/混合型等）
+    - 不包含已在其他分类中的前缀（如 000/001/002/003 对应深市个股/ETF）
+    """
+    _PUBLIC_FUND_PREFIXES = (
+        "004", "005", "006", "007", "008", "009",  # 场外基金
+        "01",  # 01xxxx 系列（如 012414 招商中证白酒指数C）
+        "02", "03", "04", "05", "06", "07", "08", "09",  # 其他场外基金
+    )
+    return plain_code.startswith(_PUBLIC_FUND_PREFIXES)
 
 
 def _classify_by_prefix(code: str, exchange: str) -> AssetType | None:

@@ -42,6 +42,16 @@ from ifa.agents.tools.constituent_tools import (
     get_constituent_sector_distribution,
 )
 from ifa.agents.tools.etf_index_tools import get_etf_fund_info
+from ifa.agents.tools.macro_tools import (
+    get_index_valuation,
+    get_macro_indicator,
+    get_margin_data,
+    get_market_fund_flow,
+    get_market_valuation,
+    get_north_flow,
+    get_sector_fund_flow,
+    get_valuation_signal,
+)
 from ifa.agents.tools.public_fund_tools import (
     get_etf_spot_data,
     get_fund_achievement,
@@ -148,6 +158,13 @@ class AdvisorGraph:
                 get_fund_purchase_status,
                 get_fund_profit_probability,
                 get_open_fund_rank,
+                # 宏观经济 / 市场情绪 / 估值
+                get_macro_indicator,
+                get_north_flow,
+                get_market_fund_flow,
+                get_margin_data,
+                get_index_valuation,
+                get_valuation_signal,
             ]
         )
 
@@ -157,6 +174,14 @@ class AdvisorGraph:
                 get_constituent_sector_distribution,
                 get_constituent_performance,
                 get_etf_fund_info,
+                # 宏观经济 / 市场情绪 / 估值
+                get_macro_indicator,
+                get_north_flow,
+                get_market_fund_flow,
+                get_sector_fund_flow,
+                get_market_valuation,
+                get_index_valuation,
+                get_valuation_signal,
             ]
         )
 

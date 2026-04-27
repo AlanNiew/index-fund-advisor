@@ -57,3 +57,49 @@ class TestSignalProcessor:
         processor = SignalProcessor(mock_llm)
         result = processor.process_signal("Neutral outlook")
         assert result == "HOLD"
+
+    # ── 评级规范化校验测试 ──
+
+    def test_normalize_rating_exact_match(self):
+        """精确匹配所有合法评级。"""
+        for rating in ("STRONG_BUY", "BUY", "HOLD", "UNDERWEIGHT", "SELL"):
+            assert SignalProcessor._normalize_rating(rating) == rating
+
+    def test_normalize_rating_fuzzy_strong_buy(self):
+        """模糊匹配 'strong buy' → STRONG_BUY。"""
+        assert SignalProcessor._normalize_rating("strong buy") == "STRONG_BUY"
+
+    def test_normalize_rating_fuzzy_with_extra_text(self):
+        """包含多余文本时仍能提取评级。"""
+        assert SignalProcessor._normalize_rating("I think the rating is BUY for this fund") == "BUY"
+
+    def test_normalize_rating_fallback_hold(self):
+        """完全无法识别时 fallback 到 HOLD。"""
+        assert SignalProcessor._normalize_rating("不确定") == "HOLD"
+
+    def test_normalize_confidence_exact_match(self):
+        """精确匹配所有合法置信度。"""
+        for conf in ("High", "Medium", "Low"):
+            assert SignalProcessor._normalize_confidence(conf) == conf
+
+    def test_normalize_confidence_fuzzy_moderate(self):
+        """模糊匹配 'moderate' → Medium。"""
+        assert SignalProcessor._normalize_confidence("moderate") == "Medium"
+
+    def test_normalize_confidence_fallback_medium(self):
+        """完全无法识别时 fallback 到 Medium。"""
+        assert SignalProcessor._normalize_confidence("未知") == "Medium"
+
+    def test_process_signal_fuzzy_rating_integration(self):
+        """process_signal 整体测试：LLM 返回非标准格式时仍能规范化。"""
+        mock_llm = self._make_mock_llm("The rating is SELL")
+        processor = SignalProcessor(mock_llm)
+        result = processor.process_signal("Bearish outlook")
+        assert result == "SELL"
+
+    def test_process_confidence_fuzzy_integration(self):
+        """process_confidence 整体测试：LLM 返回非标准格式时仍能规范化。"""
+        mock_llm = self._make_mock_llm("low confidence")
+        processor = SignalProcessor(mock_llm)
+        result = processor.process_confidence("Uncertain analysis")
+        assert result == "Low"

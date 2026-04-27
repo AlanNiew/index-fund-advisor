@@ -150,3 +150,79 @@ class TestCreateMsgDelete:
         assert isinstance(result["messages"][0], RemoveMessage)
         assert isinstance(result["messages"][2], HumanMessage)
         assert result["messages"][2].content == "Continue"
+
+
+# ════════════════════════════════════════════
+#  Agent 防御性访问测试
+# ════════════════════════════════════════════
+
+
+class TestAgentDefensiveAccess:
+    """测试各 Agent 节点在缺失 state 字段时不崩溃。"""
+
+    def _make_mock_llm(self, content: str = "分析结果"):
+        """创建返回指定内容的 mock LLM。"""
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = content
+        mock_response.tool_calls = []
+        mock_llm.invoke.return_value = mock_response
+        return mock_llm
+
+    def test_portfolio_manager_missing_risk_debate_state(self):
+        """Portfolio Manager 缺失 risk_debate_state 时不崩溃。"""
+        from ifa.agents.managers.portfolio_manager import create_portfolio_manager
+
+        mock_llm = self._make_mock_llm("BUY rating")
+        pm_node = create_portfolio_manager(mock_llm)
+
+        # 完全缺失 risk_debate_state
+        state = {"fund_codes": "510300", "fund_analysis_report": "report"}
+        result = pm_node(state)
+        assert "risk_debate_state" in result
+        assert result["risk_debate_state"]["judge_decision"] == "BUY rating"
+
+    def test_portfolio_manager_risk_debate_state_not_dict(self):
+        """Portfolio Manager 的 risk_debate_state 不是 dict 时降级。"""
+        from ifa.agents.managers.portfolio_manager import create_portfolio_manager
+
+        mock_llm = self._make_mock_llm("HOLD")
+        pm_node = create_portfolio_manager(mock_llm)
+
+        state = {"fund_codes": "510300", "risk_debate_state": "invalid"}
+        result = pm_node(state)
+        assert "risk_debate_state" in result
+
+    def test_aggressive_debator_missing_risk_debate_state(self):
+        """Aggressive Debator 缺失 risk_debate_state 时不崩溃。"""
+        from ifa.agents.risk_mgmt.aggressive_debator import create_aggressive_debator
+
+        mock_llm = self._make_mock_llm("积极观点")
+        node = create_aggressive_debator(mock_llm)
+
+        state = {"fund_codes": "510300", "fund_analysis_report": "report"}
+        result = node(state)
+        assert "risk_debate_state" in result
+        assert result["risk_debate_state"]["count"] == 1
+
+    def test_conservative_debator_missing_risk_debate_state(self):
+        """Conservative Debator 缺失 risk_debate_state 时不崩溃。"""
+        from ifa.agents.risk_mgmt.conservative_debator import create_conservative_debator
+
+        mock_llm = self._make_mock_llm("保守观点")
+        node = create_conservative_debator(mock_llm)
+
+        state = {}
+        result = node(state)
+        assert "risk_debate_state" in result
+
+    def test_neutral_debator_missing_risk_debate_state(self):
+        """Neutral Debator 缺失 risk_debate_state 时不崩溃。"""
+        from ifa.agents.risk_mgmt.neutral_debator import create_neutral_debator
+
+        mock_llm = self._make_mock_llm("中立观点")
+        node = create_neutral_debator(mock_llm)
+
+        state = {}
+        result = node(state)
+        assert "risk_debate_state" in result

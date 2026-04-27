@@ -11,7 +11,9 @@ def create_neutral_debator(llm):
     """创建中立风险评估节点。"""
 
     def neutral_node(state) -> dict:
-        risk_debate_state = state["risk_debate_state"]
+        risk_debate_state = state.get("risk_debate_state", {})
+        if not isinstance(risk_debate_state, dict):
+            risk_debate_state = {}
         history = risk_debate_state.get("history", "")
         neutral_history = risk_debate_state.get("neutral_history", "")
 
@@ -45,7 +47,7 @@ def create_neutral_debator(llm):
             "current_aggressive_response": risk_debate_state.get("current_aggressive_response", ""),
             "current_conservative_response": risk_debate_state.get("current_conservative_response", ""),
             "judge_decision": risk_debate_state.get("judge_decision", ""),
-            "count": risk_debate_state["count"] + 1,
+            "count": risk_debate_state.get("count", 0) + 1,
         }
 
         return {"risk_debate_state": new_risk_debate_state}

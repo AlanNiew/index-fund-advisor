@@ -20,10 +20,12 @@ def create_portfolio_manager(llm, memory=None):
         fund_codes = state.get("fund_codes", "")
         fund_analysis = state.get("fund_analysis_report", "")
         fund_debate_state = state.get("fund_debate_state", {})
-        risk_debate_state = state["risk_debate_state"]
+        risk_debate_state = state.get("risk_debate_state", {})
+        if not isinstance(risk_debate_state, dict):
+            risk_debate_state = {}
         portfolio_advice = state.get("portfolio_advice", "")
 
-        history = risk_debate_state["history"]
+        history = risk_debate_state.get("history", "")
 
         curr_situation = f"基金代码: {fund_codes}\n\n基金分析报告:\n{fund_analysis}"
 
@@ -50,15 +52,15 @@ def create_portfolio_manager(llm, memory=None):
 
         new_risk_debate_state = {
             "judge_decision": response.content,
-            "history": risk_debate_state["history"],
-            "aggressive_history": risk_debate_state["aggressive_history"],
-            "conservative_history": risk_debate_state["conservative_history"],
-            "neutral_history": risk_debate_state["neutral_history"],
+            "history": risk_debate_state.get("history", ""),
+            "aggressive_history": risk_debate_state.get("aggressive_history", ""),
+            "conservative_history": risk_debate_state.get("conservative_history", ""),
+            "neutral_history": risk_debate_state.get("neutral_history", ""),
             "latest_speaker": "Judge",
-            "current_aggressive_response": risk_debate_state["current_aggressive_response"],
-            "current_conservative_response": risk_debate_state["current_conservative_response"],
-            "current_neutral_response": risk_debate_state["current_neutral_response"],
-            "count": risk_debate_state["count"],
+            "current_aggressive_response": risk_debate_state.get("current_aggressive_response", ""),
+            "current_conservative_response": risk_debate_state.get("current_conservative_response", ""),
+            "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
+            "count": risk_debate_state.get("count", 0),
         }
 
         return {

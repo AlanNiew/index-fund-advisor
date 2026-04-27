@@ -125,9 +125,7 @@ def create_fund_analyst(llm):
         chain = prompt | llm.bind_tools(tools)
         result = invoke_chain_safely(chain, state["messages"])
 
-        report = ""
-        if len(result.tool_calls) == 0:
-            report = result.content
+        report = result.content if (len(result.tool_calls) == 0 or result.content) else ""
 
         return {
             "messages": [result],

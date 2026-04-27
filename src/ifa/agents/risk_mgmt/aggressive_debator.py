@@ -11,7 +11,9 @@ def create_aggressive_debator(llm):
     """创建积极风险评估节点。"""
 
     def aggressive_node(state) -> dict:
-        risk_debate_state = state["risk_debate_state"]
+        risk_debate_state = state.get("risk_debate_state", {})
+        if not isinstance(risk_debate_state, dict):
+            risk_debate_state = {}
         history = risk_debate_state.get("history", "")
         aggressive_history = risk_debate_state.get("aggressive_history", "")
 
@@ -45,7 +47,7 @@ def create_aggressive_debator(llm):
             "current_conservative_response": risk_debate_state.get("current_conservative_response", ""),
             "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
             "judge_decision": risk_debate_state.get("judge_decision", ""),
-            "count": risk_debate_state["count"] + 1,
+            "count": risk_debate_state.get("count", 0) + 1,
         }
 
         return {"risk_debate_state": new_risk_debate_state}

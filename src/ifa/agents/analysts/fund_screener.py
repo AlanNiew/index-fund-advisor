@@ -77,9 +77,7 @@ def create_fund_screener(llm):
         chain = prompt | llm.bind_tools(tools)
         result = invoke_chain_safely(chain, state["messages"])
 
-        screen_results = ""
-        if len(result.tool_calls) == 0:
-            screen_results = result.content
+        screen_results = result.content if (len(result.tool_calls) == 0 or result.content) else ""
 
         return {
             "messages": [result],

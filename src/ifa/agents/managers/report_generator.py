@@ -25,6 +25,9 @@ synthesize all analysis results into a well-structured, professional Markdown re
 ## Screening Results:
 {screen_results}
 
+## Research Debate Judgment:
+{debate_judgment}
+
 Generate a comprehensive final report in Markdown format with the following structure:
 
 # 指数基金分析报告
@@ -58,6 +61,27 @@ Generate a comprehensive final report in Markdown format with the following stru
 {language_instruction}"""
 
 
+def _extract_debate_judgment(state: dict) -> str:
+    """从状态中提取辩论裁决结果，整合基金辩论和风险辩论的裁决。"""
+    parts = []
+
+    # 基金研究辩论裁决
+    fund_debate = state.get("fund_debate_state", {})
+    if isinstance(fund_debate, dict):
+        judge_decision = fund_debate.get("judge_decision", "")
+        if judge_decision:
+            parts.append(f"### Fund Research Debate Decision\n{judge_decision}")
+
+    # 风险辩论裁决
+    risk_debate = state.get("risk_debate_state", {})
+    if isinstance(risk_debate, dict):
+        judge_decision = risk_debate.get("judge_decision", "")
+        if judge_decision:
+            parts.append(f"### Risk Debate Decision\n{judge_decision}")
+
+    return "\n\n".join(parts) if parts else "无"
+
+
 def create_report_generator(llm):
     """创建并返回报告生成器节点。"""
 
@@ -70,6 +94,9 @@ def create_report_generator(llm):
         portfolio_advice = state.get("portfolio_advice", "")
         screen_results = state.get("screen_results", "")
 
+        # 提取辩论裁决结果
+        debate_judgment = _extract_debate_judgment(state)
+
         language_instruction = get_final_language_instruction()
 
         prompt = _REPORT_GENERATOR_PROMPT.format(
@@ -80,6 +107,7 @@ def create_report_generator(llm):
             index_analysis_report=index_analysis or "无",
             portfolio_advice=portfolio_advice or "无",
             screen_results=screen_results or "无",
+            debate_judgment=debate_judgment,
             language_instruction=language_instruction,
         )
 

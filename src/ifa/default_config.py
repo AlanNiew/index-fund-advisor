@@ -56,8 +56,8 @@ DEFAULT_CONFIG = {
     "analysis_mode": "deep",
     # ── 辩论设置（借鉴 TradingAgents）──
     "enable_debate": True,
-    "max_debate_rounds": 1,
-    "max_risk_discuss_rounds": 1,
+    "max_debate_rounds": 2,
+    "max_risk_discuss_rounds": 2,
     # ── 图执行 ──
     "max_recur_limit": 150,
     "timeout": 180,

@@ -211,3 +211,92 @@
   - 文件：`src/ifa/observability/tracer.py:132-134`
   - 问题：`_current_tracer` 全局变量无锁保护
   - 方案：使用 `contextvars.ContextVar` 替代
+
+---
+
+## 第三轮：精炼打磨
+
+> 基于综合评估（评分 8.45/10），聚焦遗留的代码重复、线程安全缺口、弃用 API、测试盲区。
+
+### R1 — 清理旧 Agent 文件（消除最大重复源）
+
+- [ ] **删除 `bull_researcher.py` 和 `bear_researcher.py`**
+  - 文件：`src/ifa/agents/researchers/bull_researcher.py`、`bear_researcher.py`
+  - 原因：功能已被 `researcher.py` 工厂完全替代，`advisor_graph.py` 已导入新工厂
+  - 操作：`git rm` 两个文件，确认无其他引用
+
+- [ ] **删除三个旧 Debator 文件**
+  - 文件：`src/ifa/agents/risk_mgmt/aggressive_debator.py`、`conservative_debator.py`、`neutral_debator.py`
+  - 原因：功能已被 `debator.py` 工厂完全替代
+  - 操作：`git rm` 三个文件，更新 `tests/test_agents_utils.py` 中 3 处旧导入路径改为 `from ifa.agents.risk_mgmt.debator import ...`
+
+### R2 — 线程安全补全
+
+- [ ] **`data_tools/api.py` 为 `_default_executor` 加锁**
+  - 文件：`src/ifa/data_tools/api.py:8, 43-60`
+  - 问题：`_default_executor` 全局可变状态无锁保护，并发时可能创建多个执行器实例
+  - 方案：使用 `threading.Lock` 保护 `get_default_data_executor()` 的懒初始化
+
+- [ ] **`dataflows/config.py` 初始化改用 `deepcopy`**
+  - 文件：`src/ifa/dataflows/config.py:11`
+  - 问题：`DEFAULT_CONFIG.copy()` 浅拷贝，嵌套的 `data_vendors` 字典可被外部修改
+  - 方案：改为 `copy.deepcopy(default_config.DEFAULT_CONFIG)`
+
+### R3 — 消除弃用 API
+
+- [ ] **替换 `datetime.utcnow()` 为 `datetime.now(UTC)`**
+  - 文件：`src/ifa/data_tools/storage.py:165`
+  - 问题：`datetime.utcnow()` 在 Python 3.12+ 已弃用
+  - 方案：`from datetime import datetime, timezone` → `datetime.now(timezone.utc).isoformat()`
+
+### R4 — API 层优化
+
+- [ ] **`_execute_graph()` 移除重复 `load_dotenv()` 调用**
+  - 文件：`api/routers/analysis.py:110-111`
+  - 问题：每次执行都调用 `load_dotenv()`，在并发场景下是不必要的 I/O
+  - 方案：在 `api/main.py` 启动时调用一次 `load_dotenv()`
+
+- [ ] **修复 `analysis.py` 中的函数内导入**
+  - 文件：`api/routers/analysis.py:82, 90`
+  - 问题：`HTTPException` 和 `all_tasks` 在函数内部导入
+  - 方案：移至文件顶部
+
+- [ ] **`asyncio.create_task()` 添加引用跟踪**
+  - 文件：`api/routers/analysis.py:38, 66, 77`
+  - 问题：`asyncio.create_task()` 创建的后台任务无引用，GC 可能回收导致静默失败
+  - 方案：维护 `set[asyncio.Task]` 引用集合，任务完成时自动移除
+
+### R5 — 测试补强
+
+- [ ] **为 API 路由添加 `TestClient` 测试**
+  - 文件：新建 `tests/test_api.py`
+  - 覆盖：`POST /api/v1/analyze/deep`、`GET /api/v1/tasks`、`GET /api/v1/funds/search`、CORS 头、API Key 认证
+  - Mock `_execute_graph` 避免真实 LLM 调用
+
+- [ ] **为 `no_proxy()` 添加多线程测试**
+  - 文件：新增到 `tests/test_core.py` 或 `tests/test_data_tools_extended.py`
+  - 验证：多个线程同时进入 `no_proxy()` 上下文，各自的环境变量互不影响
+
+### R6 — 代码规范收尾
+
+- [ ] **`tracer.py` 的 `import contextvars` 移至文件顶部**
+  - 文件：`src/ifa/observability/tracer.py:122`
+  - 问题：`import contextvars` 不在文件顶部导入区域
+  - 方案：移至第 6 行 `import time` 后
+
+- [ ] **`web/views/history.py` 的导入规范化 + 路径改用配置**
+  - 文件：`web/views/history.py:33, 12-14`
+  - 问题：`from datetime import datetime` 在循环内导入；`results_dir` 使用相对路径
+  - 方案：导入移至顶部；`results_dir` 使用 `build_runtime_config()["results_dir"]`
+
+- [ ] **关键包 `__init__.py` 添加公共 API 导出**
+  - 文件：`src/ifa/__init__.py`、`src/ifa/agents/__init__.py`、`src/ifa/data_tools/__init__.py`、`src/ifa/llm_clients/__init__.py`
+  - 目的：简化上层导入（如 `from ifa import build_advisor`）
+  - 导出项：`build_advisor`、`build_state`、`AdvisorGraph`、`create_llm_client` 等
+
+### R7 — `advisor_graph.py` 瘦身（可选）
+
+- [ ] **提取 4 个 `build_*_graph` 的公共骨架为模板方法**
+  - 文件：`src/ifa/graph/advisor_graph.py`（644 行）
+  - 问题：`build_deep_analysis_graph` / `build_deep_simple_graph` / `build_screen_graph` / `build_portfolio_graph` 骨架高度相似（创建 Agent → 定义节点 → 连边 → 编译）
+  - 方案：提取 `_build_graph(agents_config, edges_config)` 模板方法，各模式仅提供配置差异

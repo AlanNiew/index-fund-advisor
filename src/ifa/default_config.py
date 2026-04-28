@@ -1,6 +1,7 @@
 # ifa/default_config.py
 """IFA 默认配置，融合 TradingAgents 的辩论和反思配置。"""
 
+import copy
 import importlib.util
 import os
 from pathlib import Path
@@ -117,7 +118,7 @@ def validate_config(config: dict) -> None:
 
 def build_runtime_config() -> dict:
     """构建运行时配置，基于默认配置叠加上一次 CLI 保存的配置。"""
-    runtime_config = DEFAULT_CONFIG.copy()
+    runtime_config = copy.deepcopy(DEFAULT_CONFIG)
     runtime_config.update(load_last_config())
     runtime_config["project_dir"] = PROJECT_DIR
     runtime_config["results_dir"] = os.getenv("IFA_RESULTS_DIR", os.path.join(PROJECT_DIR, "results"))
@@ -142,10 +143,16 @@ _PATH_KEYS = {
 
 
 def save_last_config(config: dict) -> None:
-    """将当前配置写入 last_config.py。"""
+    """将当前配置原子写入 last_config.py。"""
     serializable_config = {k: v for k, v in config.items() if k not in _PATH_KEYS}
-    LAST_CONFIG_PATH.write_text(
+    content = (
         "# 该文件由 CLI 自动生成，用于保存上一次确认后的配置。\n"
-        f"LAST_CONFIG = {pformat(serializable_config, width=100, sort_dicts=False)}\n",
-        encoding="utf-8",
+        f"LAST_CONFIG = {pformat(serializable_config, width=100, sort_dicts=False)}\n"
     )
+    tmp_path = LAST_CONFIG_PATH.with_suffix(".tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        tmp_path.replace(LAST_CONFIG_PATH)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        LAST_CONFIG_PATH.write_text(content, encoding="utf-8")

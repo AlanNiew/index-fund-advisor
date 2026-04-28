@@ -58,5 +58,5 @@ elif page == "💰 组合配置":
     render_portfolio_page()
 
 elif page == "📋 历史记录":
-    st.title("历史记录")
-    st.info("历史记录功能开发中...")
+    from web.views.history import render_history_page
+    render_history_page()

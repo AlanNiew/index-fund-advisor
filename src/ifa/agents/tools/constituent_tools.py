@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
 import akshare as ak
@@ -147,11 +148,14 @@ def get_constituent_performance(
 
     top_stocks = df.nlargest(10, weight_col) if weight_col else df.head(10)
 
-    results = []
+    stock_items = []
     for _, row in top_stocks.iterrows():
         stock_code = str(row[code_col])
         stock_name = str(row.get(name_col, "")) if name_col else ""
+        stock_items.append((stock_code, stock_name))
 
+    def _fetch_one(item):
+        stock_code, stock_name = item
         try:
             stock_data = route_to_vendor(
                 "get_stock_data",
@@ -159,9 +163,17 @@ def get_constituent_performance(
                 start_date=_get_start_date(look_back_days),
                 end_date=_get_today_str(),
             )
-            results.append(f"## {stock_name}({stock_code})\n{stock_data[:500]}...")
+            return f"## {stock_name}({stock_code})\n{stock_data[:500]}..."
         except Exception:  # noqa: BLE001
-            results.append(f"## {stock_name}({stock_code})\n数据获取失败。")
+            return f"## {stock_name}({stock_code})\n数据获取失败。"
+
+    results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(_fetch_one, item): i for i, item in enumerate(stock_items)}
+        for future in as_completed(futures):
+            results.append((futures[future], future.result()))
+    results.sort(key=lambda x: x[0])
+    results = [r[1] for r in results]
 
     header = f"# Top 10 Constituent Performance for {display} (Last {look_back_days} days)\n\n"
     return header + "\n\n".join(results)

@@ -34,6 +34,7 @@ class FinancialSituationMemory:
         self.documents: list[str] = []
         self.recommendations: list[str] = []
         self.bm25 = None
+        self._index_dirty = False
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -74,15 +75,22 @@ class FinancialSituationMemory:
             self.documents.append(situation)
             self.recommendations.append(recommendation)
 
-        # FIFO 淘汰超出上限的旧条目
         while len(self.documents) > self._max_situations:
             self.documents.pop(0)
             self.recommendations.pop(0)
 
+        self._index_dirty = True
+
+    def _ensure_index(self):
+        """惰性重建 BM25 索引，仅在标记为脏时才执行。"""
+        if not self._index_dirty:
+            return
         self._rebuild_index()
+        self._index_dirty = False
 
     def get_memories(self, current_situation: str, n_matches: int = 1) -> list[dict]:
         """根据当前情景检索最相似的历史记忆。"""
+        self._ensure_index()
         if not self.documents or self.bm25 is None:
             return []
         query_tokens = self._tokenize(current_situation)

@@ -284,6 +284,12 @@ def get_trade_calendar() -> tuple[pd.Timestamp, ...]:
     return tuple(pd.to_datetime(trade_dates, errors="coerce").dropna().sort_values())
 
 
+@lru_cache(maxsize=1)
+def _get_trade_date_set() -> frozenset:
+    """缓存交易日历的 frozenset，避免每次调用 is_trade_date 时重建 set。"""
+    return frozenset(get_trade_calendar())
+
+
 def is_trade_date(date_str: str) -> bool:
     """
     判断是否为交易日。
@@ -295,7 +301,7 @@ def is_trade_date(date_str: str) -> bool:
         bool: 条件满足时返回 True，否则返回 False。
     """
     target = pd.Timestamp(date_str).normalize()
-    return target in set(get_trade_calendar())
+    return target in _get_trade_date_set()
 
 
 def get_previous_trade_date(date_str: str) -> str:

@@ -3,6 +3,14 @@
 import streamlit as st
 
 
+@st.cache_resource
+def _get_advisor():
+    """缓存 AdvisorGraph 实例，避免每次分析都重建 LLM 客户端。"""
+    from ifa.common import build_advisor
+
+    return build_advisor()
+
+
 def render_analysis_page():
     st.title("单只基金深度分析")
 
@@ -13,7 +21,6 @@ def render_analysis_page():
         st.markdown("<br>", unsafe_allow_html=True)
         analysis_date = st.date_input("分析日期")
 
-    # 回测参数
     with st.expander("回测参数（可选）"):
         bt_col1, bt_col2 = st.columns(2)
         with bt_col1:
@@ -31,12 +38,11 @@ def render_analysis_page():
 
 def _run_deep_analysis(fund_code: str, analysis_date: str, bt_enabled: bool, bt_months: int, bt_amount: float):
     """执行深度分析（可选回测）。"""
-    from ifa.common import build_advisor, build_state
+    from ifa.common import build_state
+
+    advisor = _get_advisor()
 
     with st.status("正在执行分析...", expanded=True) as status:
-        st.write("初始化 LLM 客户端...")
-        advisor = build_advisor()
-
         st.write("执行分析（可能需要 1-2 分钟）...")
         state = build_state("deep", fund_codes=fund_code, analysis_date=analysis_date)
         try:

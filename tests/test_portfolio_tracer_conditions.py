@@ -154,6 +154,8 @@ class TestTracer:
         tracer.start_span("Analyst").finish()
         path = tracer.save(output_dir=str(tmp_path))
         assert Path(path).exists()
+        # trace 文件保存在基金代码子目录下
+        assert "510300" in path
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         assert data["request_id"] == "req-006"
         assert data["mode"] == "deep"
@@ -171,6 +173,7 @@ class TestTracer:
         t.start_span("Test").finish()
         path = mod.end_trace(output_dir=str(tmp_path))
         assert path is not None
+        assert "510300" in path
         assert mod.get_current_tracer() is None
 
     def test_end_trace_when_none(self, tmp_path):

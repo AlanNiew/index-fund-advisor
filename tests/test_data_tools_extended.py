@@ -2,7 +2,6 @@
 
 import json
 import time
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -96,10 +95,14 @@ class TestCachedDataToolExecutor:
             cache_dir=str(tmp_path / "cache"),
             snapshot_dir=str(tmp_path / "snapshots"),
         )
-        return type("Executor", (), {
-            "registry": registry,
-            "artifact_store": store,
-        })
+        return type(
+            "Executor",
+            (),
+            {
+                "registry": registry,
+                "artifact_store": store,
+            },
+        )
 
     def _make_registry_with_tool(self, tmp_path, handler, cache_enabled=True):
         from ifa.data_tools.registry import DataToolRegistry
@@ -117,6 +120,7 @@ class TestCachedDataToolExecutor:
             snapshot_dir=str(tmp_path / "snapshots"),
         )
         from ifa.data_tools.executor import CachedDataToolExecutor
+
         return CachedDataToolExecutor(registry, store)
 
     def test_execute_no_cache(self, tmp_path):

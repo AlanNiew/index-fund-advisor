@@ -173,22 +173,21 @@ def print_summary(results: list[dict], analysis_date: str):
         success = sum(1 for r in results if not r["error"])
         total_time = sum(r["elapsed"] for r in results)
         console.print(
-            f"\n  合计: {total} 只基金 | 成功: {success} | 失败: {total - success} | "
-            f"总耗时: {total_time:.1f}s"
+            f"\n  合计: {total} 只基金 | 成功: {success} | 失败: {total - success} | 总耗时: {total_time:.1f}s"
         )
         console.print()
 
     except ImportError:
         # Rich 未安装，用纯文本 fallback
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"  IFA 每日基金分析汇总 — {analysis_date}")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print(f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'耗时':>8}  {'状态'}")
-        print(f"  {'-'*60}")
+        print(f"  {'-' * 60}")
         for r in results:
             status = "失败" if r["error"] else "成功"
             print(f"  {r['fund_code']:<10} {r['rating']:<15} {r['confidence']:<10} {r['elapsed']:>7.1f}s  {status}")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
 
 def main():

@@ -5,6 +5,7 @@ A 股数据获取基础设施层。
 表格格式化、数值四舍五入、异常文本化等。具体的 ETF/指数基金、场外基金
 数据获取函数分别在 a_share_index_fund.py 和 a_share_public_fund.py 中。
 """
+
 from __future__ import annotations
 
 import time

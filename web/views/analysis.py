@@ -57,6 +57,7 @@ def _run_deep_analysis(fund_code: str, analysis_date: str, bt_enabled: bool, bt_
     if report:
         st.markdown(report)
         from ifa.common import save_report
+
         path = save_report(final_state)
         if path:
             st.caption(f"报告已保存: {path}")

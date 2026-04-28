@@ -47,16 +47,20 @@ if page == "🏠 首页":
 
 elif page == "🔍 基金分析":
     from web.views.analysis import render_analysis_page
+
     render_analysis_page()
 
 elif page == "📊 筛选对比":
     from web.views.screen import render_screen_page
+
     render_screen_page()
 
 elif page == "💰 组合配置":
     from web.views.portfolio import render_portfolio_page
+
     render_portfolio_page()
 
 elif page == "📋 历史记录":
     from web.views.history import render_history_page
+
     render_history_page()

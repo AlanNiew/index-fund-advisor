@@ -36,7 +36,9 @@ def create_researcher(role: str, prompt_template: str, history_key: str, label: 
             fund_analysis = truncate_report(state.get("fund_analysis_report", ""))
             index_analysis = truncate_report(state.get("index_analysis_report", ""))
 
-            curr_situation = f"基金代码: {fund_codes}\n\n基金分析报告:\n{fund_analysis}\n\n指数分析报告:\n{index_analysis}"
+            curr_situation = (
+                f"基金代码: {fund_codes}\n\n基金分析报告:\n{fund_analysis}\n\n指数分析报告:\n{index_analysis}"
+            )
 
             past_memory_str = ""
             if memory:

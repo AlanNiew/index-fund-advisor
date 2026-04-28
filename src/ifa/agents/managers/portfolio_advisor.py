@@ -59,14 +59,9 @@ def create_portfolio_advisor(llm, memory=None):
         )
 
         # 获取策略描述
-        strategy_text = "\n".join(
-            f"- **{s['name']}**: {s['description']}"
-            for s in STRATEGY_DESCRIPTIONS.values()
-        )
+        strategy_text = "\n".join(f"- **{s['name']}**: {s['description']}" for s in STRATEGY_DESCRIPTIONS.values())
 
-        language_instruction = (
-            get_internal_language_instruction() + get_final_language_instruction()
-        )
+        language_instruction = get_internal_language_instruction() + get_final_language_instruction()
 
         prompt = _PORTFOLIO_ADVISOR_PROMPT.format(
             risk_profile=risk_profile,

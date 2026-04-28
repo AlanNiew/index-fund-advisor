@@ -8,16 +8,19 @@ import pytest
 #  数据清洗测试
 # ════════════════════════════════════════════
 
+
 class TestDataCleaning:
     """data_cleaning.py 功能测试。"""
 
     def test_clean_dataframe_ffill(self):
         from ifa.dataflows.data_cleaning import clean_dataframe
 
-        df = pd.DataFrame({
-            "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
-            "close": [1.0, np.nan, 1.2],
-        })
+        df = pd.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
+                "close": [1.0, np.nan, 1.2],
+            }
+        )
         result = clean_dataframe(df)
         assert result["close"].isna().sum() == 0
         assert result["close"].iloc[1] == 1.0  # ffill
@@ -61,6 +64,7 @@ class TestDataCleaning:
 #  回测引擎测试
 # ════════════════════════════════════════════
 
+
 class TestBacktestEngine:
     """backtest/engine.py 核心计算测试（不依赖网络）。"""
 
@@ -95,10 +99,12 @@ class TestBacktestEngine:
     def test_monthly_returns(self):
         from ifa.backtest.engine import _calc_monthly_returns
 
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-15", "2024-01-31", "2024-02-15", "2024-02-28"]),
-            "close": [100.0, 102.0, 101.0, 105.0],
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2024-01-15", "2024-01-31", "2024-02-15", "2024-02-28"]),
+                "close": [100.0, 102.0, 101.0, 105.0],
+            }
+        )
         monthly = _calc_monthly_returns(df)
         assert len(monthly) == 2
         assert monthly[0]["month"] == "2024-01"
@@ -116,10 +122,16 @@ class TestBacktestEngine:
         from ifa.backtest.engine import BacktestResult, format_backtest_report
 
         result = BacktestResult(
-            symbol="510300", start_date="2024-01-01", end_date="2024-06-30",
-            initial_value=100000, final_value=108000,
-            total_return_pct=8.0, annualized_return_pct=16.0,
-            max_drawdown_pct=-5.2, sharpe_ratio=1.2, volatility_pct=12.5,
+            symbol="510300",
+            start_date="2024-01-01",
+            end_date="2024-06-30",
+            initial_value=100000,
+            final_value=108000,
+            total_return_pct=8.0,
+            annualized_return_pct=16.0,
+            max_drawdown_pct=-5.2,
+            sharpe_ratio=1.2,
+            volatility_pct=12.5,
             trading_days=120,
         )
         report = format_backtest_report(result)
@@ -131,11 +143,18 @@ class TestBacktestEngine:
         from ifa.backtest.engine import BacktestResult, format_backtest_report
 
         result = BacktestResult(
-            symbol="000000", start_date="2024-01-01", end_date="2024-06-30",
-            initial_value=100000, final_value=100000,
-            total_return_pct=0, annualized_return_pct=0,
-            max_drawdown_pct=0, sharpe_ratio=0, volatility_pct=0,
-            trading_days=0, error="数据不足",
+            symbol="000000",
+            start_date="2024-01-01",
+            end_date="2024-06-30",
+            initial_value=100000,
+            final_value=100000,
+            total_return_pct=0,
+            annualized_return_pct=0,
+            max_drawdown_pct=0,
+            sharpe_ratio=0,
+            volatility_pct=0,
+            trading_days=0,
+            error="数据不足",
         )
         report = format_backtest_report(result)
         assert "数据不足" in report
@@ -145,6 +164,7 @@ class TestBacktestEngine:
 #  状态初始化测试
 # ════════════════════════════════════════════
 
+
 class TestPropagation:
     """propagation.py 状态初始化测试。"""
 
@@ -153,7 +173,9 @@ class TestPropagation:
 
         p = Propagator()
         state = p.create_initial_state(
-            fund_codes="510300", analysis_date="2024-01-15", mode="deep",
+            fund_codes="510300",
+            analysis_date="2024-01-15",
+            mode="deep",
         )
         assert state["fund_codes"] == "510300"
         assert state["analysis_date"] == "2024-01-15"
@@ -166,7 +188,9 @@ class TestPropagation:
 
         p = Propagator()
         state = p.create_initial_state(
-            fund_codes="", analysis_date="2024-01-15", mode="portfolio",
+            fund_codes="",
+            analysis_date="2024-01-15",
+            mode="portfolio",
             risk_profile="moderate",
         )
         assert state["risk_profile"] == "moderate"
@@ -184,6 +208,7 @@ class TestPropagation:
 # ════════════════════════════════════════════
 #  条件边逻辑测试
 # ════════════════════════════════════════════
+
 
 class TestConditionalLogic:
     """conditional_logic.py 条件边测试。"""
@@ -239,6 +264,7 @@ class TestConditionalLogic:
 #  反思系统测试
 # ════════════════════════════════════════════
 
+
 class TestReflection:
     """reflection.py 安全访问和模式感知测试。"""
 
@@ -267,6 +293,7 @@ class TestReflection:
             def invoke(self, *a, **kw):
                 class R:
                     content = "mock"
+
                 return R
 
         reflector = Reflector(MockLLM())
@@ -282,6 +309,7 @@ class TestReflection:
             def invoke(self, *a, **kw):
                 class R:
                     content = "mock"
+
                 return R
 
         reflector = Reflector(MockLLM())
@@ -293,6 +321,7 @@ class TestReflection:
 # ════════════════════════════════════════════
 #  安全字典访问测试
 # ════════════════════════════════════════════
+
 
 class TestSafeGetNested:
     """advisor_graph.py _safe_get_nested 测试。"""
@@ -328,6 +357,7 @@ class TestSafeGetNested:
 #  数据工具注册表测试
 # ════════════════════════════════════════════
 
+
 class TestDataToolRegistry:
     """data_tools/registry.py 和 builtin.py 测试。"""
 
@@ -358,6 +388,7 @@ class TestDataToolRegistry:
 #  资产类型检测测试
 # ════════════════════════════════════════════
 
+
 class TestAssetType:
     """dataflows/asset_type.py 测试。"""
 
@@ -383,6 +414,7 @@ class TestAssetType:
 #  AdvisorGraph 构建测试（Mock LLM）
 # ════════════════════════════════════════════
 
+
 class TestAdvisorGraphBuild:
     """advisor_graph.py 图构建测试（不调用真实 LLM）。"""
 
@@ -394,13 +426,19 @@ class TestAdvisorGraphBuild:
             def invoke(self, *a, **kw):
                 class R:
                     content = "mock"
+
                 return R
 
         return AdvisorGraph(
-            quick_llm=MockLLM(), deep_llm=MockLLM(),
-            config={"enable_debate": True, "max_debate_rounds": 1,
-                    "max_risk_discuss_rounds": 1, "max_recur_limit": 50,
-                    "results_dir": "test_results"},
+            quick_llm=MockLLM(),
+            deep_llm=MockLLM(),
+            config={
+                "enable_debate": True,
+                "max_debate_rounds": 1,
+                "max_risk_discuss_rounds": 1,
+                "max_recur_limit": 50,
+                "results_dir": "test_results",
+            },
         )
 
     def test_build_all_modes(self, advisor):
@@ -413,7 +451,12 @@ class TestAdvisorGraphBuild:
             advisor.build_graph("invalid")
 
     def test_run_exception_protection(self, advisor):
-        result = advisor.run("deep_simple", {
-            "fund_codes": "510300", "analysis_date": "2024-01-15", "mode": "deep",
-        })
+        result = advisor.run(
+            "deep_simple",
+            {
+                "fund_codes": "510300",
+                "analysis_date": "2024-01-15",
+                "mode": "deep",
+            },
+        )
         assert "error" in result  # MockLLM 缺少 bind_tools，应被捕获

@@ -9,10 +9,12 @@ class TestFinancialSituationMemory:
     def test_add_and_retrieve(self):
         """添加情景后可检索到匹配记忆。"""
         mem = FinancialSituationMemory("test")
-        mem.add_situations([
-            ("市场大涨，沪深300涨幅超过3%", "建议持有宽基ETF"),
-            ("市场大跌，恐慌情绪蔓延", "建议分批建仓"),
-        ])
+        mem.add_situations(
+            [
+                ("市场大涨，沪深300涨幅超过3%", "建议持有宽基ETF"),
+                ("市场大跌，恐慌情绪蔓延", "建议分批建仓"),
+            ]
+        )
 
         results = mem.get_memories("市场大幅上涨", n_matches=1)
         assert len(results) == 1
@@ -38,11 +40,13 @@ class TestFinancialSituationMemory:
     def test_relevance_ranking(self):
         """多匹配时按相关性排序。"""
         mem = FinancialSituationMemory("rank")
-        mem.add_situations([
-            ("市场上涨，蓝筹股领涨", "建议持有蓝筹"),
-            ("市场下跌，科技股暴跌", "建议回避科技"),
-            ("蓝筹股大幅上涨，金融板块强势", "关注金融ETF"),
-        ])
+        mem.add_situations(
+            [
+                ("市场上涨，蓝筹股领涨", "建议持有蓝筹"),
+                ("市场下跌，科技股暴跌", "建议回避科技"),
+                ("蓝筹股大幅上涨，金融板块强势", "关注金融ETF"),
+            ]
+        )
 
         results = mem.get_memories("蓝筹股上涨", n_matches=3)
         assert len(results) == 3
@@ -52,11 +56,13 @@ class TestFinancialSituationMemory:
     def test_multiple_matches(self):
         """请求多条匹配时返回对应数量。"""
         mem = FinancialSituationMemory("multi")
-        mem.add_situations([
-            ("情景1", "建议1"),
-            ("情景2", "建议2"),
-            ("情景3", "建议3"),
-        ])
+        mem.add_situations(
+            [
+                ("情景1", "建议1"),
+                ("情景2", "建议2"),
+                ("情景3", "建议3"),
+            ]
+        )
 
         results = mem.get_memories("情景", n_matches=2)
         assert len(results) == 2
@@ -103,11 +109,13 @@ class TestChineseTokenization:
     def test_chinese_retrieval_quality(self):
         """中文检索应能匹配到相关记忆。"""
         mem = FinancialSituationMemory("chinese_test")
-        mem.add_situations([
-            ("沪深300指数基金近期涨幅较大，估值偏高", "建议减仓"),
-            ("中证500指数处于历史低位，估值合理", "建议逢低买入"),
-            ("国债收益率下行，债券基金表现优异", "建议配置债基"),
-        ])
+        mem.add_situations(
+            [
+                ("沪深300指数基金近期涨幅较大，估值偏高", "建议减仓"),
+                ("中证500指数处于历史低位，估值合理", "建议逢低买入"),
+                ("国债收益率下行，债券基金表现优异", "建议配置债基"),
+            ]
+        )
 
         # 查询应匹配到沪深300相关的记忆
         results = mem.get_memories("沪深300估值", n_matches=1)
@@ -117,10 +125,12 @@ class TestChineseTokenization:
     def test_chinese_vs_english_query(self):
         """中文查询和中文记忆匹配优于英文。"""
         mem = FinancialSituationMemory("lang_test")
-        mem.add_situations([
-            ("宽基指数ETF波动率低，适合定投", "推荐定投"),
-            ("科技股近期回调较大，注意风险", "建议观望"),
-        ])
+        mem.add_situations(
+            [
+                ("宽基指数ETF波动率低，适合定投", "推荐定投"),
+                ("科技股近期回调较大，注意风险", "建议观望"),
+            ]
+        )
 
         results = mem.get_memories("宽基指数波动率", n_matches=1)
         assert len(results) == 1
@@ -143,11 +153,13 @@ class TestFIFOEviction:
     def test_fifo_eviction(self):
         """超出上限时淘汰最旧条目。"""
         mem = FinancialSituationMemory("fifo", {"max_situations": 3})
-        mem.add_situations([
-            ("情景1", "建议1"),
-            ("情景2", "建议2"),
-            ("情景3", "建议3"),
-        ])
+        mem.add_situations(
+            [
+                ("情景1", "建议1"),
+                ("情景2", "建议2"),
+                ("情景3", "建议3"),
+            ]
+        )
         assert len(mem.documents) == 3
 
         # 添加第 4 条，应淘汰第 1 条
@@ -159,10 +171,12 @@ class TestFIFOEviction:
     def test_fifo_maintains_order(self):
         """FIFO 保持插入顺序。"""
         mem = FinancialSituationMemory("order", {"max_situations": 2})
-        mem.add_situations([
-            ("A", "a"),
-            ("B", "b"),
-            ("C", "c"),
-        ])
+        mem.add_situations(
+            [
+                ("A", "a"),
+                ("B", "b"),
+                ("C", "c"),
+            ]
+        )
         assert mem.documents == ["B", "C"]
         assert mem.recommendations == ["b", "c"]

@@ -48,6 +48,7 @@ def _run_screen(conditions: str):
     if report:
         st.markdown(report)
         from ifa.common import save_report
+
         path = save_report(final_state)
         if path:
             st.caption(f"报告已保存: {path}")

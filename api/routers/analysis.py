@@ -51,7 +51,9 @@ async def analyze_deep(req: DeepAnalyzeRequest):
 async def analyze_screen(req: ScreenRequest):
     """提交筛选对比分析任务（异步）。"""
     task_id = str(uuid.uuid4())
-    conditions = req.conditions or f"类别: {req.index_category}, 跟踪方式: {req.tracking_method}, 前 {req.max_results} 只"
+    conditions = (
+        req.conditions or f"类别: {req.index_category}, 跟踪方式: {req.tracking_method}, 前 {req.max_results} 只"
+    )
     task = {
         "task_id": task_id,
         "status": "pending",
@@ -123,8 +125,11 @@ def _execute_graph(task: dict) -> dict:
     mode = task["mode"]
 
     if mode == "deep":
-        state = build_state(mode, fund_codes=params.get("fund_code", ""),
-                            analysis_date=params.get("analysis_date", datetime.now().strftime("%Y-%m-%d")))
+        state = build_state(
+            mode,
+            fund_codes=params.get("fund_code", ""),
+            analysis_date=params.get("analysis_date", datetime.now().strftime("%Y-%m-%d")),
+        )
     elif mode == "screen":
         state = build_state(mode, screen_conditions=params.get("conditions", ""))
     elif mode == "portfolio":

@@ -23,14 +23,23 @@ def render_equity_curve(equity_curve: list[dict[str, Any]], title: str = "净值
     values = [p["value"] for p in equity_curve]
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=dates, y=values, mode="lines", name="净值",
-        line=dict(color="#2563eb", width=2),
-        fill="tozeroy", fillcolor="rgba(37, 99, 235, 0.08)",
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=values,
+            mode="lines",
+            name="净值",
+            line=dict(color="#2563eb", width=2),
+            fill="tozeroy",
+            fillcolor="rgba(37, 99, 235, 0.08)",
+        )
+    )
     fig.update_layout(
-        title=title, xaxis_title="日期", yaxis_title="净值 (¥)",
-        height=400, margin=dict(l=60, r=20, t=50, b=40),
+        title=title,
+        xaxis_title="日期",
+        yaxis_title="净值 (¥)",
+        height=400,
+        margin=dict(l=60, r=20, t=50, b=40),
         hovermode="x unified",
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -55,8 +64,11 @@ def render_monthly_returns_bar(monthly_returns: list[dict[str, Any]]):
 
     fig = go.Figure(go.Bar(x=months, y=returns, marker_color=colors, name="月度收益"))
     fig.update_layout(
-        title="月度收益率", xaxis_title="月份", yaxis_title="收益率 (%)",
-        height=350, margin=dict(l=60, r=20, t=50, b=40),
+        title="月度收益率",
+        xaxis_title="月份",
+        yaxis_title="收益率 (%)",
+        height=350,
+        margin=dict(l=60, r=20, t=50, b=40),
     )
     st.plotly_chart(fig, use_container_width=True)
 

@@ -121,9 +121,7 @@ class RequestTracer:
 
 import contextvars
 
-_current_tracer_var: contextvars.ContextVar[RequestTracer | None] = contextvars.ContextVar(
-    "ifa_tracer", default=None
-)
+_current_tracer_var: contextvars.ContextVar[RequestTracer | None] = contextvars.ContextVar("ifa_tracer", default=None)
 
 
 def start_trace(request_id: str, mode: str, fund_codes: str = "") -> RequestTracer:

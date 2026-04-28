@@ -22,8 +22,11 @@ def _cleanup_tasks() -> None:
         return
     _last_cleanup = now
     cutoff = time.time() - _TASK_TTL_SECONDS
-    expired = [tid for tid, t in _tasks.items()
-               if t.get("completed_at") and datetime.fromisoformat(t["completed_at"]).timestamp() < cutoff]
+    expired = [
+        tid
+        for tid, t in _tasks.items()
+        if t.get("completed_at") and datetime.fromisoformat(t["completed_at"]).timestamp() < cutoff
+    ]
     for tid in expired:
         _tasks.pop(tid, None)
     if len(_tasks) > _TASK_MAX_SIZE:

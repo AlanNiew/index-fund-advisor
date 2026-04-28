@@ -4,8 +4,9 @@
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 load_dotenv()
 
@@ -35,7 +36,7 @@ async def api_key_auth(request: Request, call_next):
     if _API_KEY:
         key = request.headers.get("X-API-Key", "")
         if key != _API_KEY:
-            raise HTTPException(status_code=401, detail="无效或缺失的 API Key（X-API-Key header）")
+            return JSONResponse(status_code=401, content={"detail": "无效或缺失的 API Key（X-API-Key header）"})
     return await call_next(request)
 
 

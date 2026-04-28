@@ -44,6 +44,7 @@ def _run_portfolio(risk_profile: str, amount: float):
     if report:
         st.markdown(report)
         from ifa.common import save_report
+
         path = save_report(final_state)
         if path:
             st.caption(f"报告已保存: {path}")

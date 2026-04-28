@@ -243,11 +243,13 @@ class AdvisorGraph:
         """添加 Bull/Bear 研究辩论循环。"""
         condition_fn = self.conditional_logic.should_continue_fund_debate
         workflow.add_conditional_edges(
-            "Bull Researcher", condition_fn,
+            "Bull Researcher",
+            condition_fn,
             {"Bear Researcher": "Bear Researcher", manager_name: manager_name},
         )
         workflow.add_conditional_edges(
-            "Bear Researcher", condition_fn,
+            "Bear Researcher",
+            condition_fn,
             {"Bull Researcher": "Bull Researcher", manager_name: manager_name},
         )
 
@@ -255,15 +257,18 @@ class AdvisorGraph:
         """添加 Aggressive/Conservative/Neutral 三方风险辩论循环。"""
         condition_fn = self.conditional_logic.should_continue_risk_analysis
         workflow.add_conditional_edges(
-            "Aggressive Analyst", condition_fn,
+            "Aggressive Analyst",
+            condition_fn,
             {"Conservative Analyst": "Conservative Analyst", manager_name: manager_name},
         )
         workflow.add_conditional_edges(
-            "Conservative Analyst", condition_fn,
+            "Conservative Analyst",
+            condition_fn,
             {"Neutral Analyst": "Neutral Analyst", manager_name: manager_name},
         )
         workflow.add_conditional_edges(
-            "Neutral Analyst", condition_fn,
+            "Neutral Analyst",
+            condition_fn,
             {"Aggressive Analyst": "Aggressive Analyst", manager_name: manager_name},
         )
 
@@ -409,10 +414,12 @@ class AdvisorGraph:
         workflow.add_node("Report Generator", report_generator)
 
         workflow.add_edge(START, "Fund Screener")
-        self._add_tool_loop(workflow, "Fund Screener",
-                            self.conditional_logic.should_continue_fund_screener, "Fund Analyst")
-        self._add_tool_loop(workflow, "Fund Analyst",
-                            self.conditional_logic.should_continue_fund_analyst, "Bull Researcher")
+        self._add_tool_loop(
+            workflow, "Fund Screener", self.conditional_logic.should_continue_fund_screener, "Fund Analyst"
+        )
+        self._add_tool_loop(
+            workflow, "Fund Analyst", self.conditional_logic.should_continue_fund_analyst, "Bull Researcher"
+        )
 
         self._add_fund_debate(workflow)
         self._add_to_report(workflow, "Research Manager")
@@ -457,10 +464,12 @@ class AdvisorGraph:
         workflow.add_edge(START, "Portfolio Advisor R1")
         workflow.add_edge("Portfolio Advisor R1", "Fund Screener")
 
-        self._add_tool_loop(workflow, "Fund Screener",
-                            self.conditional_logic.should_continue_fund_screener, "Fund Analyst")
-        self._add_tool_loop(workflow, "Fund Analyst",
-                            self.conditional_logic.should_continue_fund_analyst, "Portfolio Advisor R2")
+        self._add_tool_loop(
+            workflow, "Fund Screener", self.conditional_logic.should_continue_fund_screener, "Fund Analyst"
+        )
+        self._add_tool_loop(
+            workflow, "Fund Analyst", self.conditional_logic.should_continue_fund_analyst, "Portfolio Advisor R2"
+        )
         workflow.add_edge("Portfolio Advisor R2", self._clear_key("Portfolio Advisor R2"))
         workflow.add_edge(self._clear_key("Portfolio Advisor R2"), "Aggressive Analyst")
 
@@ -529,9 +538,7 @@ class AdvisorGraph:
                     config["callbacks"] = self.callbacks
 
                 final_state: dict = state
-                for stream_mode, chunk in graph.stream(
-                    state, config=config, stream_mode=["values", "updates"]
-                ):
+                for stream_mode, chunk in graph.stream(state, config=config, stream_mode=["values", "updates"]):
                     if stream_mode == "updates":
                         node_name = next(iter(chunk))
                         if not _should_skip_node(node_name):

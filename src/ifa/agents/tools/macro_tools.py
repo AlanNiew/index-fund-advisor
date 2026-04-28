@@ -94,11 +94,13 @@ def get_sector_fund_flow(
     返回：
         str: 板块资金流向排名 CSV 数据。
     """
-    return cap_tool_result(run_data_tool(
-        "get_sector_fund_flow",
-        indicator=indicator,
-        sector_type=sector_type,
-    ))
+    return cap_tool_result(
+        run_data_tool(
+            "get_sector_fund_flow",
+            indicator=indicator,
+            sector_type=sector_type,
+        )
+    )
 
 
 @tool

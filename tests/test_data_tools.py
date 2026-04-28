@@ -76,9 +76,7 @@ class TestDataToolRegistry:
         """注册多个工具后 list_tools 返回全部。"""
         registry = DataToolRegistry()
         for i in range(3):
-            registry.register(DataToolDefinition(
-                name=f"tool_{i}", handler=lambda: None, description=f"工具{i}"
-            ))
+            registry.register(DataToolDefinition(name=f"tool_{i}", handler=lambda: None, description=f"工具{i}"))
         tools = registry.list_tools()
         assert len(tools) == 3
 
@@ -123,9 +121,13 @@ class TestDefaultDataToolRegistry:
         """关键工具均已注册。"""
         registry = create_default_data_tool_registry()
         expected_names = [
-            "get_etf_data", "get_index_data", "get_fund_list",
-            "get_macro_indicator", "get_north_flow",
-            "get_index_valuation", "get_valuation_signal",
+            "get_etf_data",
+            "get_index_data",
+            "get_fund_list",
+            "get_macro_indicator",
+            "get_north_flow",
+            "get_index_valuation",
+            "get_valuation_signal",
         ]
         for name in expected_names:
             tool = registry.get(name)

@@ -11,11 +11,11 @@ from .a_share_common import normalize_ashare_symbol
 class AssetType(str, Enum):
     """资产类型枚举。"""
 
-    STOCK = "stock"                  # A 股个股
-    ETF = "etf"                      # 场内 ETF 基金
-    INDEX = "index"                  # 股票指数（如沪深 300、上证 50）
+    STOCK = "stock"  # A 股个股
+    ETF = "etf"  # 场内 ETF 基金
+    INDEX = "index"  # 股票指数（如沪深 300、上证 50）
     OFFSHORE_FUND = "offshore_fund"  # 场外指数基金（联接基金、LOF）
-    PUBLIC_FUND = "public_fund"      # 公募基金（股票型/混合型/债券型/QDII/FOF 等）
+    PUBLIC_FUND = "public_fund"  # 公募基金（股票型/混合型/债券型/QDII/FOF 等）
 
 
 # ── 已知指数代码集合 ──────────────────────────────────────────
@@ -93,17 +93,37 @@ _KNOWN_INDEX_CODES: frozenset[str] = frozenset(
 
 # ── ETF 代码前缀（上交所 + 深交所） ─────────────────────────
 _ETF_SH_PREFIXES = (
-    "510", "511", "512", "513", "514", "515",
-    "516", "517", "518", "519", "560", "561",
-    "562", "563", "588",
+    "510",
+    "511",
+    "512",
+    "513",
+    "514",
+    "515",
+    "516",
+    "517",
+    "518",
+    "519",
+    "560",
+    "561",
+    "562",
+    "563",
+    "588",
 )
 _ETF_SZ_PREFIXES = ("159",)
 
 # ── 场外基金（LOF/联接基金）代码前缀 ───────────────────────
 _LOF_SH_PREFIXES = ("501",)
 _LOF_SZ_PREFIXES = (
-    "160", "161", "162", "163", "164",
-    "165", "166", "167", "168", "169",
+    "160",
+    "161",
+    "162",
+    "163",
+    "164",
+    "165",
+    "166",
+    "167",
+    "168",
+    "169",
 )
 
 
@@ -220,9 +240,21 @@ def _is_public_fund_code(plain_code: str) -> bool:
     - 不包含已在其他分类中的前缀（如 000/001/002/003 对应深市个股/ETF）
     """
     _PUBLIC_FUND_PREFIXES = (
-        "004", "005", "006", "007", "008", "009",  # 场外基金
+        "004",
+        "005",
+        "006",
+        "007",
+        "008",
+        "009",  # 场外基金
         "01",  # 01xxxx 系列（如 012414 招商中证白酒指数C）
-        "02", "03", "04", "05", "06", "07", "08", "09",  # 其他场外基金
+        "02",
+        "03",
+        "04",
+        "05",
+        "06",
+        "07",
+        "08",
+        "09",  # 其他场外基金
     )
     return plain_code.startswith(_PUBLIC_FUND_PREFIXES)
 
@@ -257,36 +289,28 @@ def get_asset_label(asset_type: AssetType | str) -> dict[str, str]:
             "instrument_cn": "个股",
             "entity_type": "listed company",
             "analysis_focus": (
-                "Analyze the company's financial statements, business fundamentals, "
-                "and competitive position."
+                "Analyze the company's financial statements, business fundamentals, and competitive position."
             ),
         },
         AssetType.ETF: {
             "instrument_noun": "ETF fund",
             "instrument_cn": "ETF 基金",
             "entity_type": "ETF fund",
-            "analysis_focus": (
-                "Analyze the ETF's tracking index, constituent stocks, fund profile, "
-                "and liquidity."
-            ),
+            "analysis_focus": ("Analyze the ETF's tracking index, constituent stocks, fund profile, and liquidity."),
         },
         AssetType.INDEX: {
             "instrument_noun": "market index",
             "instrument_cn": "指数",
             "entity_type": "market index",
             "analysis_focus": (
-                "Analyze the index's constituent stocks, sector distribution, "
-                "and weight concentration."
+                "Analyze the index's constituent stocks, sector distribution, and weight concentration."
             ),
         },
         AssetType.OFFSHORE_FUND: {
             "instrument_noun": "index fund",
             "instrument_cn": "指数基金",
             "entity_type": "index fund",
-            "analysis_focus": (
-                "Analyze the fund's NAV trend, tracking error, "
-                "and underlying index performance."
-            ),
+            "analysis_focus": ("Analyze the fund's NAV trend, tracking error, and underlying index performance."),
         },
         AssetType.PUBLIC_FUND: {
             "instrument_noun": "public fund",

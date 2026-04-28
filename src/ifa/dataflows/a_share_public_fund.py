@@ -135,10 +135,7 @@ def get_fund_stock_holdings(symbol: str, date: str = "") -> str:
     if df is None or df.empty:
         return f"未找到 {display} 的股票持仓数据。"
 
-    header = (
-        f"# Fund Stock Holdings for {display} ({report_date or 'latest'})\n"
-        f"# Records: {len(df)}\n\n"
-    )
+    header = f"# Fund Stock Holdings for {display} ({report_date or 'latest'})\n# Records: {len(df)}\n\n"
     # 保留前 20 行（按持仓比例排序，前 20 = 十大重仓股，最有价值）
     return header + df.head(20).to_csv(index=False)
 
@@ -173,10 +170,7 @@ def get_fund_bond_holdings(symbol: str, date: str = "") -> str:
     if df is None or df.empty:
         return f"未找到 {display} 的债券持仓数据。"
 
-    header = (
-        f"# Fund Bond Holdings for {display} ({report_date or 'latest'})\n"
-        f"# Records: {len(df)}\n\n"
-    )
+    header = f"# Fund Bond Holdings for {display} ({report_date or 'latest'})\n# Records: {len(df)}\n\n"
     # 保留前 20 行（前 20 = 主要债券持仓）
     return header + df.head(20).to_csv(index=False)
 
@@ -470,10 +464,7 @@ def get_index_fund_filter(symbol: str = "", indicator: str = "") -> str:
         return f"未找到分类为「{filter_label}」、跟踪方式为「{indicator_label}」的指数基金数据。"
 
     output = _round_numeric_frame(df.head(50))
-    header = (
-        f"# Index Fund Filter ({filter_label}/{indicator_label})\n"
-        f"# Records: {len(output)}\n\n"
-    )
+    header = f"# Index Fund Filter ({filter_label}/{indicator_label})\n# Records: {len(output)}\n\n"
     return header + output.to_csv(index=False)
 
 

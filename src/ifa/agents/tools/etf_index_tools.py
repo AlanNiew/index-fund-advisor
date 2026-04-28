@@ -25,12 +25,14 @@ def get_etf_data(
     返回：
         str: 指定 ETF 在给定日期区间内的格式化行情数据表。
     """
-    return cap_tool_result(run_data_tool(
-        "get_etf_data",
-        symbol=symbol,
-        start_date=start_date,
-        end_date=end_date,
-    ))
+    return cap_tool_result(
+        run_data_tool(
+            "get_etf_data",
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    )
 
 
 @tool
@@ -49,12 +51,14 @@ def get_index_data(
     返回：
         str: 指定指数在给定日期区间内的格式化行情数据表。
     """
-    return cap_tool_result(run_data_tool(
-        "get_index_data",
-        symbol=symbol,
-        start_date=start_date,
-        end_date=end_date,
-    ))
+    return cap_tool_result(
+        run_data_tool(
+            "get_index_data",
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    )
 
 
 @tool

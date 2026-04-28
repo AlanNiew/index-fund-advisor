@@ -68,7 +68,11 @@ class CachedDataToolExecutor:
         cached_value, artifact_path = cached
 
         # 检查缓存有效期
-        if max_age_seconds is not None and os.path.exists(artifact_path) and time.time() - os.path.getmtime(artifact_path) > max_age_seconds:
+        if (
+            max_age_seconds is not None
+            and os.path.exists(artifact_path)
+            and time.time() - os.path.getmtime(artifact_path) > max_age_seconds
+        ):
             return None
 
         snapshot_path = self._save_snapshot_if_needed(tool_name, params, cached_value, snapshot, metadata)
@@ -100,9 +104,7 @@ class CachedDataToolExecutor:
         artifact_path = None
         if definition.cache_enabled:
             try:
-                artifact_path = str(
-                    self.artifact_store.save_cache(tool_name, params, value, metadata=metadata)
-                )
+                artifact_path = str(self.artifact_store.save_cache(tool_name, params, value, metadata=metadata))
             except Exception as e:
                 logger.warning("缓存写入失败 (%s): %s", tool_name, e)
 
@@ -133,7 +135,9 @@ class CachedDataToolExecutor:
         try:
             return str(
                 self.artifact_store.save_snapshot(
-                    tool_name, params, value,
+                    tool_name,
+                    params,
+                    value,
                     snapshot_group=snapshot.group,
                     snapshot_date=snapshot.date,
                     metadata=metadata,

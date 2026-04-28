@@ -13,10 +13,7 @@ STRATEGY_DESCRIPTIONS: dict[str, dict] = {
     },
     "equal_weight": {
         "name": "等权策略 (Equal Weight)",
-        "description": (
-            "各指数类别等权配置，不偏好任何单一资产类别。"
-            "分散化程度最高，适合不确定市场方向的投资者。"
-        ),
+        "description": ("各指数类别等权配置，不偏好任何单一资产类别。分散化程度最高，适合不确定市场方向的投资者。"),
         "applicable_profiles": ["conservative", "moderate"],
     },
     "risk_parity": {

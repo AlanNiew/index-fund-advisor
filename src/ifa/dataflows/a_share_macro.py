@@ -1,5 +1,6 @@
 # ifa/dataflows/a_share_macro.py
 """宏观经济、市场情绪、行业估值数据获取实现（基于 AkShare）。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -110,8 +111,12 @@ def get_north_flow(symbol: str = "北向资金") -> str:
 
     # 精选关键列，去除 NaN 较多的列
     preferred_cols = [
-        "日期", "当日成交净买额", "买入成交额", "卖出成交额",
-        "历史累计净买额", "当日资金流入",
+        "日期",
+        "当日成交净买额",
+        "买入成交额",
+        "卖出成交额",
+        "历史累计净买额",
+        "当日资金流入",
     ]
     available_cols = [c for c in preferred_cols if c in df.columns]
     if not available_cols:
@@ -146,9 +151,13 @@ def get_market_fund_flow() -> str:
 
     # 精选关键列
     preferred_cols = [
-        "日期", "上证-收盘价", "上证-涨跌幅",
-        "主力净流入-净额", "主力净流入-净占比",
-        "超大单净流入-净额", "大单净流入-净额",
+        "日期",
+        "上证-收盘价",
+        "上证-涨跌幅",
+        "主力净流入-净额",
+        "主力净流入-净占比",
+        "超大单净流入-净额",
+        "大单净流入-净额",
         "小单净流入-净额",
     ]
     available_cols = [c for c in preferred_cols if c in df.columns]
@@ -256,9 +265,7 @@ def get_market_valuation(indicator: str = "上证PE") -> str:
         return f"未获取到 {title} 数据。"
 
     # 保留日期和估值相关列
-    preferred_cols = [c for c in df.columns if any(
-        kw in c for kw in ("日期", "指数", "市盈率", "市净率", "平均")
-    )]
+    preferred_cols = [c for c in df.columns if any(kw in c for kw in ("日期", "指数", "市盈率", "市净率", "平均"))]
     if not preferred_cols:
         preferred_cols = list(df.columns[:5])
 
@@ -272,9 +279,16 @@ def get_market_valuation(indicator: str = "上证PE") -> str:
 #  指数综合估值分析
 # ---------------------------------------------------------------------------
 
-_INDEX_VALUATION_NAMES = frozenset({
-    "沪深300", "上证50", "中证500", "中证1000", "上证红利", "深证100",
-})
+_INDEX_VALUATION_NAMES = frozenset(
+    {
+        "沪深300",
+        "上证50",
+        "中证500",
+        "中证1000",
+        "上证红利",
+        "深证100",
+    }
+)
 
 # 近 10 年约 2500 个交易日
 _LOOKBACK_ROWS = 2500
@@ -311,13 +325,7 @@ def _compute_metric(series, label: str) -> str:
     mean_val = series.mean()
     pct = series.rank(pct=True).iloc[-1] * 100
 
-    return (
-        f"| {label} "
-        f"| {current:.2f} "
-        f"| {mean_val:.2f} "
-        f"| {pct:.1f}% "
-        f"| {_valuation_label(pct)} |"
-    )
+    return f"| {label} | {current:.2f} | {mean_val:.2f} | {pct:.1f}% | {_valuation_label(pct)} |"
 
 
 def get_index_valuation(index_name: str = "沪深300") -> str:
@@ -384,12 +392,14 @@ def get_index_valuation(index_name: str = "沪深300") -> str:
     lines.extend(pe_rows)
     lines.extend(pb_rows)
     lines.extend(div_rows)
-    lines.extend([
-        "",
-        "## 估值百分位说明",
-        f"- 百分位基于近10年(约{_LOOKBACK_ROWS}个交易日)数据计算",
-        "- <30% 低估 | 30%-70% 合理 | >70% 高估",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 估值百分位说明",
+            f"- 百分位基于近10年(约{_LOOKBACK_ROWS}个交易日)数据计算",
+            "- <30% 低估 | 30%-70% 合理 | >70% 高估",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -420,9 +430,7 @@ def _get_bond_yield_10y() -> float | None:
         from datetime import timedelta  # noqa: E402
 
         three_months_ago = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
-        df = _call_akshare_api(
-            ak.bond_china_yield, start_date=three_months_ago, end_date=today
-        )
+        df = _call_akshare_api(ak.bond_china_yield, start_date=three_months_ago, end_date=today)
         gov = df[df["曲线名称"] == "中债国债收益率曲线"]
         if gov.empty:
             return None
@@ -660,7 +668,9 @@ def get_valuation_signal(index_name: str = "沪深300") -> str:
 
     lines.append("")
     lines.append("---")
-    lines.append("*注：盈利收益率法适用于盈利稳定的宽基指数（沪深300/上证50/红利等）；"
-                 "博格公式PE版适用于大部分指数；博格公式PB版适用于资产驱动型指数。*")
+    lines.append(
+        "*注：盈利收益率法适用于盈利稳定的宽基指数（沪深300/上证50/红利等）；"
+        "博格公式PE版适用于大部分指数；博格公式PB版适用于资产驱动型指数。*"
+    )
 
     return "\n".join(lines)

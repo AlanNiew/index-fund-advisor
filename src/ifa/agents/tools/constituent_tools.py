@@ -53,7 +53,9 @@ def get_constituent_overview(
 
     df = df.sort_values(weight_col, ascending=False).head(top_n) if weight_col else df.head(top_n)
 
-    selected_cols = [col for col in ["日期", "指数代码", "指数名称", "成分券代码", "成分券名称", "权重"] if col in df.columns]
+    selected_cols = [
+        col for col in ["日期", "指数代码", "指数名称", "成分券代码", "成分券名称", "权重"] if col in df.columns
+    ]
     if not selected_cols:
         selected_cols = list(df.columns[:5])
 
@@ -182,10 +184,12 @@ def get_constituent_performance(
 def _get_today_str() -> str:
     """返回今天的日期字符串。"""
     from datetime import date
+
     return date.today().strftime("%Y-%m-%d")
 
 
 def _get_start_date(look_back_days: int) -> str:
     """返回 look_back_days 天前的日期字符串。"""
     from datetime import date, timedelta
+
     return (date.today() - timedelta(days=look_back_days)).strftime("%Y-%m-%d")

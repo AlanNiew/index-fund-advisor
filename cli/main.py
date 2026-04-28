@@ -44,6 +44,7 @@ def _run_analysis(mode: str, state: dict, title: str, **build_kwargs):
     if report:
         console.print(Panel(report, title=title, border_style="green"))
         from ifa.common import save_report
+
         path = save_report(final_state)
         if path:
             console.print(f"[dim]报告已保存: {path}[/dim]")
@@ -56,7 +57,8 @@ def analyze(
     fund_code: str = typer.Argument(help="基金代码，如 510300"),
     date: str = typer.Option(
         __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
-        "--date", "-d",
+        "--date",
+        "-d",
         help="分析日期 YYYY-MM-DD",
     ),
     debug: bool = typer.Option(False, "--debug", help="启用调试模式"),
@@ -97,7 +99,9 @@ def portfolio(
     """生成指数基金组合配置建议。"""
     from ifa.common import build_state
 
-    console.print(Panel(f"[bold]IFA 组合配置建议[/bold]\n风险偏好: {risk}" + (f"\n投资金额: {amount:,.0f} 元" if amount else "")))
+    console.print(
+        Panel(f"[bold]IFA 组合配置建议[/bold]\n风险偏好: {risk}" + (f"\n投资金额: {amount:,.0f} 元" if amount else ""))
+    )
     state = build_state("portfolio", risk_profile=risk, screen_conditions=f"风险偏好: {risk}")
     build_kwargs = {"callbacks": []} if debug else {}
     _run_analysis("portfolio", state, "组合配置报告", **build_kwargs)

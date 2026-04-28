@@ -93,12 +93,14 @@ def get_language_instruction() -> str:
 def get_internal_language() -> str:
     """获取当前配置的内部语言。"""
     from ifa.dataflows.config import get_config
+
     return get_config().get("internal_language", "English").strip()
 
 
 def get_final_output_language() -> str:
     """获取当前配置的最终输出语言。"""
     from ifa.dataflows.config import get_config
+
     config = get_config()
     return config.get("final_output_language", config.get("output_language", "Chinese")).strip()
 

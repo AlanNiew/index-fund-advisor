@@ -322,14 +322,16 @@ def get_etf_intraday(
     返回：
         str: 分时行情 CSV 数据。
     """
-    return cap_tool_result(run_data_tool(
-        "get_etf_intraday",
-        symbol=symbol,
-        period=period,
-        start_date=start_date,
-        end_date=end_date,
-        adjust=adjust,
-    ))
+    return cap_tool_result(
+        run_data_tool(
+            "get_etf_intraday",
+            symbol=symbol,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
+    )
 
 
 @tool

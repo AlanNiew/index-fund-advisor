@@ -53,13 +53,19 @@ def _parse_raw_to_dataframe(raw) -> pd.DataFrame | None:
 
 
 def _fetch_etf_index_data(
-    symbol: str, start_date: str, end_date: str, asset_type,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    asset_type,
 ) -> pd.DataFrame | None:
     """获取 ETF/指数价格数据。"""
     from ifa.dataflows.a_share_index_fund import get_etf_data, get_index_data
 
-    raw = get_etf_data(symbol, start_date, end_date) if asset_type.name == "ETF" \
+    raw = (
+        get_etf_data(symbol, start_date, end_date)
+        if asset_type.name == "ETF"
         else get_index_data(symbol, start_date, end_date)
+    )
 
     df = _parse_raw_to_dataframe(raw)
     if df is None:
@@ -157,10 +163,7 @@ def _calc_monthly_returns(df: pd.DataFrame) -> list[dict[str, Any]]:
     df["month"] = df["date"].dt.to_period("M")
     monthly = df.groupby("month")["close"].agg(["first", "last"])
     monthly["return_pct"] = (monthly["last"] / monthly["first"] - 1) * 100
-    return [
-        {"month": str(m), "return_pct": round(r, 2)}
-        for m, r in monthly["return_pct"].items()
-    ]
+    return [{"month": str(m), "return_pct": round(r, 2)} for m, r in monthly["return_pct"].items()]
 
 
 def run_backtest(
@@ -181,10 +184,17 @@ def run_backtest(
         BacktestResult 包含完整的回测指标
     """
     empty_result = BacktestResult(
-        symbol=symbol, start_date=start_date, end_date=end_date,
-        initial_value=initial_investment, final_value=initial_investment,
-        total_return_pct=0, annualized_return_pct=0, max_drawdown_pct=0,
-        sharpe_ratio=0, volatility_pct=0, trading_days=0,
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
+        initial_value=initial_investment,
+        final_value=initial_investment,
+        total_return_pct=0,
+        annualized_return_pct=0,
+        max_drawdown_pct=0,
+        sharpe_ratio=0,
+        volatility_pct=0,
+        trading_days=0,
     )
 
     try:
@@ -229,8 +239,10 @@ def run_backtest(
     step = max(1, len(df) // 120)
     sampled = df.iloc[::step]
     equity = [
-        {"date": str(row["date"].date()) if hasattr(row["date"], "date") else str(row["date"]),
-         "value": round(initial_investment * row["close"] / initial_price, 2)}
+        {
+            "date": str(row["date"].date()) if hasattr(row["date"], "date") else str(row["date"]),
+            "value": round(initial_investment * row["close"] / initial_price, 2),
+        }
         for _, row in sampled.iterrows()
     ]
 

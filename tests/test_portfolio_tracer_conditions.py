@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 
 class TestPortfolioModels:
     """portfolio/models.py 测试。"""
@@ -54,7 +52,7 @@ class TestPortfolioStrategies:
     def test_all_strategies_have_required_fields(self):
         from ifa.portfolio.strategies import STRATEGY_DESCRIPTIONS
 
-        for key, strategy in STRATEGY_DESCRIPTIONS.items():
+        for _key, strategy in STRATEGY_DESCRIPTIONS.items():
             assert "name" in strategy
             assert "description" in strategy
             assert "applicable_profiles" in strategy
@@ -90,8 +88,9 @@ class TestTracer:
         assert span.error == "something broke"
 
     def test_span_duration(self):
-        from ifa.observability.tracer import TraceSpan
         import time
+
+        from ifa.observability.tracer import TraceSpan
 
         span = TraceSpan("test")
         time.sleep(0.01)
@@ -161,8 +160,9 @@ class TestTracer:
         assert len(data["spans"]) == 1
 
     def test_global_trace_lifecycle(self, tmp_path):
-        from ifa.observability import tracer as mod
         import importlib
+
+        from ifa.observability import tracer as mod
 
         importlib.reload(mod)
 
@@ -174,8 +174,9 @@ class TestTracer:
         assert mod.get_current_tracer() is None
 
     def test_end_trace_when_none(self, tmp_path):
-        from ifa.observability import tracer as mod
         import importlib
+
+        from ifa.observability import tracer as mod
 
         importlib.reload(mod)
         assert mod.end_trace(output_dir=str(tmp_path)) is None
@@ -186,7 +187,6 @@ class TestConditionalLogicExtended:
 
     def _make_state(self, tool_calls=None, **kwargs):
         from unittest.mock import MagicMock
-        from ifa.agents.types import IFAdvisorState
 
         msg = MagicMock()
         msg.tool_calls = tool_calls or []
@@ -195,8 +195,9 @@ class TestConditionalLogicExtended:
         return state
 
     def test_should_continue_fund_analyst_with_tools(self):
-        from ifa.graph.conditional_logic import ConditionalLogic
         from unittest.mock import MagicMock
+
+        from ifa.graph.conditional_logic import ConditionalLogic
 
         cl = ConditionalLogic()
         msg = MagicMock()
@@ -205,8 +206,9 @@ class TestConditionalLogicExtended:
         assert cl.should_continue_fund_analyst(state) == "tools_fund_analyst"
 
     def test_should_continue_fund_analyst_no_tools(self):
-        from ifa.graph.conditional_logic import ConditionalLogic
         from unittest.mock import MagicMock
+
+        from ifa.graph.conditional_logic import ConditionalLogic
 
         cl = ConditionalLogic()
         msg = MagicMock()
@@ -215,8 +217,9 @@ class TestConditionalLogicExtended:
         assert cl.should_continue_fund_analyst(state) == "Msg Clear Fund Analyst"
 
     def test_should_continue_index_analyst_with_tools(self):
-        from ifa.graph.conditional_logic import ConditionalLogic
         from unittest.mock import MagicMock
+
+        from ifa.graph.conditional_logic import ConditionalLogic
 
         cl = ConditionalLogic()
         msg = MagicMock()
@@ -225,8 +228,9 @@ class TestConditionalLogicExtended:
         assert cl.should_continue_index_analyst(state) == "tools_index_analyst"
 
     def test_should_continue_fund_screener_with_tools(self):
-        from ifa.graph.conditional_logic import ConditionalLogic
         from unittest.mock import MagicMock
+
+        from ifa.graph.conditional_logic import ConditionalLogic
 
         cl = ConditionalLogic()
         msg = MagicMock()

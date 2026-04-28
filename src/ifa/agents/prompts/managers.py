@@ -18,7 +18,7 @@ RESEARCH_MANAGER_PROMPT = (
     "3. Key Risks: Top 2-3 risks regardless of your recommendation.\n"
     "4. Time Horizon: Recommended holding period.\n\n"
     "Take into account your past mistakes on similar situations:\n"
-    '\"{past_memory_str}\"'
+    '"{past_memory_str}"'
     "\n\n"
     "Here is the debate history:\n"
     "{history}\n\n"

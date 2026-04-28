@@ -2,48 +2,71 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from contextlib import contextmanager
 from functools import lru_cache
 
 import akshare as ak
 import pandas as pd
 
+_tls = threading.local()
+_TLS_KEY = "no_proxy_active"
+
 
 @contextmanager
 def no_proxy():
     """
-    临时绕过所有代理（环境变量 + Windows 系统代理），避免代理干扰 AkShare 请求。
+    临时绕过所有代理（环境变量 + requests Session），避免代理干扰 AkShare 请求。
 
-    通过 monkey-patch requests.Session 使其在上下文内不使用任何代理。
+    通过线程局部标记 + requests Session transport adapter 的方式实现，
+    避免修改全局 ``requests.Session.__init__``，从而保证线程安全。
 
     返回：
         None: 无返回值。
     """
-    # 清除代理相关环境变量
     saved = {}
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
         val = os.environ.pop(key, None)
         if val is not None:
             saved[key] = val
 
-    # Monkey-patch requests.Session：强制 trust_env=False + 清空 proxies
-    # 这样 Windows 注册表中的系统代理也不会被读取
-    import requests
-
-    _original_init = requests.Session.__init__
-
-    def _patched_init(self, *args, **kwargs):
-        _original_init(self, *args, **kwargs)
-        self.trust_env = False
-        self.proxies = {}
-
-    requests.Session.__init__ = _patched_init
+    old_active = getattr(_tls, _TLS_KEY, False)
+    setattr(_tls, _TLS_KEY, True)
+    _install_session_adapter()
 
     try:
         yield
     finally:
+        setattr(_tls, _TLS_KEY, old_active)
+        if not old_active:
+            _uninstall_session_adapter()
         os.environ.update(saved)
-        requests.Session.__init__ = _original_init
+
+
+def _install_session_adapter() -> None:
+    """替换 requests.Session.__init__，使其在线程活跃时禁用代理。"""
+    import requests
+
+    _original_init = requests.Session.__init__
+    _tls._original_session_init = _original_init
+
+    def _patched_init(self, *args, **kwargs):
+        _original_init(self, *args, **kwargs)
+        if getattr(_tls, _TLS_KEY, False):
+            self.trust_env = False
+            self.proxies = {}
+
+    requests.Session.__init__ = _patched_init
+
+
+def _uninstall_session_adapter() -> None:
+    """恢复 requests.Session.__init__ 为原始实现。"""
+    import requests
+
+    original = getattr(_tls, "_original_session_init", None)
+    if original is not None:
+        requests.Session.__init__ = original
+        del _tls._original_session_init
 
 
 SH_PREFIXES = (

@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import re
-
 import akshare as ak
 
 from .a_share import (
@@ -13,25 +11,7 @@ from .a_share import (
     _format_table,
     _round_numeric_frame,
 )
-from .a_share_common import normalize_ashare_symbol, to_plain_symbol
-
-
-def _safe_plain_code(symbol: str) -> str:
-    """安全提取 6 位纯数字代码，兼容场外基金等非交易所代码。"""
-    try:
-        return to_plain_symbol(symbol)
-    except (ValueError, TypeError):
-        match = re.search(r"\d{6}", str(symbol))
-        return match.group(0) if match else str(symbol).strip()
-
-
-def _safe_display_symbol(symbol: str) -> str:
-    """安全获取展示用代码，优先使用规范化格式。"""
-    try:
-        return normalize_ashare_symbol(symbol)
-    except (ValueError, TypeError):
-        return str(symbol).strip()
-
+from .a_share_common import safe_display_symbol, safe_plain_code
 
 # ── 1. 全部基金列表 ─────────────────────────────────────────────
 
@@ -78,8 +58,8 @@ def get_fund_basic_info(symbol: str) -> str:
     返回：
         str: 基金基本信息文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_individual_basic_info_xq,
@@ -139,8 +119,8 @@ def get_fund_stock_holdings(symbol: str, date: str = "") -> str:
     返回：
         str: 股票持仓 CSV 数据。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     report_date = date[:4] if date else ""
 
     try:
@@ -177,8 +157,8 @@ def get_fund_bond_holdings(symbol: str, date: str = "") -> str:
     返回：
         str: 债券持仓 CSV 数据。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     report_date = date[:4] if date else ""
 
     try:
@@ -215,8 +195,8 @@ def get_fund_industry_allocation(symbol: str, date: str = "") -> str:
     返回：
         str: 行业配置 CSV 数据。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     report_date = date[:4] if date else ""
 
     try:
@@ -247,8 +227,8 @@ def get_fund_risk_analysis(symbol: str) -> str:
     返回：
         str: 风险分析文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_individual_analysis_xq,
@@ -276,8 +256,8 @@ def get_fund_achievement(symbol: str) -> str:
     返回：
         str: 业绩数据文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_individual_achievement_xq,
@@ -330,8 +310,8 @@ def get_fund_history_nav(symbol: str, indicator: str = "单位净值走势") -> 
     返回：
         str: 历史数据 CSV 文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_open_fund_info_em,
@@ -444,8 +424,8 @@ def get_fund_fee(symbol: str, indicator: str = "申购费率") -> str:
     返回：
         str: 费率信息文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_fee_em,
@@ -536,8 +516,8 @@ def get_fund_profit_probability(symbol: str) -> str:
     返回：
         str: 盈利概率数据文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_individual_profit_probability_xq,
@@ -566,8 +546,8 @@ def get_fund_asset_allocation(symbol: str, date: str = "") -> str:
     返回：
         str: 资产配置比例文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     report_date = date.replace("-", "") if date else ""
     try:
         df = _call_akshare_api(
@@ -607,8 +587,8 @@ def get_etf_intraday(
     返回：
         str: 分时行情 CSV 数据。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_etf_hist_min_em,

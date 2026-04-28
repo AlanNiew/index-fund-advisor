@@ -7,16 +7,12 @@ A 股数据获取基础设施层。
 """
 from __future__ import annotations
 
-import sys
 import time
 from contextlib import contextmanager
-from http.client import RemoteDisconnected
 
 import pandas as pd
-import requests
-from akshare.utils import tqdm as ak_tqdm
 
-from .a_share_common import no_proxy
+from .a_share_common import is_retryable_akshare_error, no_proxy
 
 # ---------------------------------------------------------------------------
 #  通用工具函数（基础设施层）
@@ -40,36 +36,6 @@ def _temporary_string_storage(storage: str):
         yield
     finally:
         pd.set_option("mode.string_storage", original)
-
-
-@contextmanager
-def _suppress_akshare_progress():
-    """
-    临时关闭 AkShare 内部 tqdm 进度条输出。
-
-    返回：
-        None: 无返回值。
-    """
-    replacements = {}
-
-    def silent_get_tqdm(enable=True):
-        return lambda iterable, *args, **kwargs: iterable
-
-    replacements[(ak_tqdm, "get_tqdm")] = ak_tqdm.get_tqdm
-    ak_tqdm.get_tqdm = silent_get_tqdm
-
-    for module in list(sys.modules.values()):
-        module_name = getattr(module, "__name__", "")
-        if not module_name.startswith("akshare."):
-            continue
-        if hasattr(module, "get_tqdm"):
-            replacements[(module, "get_tqdm")] = module.get_tqdm
-            module.get_tqdm = silent_get_tqdm
-    try:
-        yield
-    finally:
-        for (module, attr), original in replacements.items():
-            setattr(module, attr, original)
 
 
 def _format_table(df: pd.DataFrame, title: str, rows: int = 10) -> str:
@@ -130,31 +96,6 @@ def _safe_truncate(text: str, limit: int = 160) -> str:
     return clean[: limit - 3] + "..."
 
 
-def _is_retryable_akshare_error(exc: Exception) -> bool:
-    """
-    判断异常是否属于可重试的 AkShare 网络错误。
-
-    参数：
-        exc: 待判断的异常对象。
-
-    返回：
-        bool: 条件满足时返回 True，否则返回 False。
-    """
-    if isinstance(exc, (requests.exceptions.RequestException, RemoteDisconnected, TimeoutError)):
-        return True
-
-    message = str(exc)
-    retryable_markers = (
-        "Remote end closed connection without response",
-        "Connection aborted",
-        "Read timed out",
-        "ConnectTimeout",
-        "Max retries exceeded",
-        "temporarily unavailable",
-    )
-    return any(marker in message for marker in retryable_markers)
-
-
 def _call_akshare_api(func, *args, retries: int = 3, retry_delay: float = 1.0, **kwargs):
     """
     调用 AkShare 接口，并对网络抖动执行有限次重试。
@@ -177,7 +118,7 @@ def _call_akshare_api(func, *args, retries: int = 3, retry_delay: float = 1.0, *
                 return func(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if attempt >= retries or not _is_retryable_akshare_error(exc):
+            if attempt >= retries or not is_retryable_akshare_error(exc):
                 raise
             time.sleep(retry_delay * attempt)
     raise last_exc

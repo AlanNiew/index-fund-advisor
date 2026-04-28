@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Annotated
 
 import akshare as ak
@@ -11,30 +10,12 @@ from langchain_core.tools import tool
 
 from ifa.dataflows.a_share import _call_akshare_api, _format_data_error, _format_table
 from ifa.dataflows.a_share_common import (
-    normalize_ashare_symbol,
-    to_plain_symbol,
+    find_column,
+    safe_display_symbol,
+    safe_plain_code,
 )
 from ifa.dataflows.asset_type import AssetType, detect_asset_type
 from ifa.dataflows.interface import route_to_vendor
-
-
-def _safe_display_symbol(symbol: str) -> str:
-    """安全获取展示用代码，失败则用原始输入。"""
-    try:
-        return normalize_ashare_symbol(symbol)
-    except (ValueError, TypeError):
-        return str(symbol).strip()
-
-
-def _safe_plain_code(symbol: str) -> str:
-    """安全提取 6 位纯数字代码。"""
-    try:
-        return to_plain_symbol(symbol)
-    except (ValueError, TypeError):
-        match = re.search(r"\d{6}", str(symbol))
-        if match:
-            return match.group(0)
-        return str(symbol).strip()
 
 
 @tool
@@ -50,11 +31,11 @@ def get_constituent_overview(
     """
     asset_type = detect_asset_type(symbol)
     if asset_type == AssetType.OFFSHORE_FUND:
-        return f"{_safe_display_symbol(symbol)} 是场外基金，没有明确的成分股列表。场外基金通过跟踪指数间接持有成分股，请使用 get_etf_fund_info 查看基金信息，或使用跟踪的指数代码查询成分股。"
+        return f"{safe_display_symbol(symbol)} 是场外基金，没有明确的成分股列表。场外基金通过跟踪指数间接持有成分股，请使用 get_etf_fund_info 查看基金信息，或使用跟踪的指数代码查询成分股。"
 
-    display = _safe_display_symbol(symbol)
+    display = safe_display_symbol(symbol)
     try:
-        plain = _safe_plain_code(symbol)
+        plain = safe_plain_code(symbol)
         df = _call_akshare_api(
             ak.index_stock_cons_csindex,
             symbol=plain,
@@ -67,7 +48,7 @@ def get_constituent_overview(
 
     # 取前 10 大权重股
     top_n = 10
-    weight_col = _find_column(df, "权重", "weight", "指数权重")
+    weight_col = find_column(df, "权重", "weight", "指数权重")
 
     df = df.sort_values(weight_col, ascending=False).head(top_n) if weight_col else df.head(top_n)
 
@@ -91,11 +72,11 @@ def get_constituent_sector_distribution(
     """
     asset_type = detect_asset_type(symbol)
     if asset_type == AssetType.OFFSHORE_FUND:
-        return f"{_safe_display_symbol(symbol)} 是场外基金，无法直接查询行业分布。请使用其跟踪的指数代码查询。"
+        return f"{safe_display_symbol(symbol)} 是场外基金，无法直接查询行业分布。请使用其跟踪的指数代码查询。"
 
-    display = _safe_display_symbol(symbol)
+    display = safe_display_symbol(symbol)
     try:
-        plain = _safe_plain_code(symbol)
+        plain = safe_plain_code(symbol)
         df = _call_akshare_api(
             ak.index_stock_cons_csindex,
             symbol=plain,
@@ -106,7 +87,7 @@ def get_constituent_sector_distribution(
     if df is None or df.empty:
         return f"未找到 {display} 的成分股行业分布数据。"
 
-    sector_col = _find_column(df, "行业", "行业代码", "industry", "一级行业")
+    sector_col = find_column(df, "行业", "行业代码", "industry", "一级行业")
 
     if not sector_col:
         return f"成分股数据中未找到行业分类字段。可用列: {list(df.columns)}"
@@ -115,7 +96,7 @@ def get_constituent_sector_distribution(
     sector_counts.columns = ["行业", "成分股数量"]
     sector_counts["占比(%)"] = (sector_counts["成分股数量"] / sector_counts["成分股数量"].sum() * 100).round(2)
 
-    weight_col = _find_column(df, "权重", "weight", "指数权重")
+    weight_col = find_column(df, "权重", "weight", "指数权重")
 
     if weight_col:
         df[weight_col] = df[weight_col].astype(float)
@@ -142,11 +123,11 @@ def get_constituent_performance(
     """
     asset_type = detect_asset_type(symbol)
     if asset_type == AssetType.OFFSHORE_FUND:
-        return f"{_safe_display_symbol(symbol)} 是场外基金，无法直接查询成分股表现。请使用其跟踪的指数代码查询。"
+        return f"{safe_display_symbol(symbol)} 是场外基金，无法直接查询成分股表现。请使用其跟踪的指数代码查询。"
 
-    display = _safe_display_symbol(symbol)
+    display = safe_display_symbol(symbol)
     try:
-        plain = _safe_plain_code(symbol)
+        plain = safe_plain_code(symbol)
         df = _call_akshare_api(
             ak.index_stock_cons_csindex,
             symbol=plain,
@@ -157,9 +138,9 @@ def get_constituent_performance(
     if df is None or df.empty:
         return f"未找到 {display} 的成分股数据。"
 
-    code_col = _find_column(df, "成分券代码", "股票代码", "code")
-    name_col = _find_column(df, "成分券名称", "股票名称", "name")
-    weight_col = _find_column(df, "权重", "weight", "指数权重")
+    code_col = find_column(df, "成分券代码", "股票代码", "code")
+    name_col = find_column(df, "成分券名称", "股票名称", "name")
+    weight_col = find_column(df, "权重", "weight", "指数权重")
 
     if not code_col:
         return f"成分股数据中未找到代码字段。可用列: {list(df.columns)}"
@@ -184,14 +165,6 @@ def get_constituent_performance(
 
     header = f"# Top 10 Constituent Performance for {display} (Last {look_back_days} days)\n\n"
     return header + "\n\n".join(results)
-
-
-def _find_column(df, *candidates: str) -> str | None:
-    """在 DataFrame 列中按候选名称依次查找，返回第一个匹配的列名。"""
-    for col in candidates:
-        if col in df.columns:
-            return col
-    return None
 
 
 def _get_today_str() -> str:

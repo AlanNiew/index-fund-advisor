@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import re
-
 import akshare as ak
 import pandas as pd
 
@@ -16,37 +14,9 @@ from .a_share import (
 )
 from .a_share_common import (
     format_date_for_api,
-    normalize_ashare_symbol,
-    to_plain_symbol,
+    safe_display_symbol,
+    safe_plain_code,
 )
-
-
-def _safe_plain_code(symbol: str) -> str:
-    """
-    安全提取 6 位纯数字代码。
-    对于标准 A 股/ETF/指数代码使用 normalize + to_plain 流程；
-    对于无法规范化的场外基金代码，直接提取 6 位数字。
-    """
-    try:
-        return to_plain_symbol(symbol)
-    except (ValueError, TypeError):
-        # 场外基金等非交易所代码，直接提取纯数字
-        match = re.search(r"\d{6}", str(symbol))
-        if match:
-            return match.group(0)
-        return str(symbol).strip()
-
-
-def _safe_display_symbol(symbol: str) -> str:
-    """
-    安全获取展示用代码。
-    优先使用规范化格式，失败则用原始输入。
-    """
-    try:
-        return normalize_ashare_symbol(symbol)
-    except (ValueError, TypeError):
-        return str(symbol).strip()
-
 
 # ── ETF 行情数据 ─────────────────────────────────────────────
 
@@ -63,8 +33,8 @@ def get_etf_data(symbol: str, start_date: str, end_date: str) -> str:
     返回：
         str: CSV 格式的 OHLCV 行情数据。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_etf_hist_em,
@@ -126,8 +96,8 @@ def get_index_data(symbol: str, start_date: str, end_date: str) -> str:
     返回：
         str: CSV 格式的行情数据。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.index_zh_a_hist,
@@ -183,8 +153,8 @@ def get_etf_fund_info(symbol: str) -> str:
     返回：
         str: 基金基本信息文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_etf_fund_info_em,
@@ -212,8 +182,8 @@ def get_index_constituents(symbol: str) -> str:
     返回：
         str: 成分股列表文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.index_stock_cons_csindex,
@@ -242,8 +212,8 @@ def get_fund_nav(symbol: str) -> str:
     返回：
         str: 历史净值数据文本。
     """
-    display = _safe_display_symbol(symbol)
-    plain = _safe_plain_code(symbol)
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
     try:
         df = _call_akshare_api(
             ak.fund_open_fund_info_em,

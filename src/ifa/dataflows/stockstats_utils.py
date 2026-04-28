@@ -1,103 +1,31 @@
 import logging
 import os
-import sys
 import threading
 import time
-from contextlib import contextmanager
-from http.client import RemoteDisconnected
 from typing import Annotated
 
 import akshare as ak
 import pandas as pd
-import requests
-from akshare.utils import tqdm as ak_tqdm
 from stockstats import wrap
 
 from .a_share_common import (
     format_date_for_api,
     get_previous_trade_date,
+    is_retryable_akshare_error,
     no_proxy,
     normalize_ashare_symbol,
+    safe_plain_code,
+    suppress_akshare_progress,
     to_exchange_prefixed_symbol,
     to_plain_symbol,
 )
 from .asset_type import AssetType, detect_asset_type
 from .config import get_config
 
-
-def _safe_plain_code(symbol: str) -> str:
-    """
-    安全提取 6 位纯数字代码。
-    对于标准 A 股代码使用 to_plain_symbol；
-    对于无法规范化的场外基金代码，直接提取 6 位数字。
-    """
-    try:
-        return to_plain_symbol(symbol)
-    except (ValueError, TypeError):
-        import re
-        match = re.search(r"\d{6}", str(symbol))
-        if match:
-            return match.group(0)
-        return str(symbol).strip()
-
 logger = logging.getLogger(__name__)
 
 # OHLCV 缓存文件写入锁，防止并行工具调用时的写入竞争
 _ohlcv_cache_lock = threading.Lock()
-
-
-@contextmanager
-def _suppress_akshare_progress():
-    """
-    临时关闭 AkShare 内部 tqdm 进度条输出。
-
-    返回：
-        None: 无返回值。
-    """
-    replacements = {}
-
-    def silent_get_tqdm(enable=True):
-        return lambda iterable, *args, **kwargs: iterable
-
-    replacements[(ak_tqdm, "get_tqdm")] = ak_tqdm.get_tqdm
-    ak_tqdm.get_tqdm = silent_get_tqdm
-
-    for module in list(sys.modules.values()):
-        module_name = getattr(module, "__name__", "")
-        if not module_name.startswith("akshare."):
-            continue
-        if hasattr(module, "get_tqdm"):
-            replacements[(module, "get_tqdm")] = module.get_tqdm
-            module.get_tqdm = silent_get_tqdm
-    try:
-        yield
-    finally:
-        for (module, attr), original in replacements.items():
-            setattr(module, attr, original)
-
-
-def _is_retryable_akshare_error(exc: Exception) -> bool:
-    """
-    判断异常是否属于可重试的 AkShare 网络错误。
-
-    参数：
-        exc: 待判断的异常对象。
-
-    返回：
-        bool: 条件满足时返回 True，否则返回 False。
-    """
-    if isinstance(exc, (requests.exceptions.RequestException, RemoteDisconnected, TimeoutError)):
-        return True
-
-    message = str(exc)
-    retryable_markers = (
-        "Remote end closed connection without response",
-        "Connection aborted",
-        "Read timed out",
-        "ConnectTimeout",
-        "Max retries exceeded",
-    )
-    return any(marker in message for marker in retryable_markers)
 
 
 def fetch_with_cache(
@@ -124,7 +52,7 @@ def fetch_with_cache(
             return func()
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
-            if attempt >= retries or not _is_retryable_akshare_error(exc):
+            if attempt >= retries or not is_retryable_akshare_error(exc):
                 if log_failure_as_exception:
                     logger.exception("A-share data fetch failed after %s attempt(s): %s", attempt, exc)
                 else:
@@ -196,7 +124,7 @@ def load_ohlcv(symbol: str, curr_date: str, asset_type: AssetType | None = None)
     try:
         normalized_symbol = normalize_ashare_symbol(symbol)
     except (ValueError, TypeError):
-        normalized_symbol = _safe_plain_code(symbol)
+        normalized_symbol = safe_plain_code(symbol)
 
     aligned_trade_date = get_previous_trade_date(curr_date)
     curr_date_dt = pd.to_datetime(aligned_trade_date)
@@ -291,7 +219,7 @@ def _fetch_index_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFram
 
 def _fetch_offshore_fund_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFrame:
     """场外基金净值映射为伪 OHLCV。"""
-    plain = _safe_plain_code(symbol)
+    plain = safe_plain_code(symbol)
     with no_proxy():
         raw = fetch_with_cache(
             lambda: ak.fund_open_fund_info_em(symbol=plain, indicator="单位净值走势"),
@@ -327,7 +255,7 @@ def _fetch_stock_ohlcv(symbol: str, start_str: str, end_str: str) -> pd.DataFram
                 log_failure_as_exception=False,
             )
         except Exception:  # noqa: BLE001
-            with no_proxy(), _suppress_akshare_progress():
+            with no_proxy(), suppress_akshare_progress():
                 return fetch_with_cache(
                     lambda: ak.stock_zh_a_hist_tx(
                         symbol=to_exchange_prefixed_symbol(symbol).lower(),

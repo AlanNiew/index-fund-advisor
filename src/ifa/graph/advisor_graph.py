@@ -31,11 +31,8 @@ from ifa.agents.managers.portfolio_manager import create_portfolio_manager
 from ifa.agents.managers.report_generator import create_report_generator
 from ifa.agents.managers.research_manager import create_research_manager
 from ifa.agents.memory import FinancialSituationMemory
-from ifa.agents.researchers.bear_researcher import create_bear_researcher
-from ifa.agents.researchers.bull_researcher import create_bull_researcher
-from ifa.agents.risk_mgmt.aggressive_debator import create_aggressive_debator
-from ifa.agents.risk_mgmt.conservative_debator import create_conservative_debator
-from ifa.agents.risk_mgmt.neutral_debator import create_neutral_debator
+from ifa.agents.researchers.researcher import create_bear_researcher, create_bull_researcher
+from ifa.agents.risk_mgmt.debator import create_aggressive_debator, create_conservative_debator, create_neutral_debator
 from ifa.agents.tools.constituent_tools import (
     get_constituent_overview,
     get_constituent_performance,

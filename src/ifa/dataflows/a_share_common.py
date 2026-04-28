@@ -219,6 +219,46 @@ def to_exchange_prefixed_symbol(symbol: str) -> str:
     return f"{exchange}{code}"
 
 
+def safe_plain_code(symbol: str) -> str:
+    """
+    安全提取 6 位纯数字代码。
+
+    对于标准 A 股/ETF/指数代码使用 normalize + to_plain 流程；
+    对于无法规范化的场外基金代码，直接提取 6 位数字。
+
+    参数：
+        symbol: 待分析标的的代码。
+
+    返回：
+        str: 纯数字代码。
+    """
+    try:
+        return to_plain_symbol(symbol)
+    except (ValueError, TypeError):
+        match = re.search(r"\d{6}", str(symbol))
+        if match:
+            return match.group(0)
+        return str(symbol).strip()
+
+
+def safe_display_symbol(symbol: str) -> str:
+    """
+    安全获取展示用代码。
+
+    优先使用规范化格式（如 ``000001.SZ``），失败则用原始输入。
+
+    参数：
+        symbol: 待分析标的的代码。
+
+    返回：
+        str: 展示用代码。
+    """
+    try:
+        return normalize_ashare_symbol(symbol)
+    except (ValueError, TypeError):
+        return str(symbol).strip()
+
+
 def format_date_for_api(date_str: str) -> str:
     """
     将日期格式化为接口所需格式。
@@ -302,3 +342,83 @@ def parse_date_column(series: pd.Series) -> pd.Series:
         pd.Series: 解析后的序列结果。
     """
     return pd.to_datetime(series, errors="coerce")
+
+
+@contextmanager
+def suppress_akshare_progress():
+    """
+    临时关闭 AkShare 内部 tqdm 进度条输出。
+
+    返回：
+        None: 无返回值。
+    """
+    import sys
+
+    from akshare.utils import tqdm as ak_tqdm
+
+    replacements = {}
+
+    def silent_get_tqdm(enable=True):
+        return lambda iterable, *args, **kwargs: iterable
+
+    replacements[(ak_tqdm, "get_tqdm")] = ak_tqdm.get_tqdm
+    ak_tqdm.get_tqdm = silent_get_tqdm
+
+    for module in list(sys.modules.values()):
+        module_name = getattr(module, "__name__", "")
+        if not module_name.startswith("akshare."):
+            continue
+        if hasattr(module, "get_tqdm"):
+            replacements[(module, "get_tqdm")] = module.get_tqdm
+            module.get_tqdm = silent_get_tqdm
+    try:
+        yield
+    finally:
+        for (module, attr), original in replacements.items():
+            setattr(module, attr, original)
+
+
+def is_retryable_akshare_error(exc: Exception) -> bool:
+    """
+    判断异常是否属于可重试的 AkShare 网络错误。
+
+    参数：
+        exc: 待判断的异常对象。
+
+    返回：
+        bool: 条件满足时返回 True，否则返回 False。
+    """
+    from http.client import RemoteDisconnected
+
+    import requests
+
+    if isinstance(exc, (requests.exceptions.RequestException, RemoteDisconnected, TimeoutError)):
+        return True
+
+    message = str(exc)
+    retryable_markers = (
+        "Remote end closed connection without response",
+        "Connection aborted",
+        "Read timed out",
+        "ConnectTimeout",
+        "Max retries exceeded",
+        "temporarily unavailable",
+    )
+    return any(marker in message for marker in retryable_markers)
+
+
+def find_column(df, *candidates: str) -> str | None:
+    """
+    在 DataFrame 列中按候选名称依次查找，返回第一个匹配的列名。
+
+    参数：
+        df: Pandas DataFrame。
+        candidates: 候选列名（按优先级排列）。
+
+    返回：
+        str | None: 匹配到的列名，无匹配时返回 None。
+    """
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None

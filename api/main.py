@@ -3,8 +3,11 @@
 
 import os
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()
 
 _CORS_ORIGINS = [o.strip() for o in os.environ.get("IFA_CORS_ORIGINS", "*").split(",") if o.strip()]
 

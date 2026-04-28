@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -162,7 +162,7 @@ class LocalArtifactStore:
             "params": self._normalize_value(params),
             "payload_file": payload_path.name,
             "payload_format": payload_format,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "metadata": self._normalize_value(metadata),
         }
         (directory / "manifest.json").write_text(

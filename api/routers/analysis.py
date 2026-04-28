@@ -3,9 +3,10 @@
 
 import asyncio
 import uuid
+import weakref
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from api.models.schemas import (
     DeepAnalyzeRequest,
@@ -14,9 +15,18 @@ from api.models.schemas import (
     TaskDetailResponse,
     TaskResponse,
 )
-from api.tasks.manager import add_task, get_task
+from api.tasks.manager import add_task, all_tasks, get_task
 
 router = APIRouter(prefix="/api/v1")
+
+_background_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
+
+
+def _create_tracked_task(coro) -> asyncio.Task:
+    """创建带引用跟踪的后台任务，防止 GC 回收。"""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    return task
 
 
 @router.post("/analyze/deep", response_model=TaskResponse)
@@ -33,7 +43,7 @@ async def analyze_deep(req: DeepAnalyzeRequest):
         "error": None,
     }
     add_task(task)
-    asyncio.create_task(_run_analysis(task))
+    _create_tracked_task(_run_analysis(task))
     return TaskResponse(task_id=task_id, status="pending", mode="deep", created_at=task["created_at"])
 
 
@@ -52,7 +62,7 @@ async def analyze_screen(req: ScreenRequest):
         "error": None,
     }
     add_task(task)
-    asyncio.create_task(_run_analysis(task))
+    _create_tracked_task(_run_analysis(task))
     return TaskResponse(task_id=task_id, status="pending", mode="screen", created_at=task["created_at"])
 
 
@@ -70,7 +80,7 @@ async def analyze_portfolio(req: PortfolioRequest):
         "error": None,
     }
     add_task(task)
-    asyncio.create_task(_run_analysis(task))
+    _create_tracked_task(_run_analysis(task))
     return TaskResponse(task_id=task_id, status="pending", mode="portfolio", created_at=task["created_at"])
 
 
@@ -79,7 +89,6 @@ async def get_task_detail(task_id: str):
     """查询任务状态和结果。"""
     task = get_task(task_id)
     if not task:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
     return TaskDetailResponse(**task)
 
@@ -87,7 +96,6 @@ async def get_task_detail(task_id: str):
 @router.get("/tasks")
 async def list_tasks():
     """列出所有任务。"""
-    from api.tasks.manager import all_tasks
     return all_tasks()
 
 
@@ -107,9 +115,6 @@ async def _run_analysis(task: dict):
 
 def _execute_graph(task: dict) -> dict:
     """同步执行 LangGraph 图（在线程池中运行）。"""
-    from dotenv import load_dotenv
-    load_dotenv()
-
     from ifa.common import build_advisor, build_state
 
     advisor = build_advisor()

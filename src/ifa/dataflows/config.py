@@ -1,4 +1,5 @@
 import contextvars
+import copy
 
 import ifa.default_config as default_config
 
@@ -6,22 +7,19 @@ _config_var: contextvars.ContextVar[dict | None] = contextvars.ContextVar("ifa_c
 
 
 def initialize_config():
-    """使用默认值初始化配置。"""
     if _config_var.get() is None:
-        _config_var.set(default_config.DEFAULT_CONFIG.copy())
+        _config_var.set(copy.deepcopy(default_config.DEFAULT_CONFIG))
 
 
 def set_config(config: dict):
-    """使用自定义值更新配置。"""
     current = _config_var.get()
     if current is None:
-        current = default_config.DEFAULT_CONFIG.copy()
+        current = copy.deepcopy(default_config.DEFAULT_CONFIG)
     current.update(config)
     _config_var.set(current)
 
 
 def get_config() -> dict:
-    """获取当前配置。"""
     if _config_var.get() is None:
         initialize_config()
     return _config_var.get().copy()

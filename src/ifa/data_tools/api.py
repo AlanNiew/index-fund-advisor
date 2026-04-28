@@ -1,3 +1,4 @@
+import threading
 from typing import Any
 
 from ifa.data_tools.builtin import create_default_data_tool_registry
@@ -6,18 +7,10 @@ from ifa.data_tools.storage import LocalArtifactStore
 from ifa.dataflows.config import get_config, set_config
 
 _default_executor: CachedDataToolExecutor | None = None
+_executor_lock = threading.Lock()
 
 
 def build_default_data_executor(config: dict[str, Any] | None = None) -> CachedDataToolExecutor:
-    """
-    基于当前配置创建默认数据工具执行器。
-
-    参数：
-        config: 可选运行时配置。
-
-    返回：
-        CachedDataToolExecutor: 构建好的默认执行器。
-    """
     runtime_config = get_config()
     if config:
         set_config(config)
@@ -31,32 +24,17 @@ def build_default_data_executor(config: dict[str, Any] | None = None) -> CachedD
 
 
 def configure_default_data_executor(executor: CachedDataToolExecutor) -> None:
-    """
-    配置全局默认数据工具执行器。
-
-    参数：
-        executor: 需要设置为默认值的执行器。
-
-    返回：
-        None: 无返回值。
-    """
     global _default_executor
-    _default_executor = executor
+    with _executor_lock:
+        _default_executor = executor
 
 
 def get_default_data_executor(config: dict[str, Any] | None = None) -> CachedDataToolExecutor:
-    """
-    获取全局默认数据工具执行器。
-
-    参数：
-        config: 可选运行时配置。
-
-    返回：
-        CachedDataToolExecutor: 默认执行器实例。
-    """
     global _default_executor
     if _default_executor is None:
-        _default_executor = build_default_data_executor(config)
+        with _executor_lock:
+            if _default_executor is None:
+                _default_executor = build_default_data_executor(config)
     return _default_executor
 
 

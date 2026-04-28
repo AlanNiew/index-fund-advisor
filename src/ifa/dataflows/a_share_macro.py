@@ -2,6 +2,8 @@
 """宏观经济、市场情绪、行业估值数据获取实现（基于 AkShare）。"""
 from __future__ import annotations
 
+from datetime import datetime
+
 import akshare as ak
 
 from .a_share import (
@@ -396,8 +398,6 @@ def get_index_valuation(index_name: str = "沪深300") -> str:
 #  三种指数估值分析方法
 # ---------------------------------------------------------------------------
 
-from datetime import datetime  # noqa: E402
-
 # 每个指数适用的估值方法
 _INDEX_METHODS: dict[str, dict[str, bool]] = {
     "沪深300": {"ey": True, "bogle_pe": True, "bogle_pb": True},
@@ -485,16 +485,7 @@ def _calc_bogle_pe_signal(
     # EPS 增长率：从指数点位/PE 推算近 5 年复合增长
     eps_growth = 0.0
     eps_growth_label = "暂无数据"
-    try:
-        # 指数点位列名为 "指数"
-        idx_col = [c for c in pe_series.index.name or [] if c == "指数"]
-        _ = idx_col  # unused, just checking
-    except Exception:  # noqa: BLE001
-        pass
 
-    # 从 pe_series 的父 DataFrame 获取 EPS
-    # pe_series 只是 Series，需要从原始数据获取
-    # 这里用简化的方式：直接计算 pe_series 变化推算
     if len(pe_series) >= 1260:  # 约 5 年
         eps_now = 1 / pe_series.iloc[-1]  # 归一化 EPS
         eps_5y_ago = 1 / pe_series.iloc[-1260]

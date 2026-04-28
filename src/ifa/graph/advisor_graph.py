@@ -66,6 +66,7 @@ from ifa.agents.tools.public_fund_tools import (
     get_index_fund_filter,
     get_open_fund_rank,
 )
+from ifa.agents.types import IFAdvisorState
 from ifa.agents.utils import create_msg_delete
 from ifa.dataflows.asset_type import detect_asset_type
 
@@ -294,8 +295,6 @@ class AdvisorGraph:
         bear_researcher = create_bear_researcher(self.quick_llm, self.bear_memory)
         research_manager = create_research_manager(self.deep_llm, self.research_manager_memory)
 
-        from ifa.agents.types import IFAdvisorState
-
         workflow = StateGraph(IFAdvisorState)
 
         # ── 分析阶段 ──
@@ -351,8 +350,6 @@ class AdvisorGraph:
         index_analyst = create_index_analyst(self.quick_llm)
         report_generator = create_report_generator(self.deep_llm)
 
-        from ifa.agents.types import IFAdvisorState
-
         workflow = StateGraph(IFAdvisorState)
 
         self._add_tool_agent(workflow, "Fund Analyst", fund_analyst, self.fund_analyst_tools)
@@ -400,8 +397,6 @@ class AdvisorGraph:
         bear_researcher = create_bear_researcher(self.quick_llm, self.bear_memory)
         research_manager = create_research_manager(self.deep_llm, self.research_manager_memory)
 
-        from ifa.agents.types import IFAdvisorState
-
         workflow = StateGraph(IFAdvisorState)
 
         self._add_tool_agent(workflow, "Fund Screener", fund_screener, self.fund_screener_tools)
@@ -439,8 +434,6 @@ class AdvisorGraph:
         conservative_analyst = create_conservative_debator(self.quick_llm)
         neutral_analyst = create_neutral_debator(self.quick_llm)
         portfolio_manager = create_portfolio_manager(self.deep_llm, self.portfolio_manager_memory)
-
-        from ifa.agents.types import IFAdvisorState
 
         workflow = StateGraph(IFAdvisorState)
 

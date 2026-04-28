@@ -195,7 +195,7 @@ class TestAgentDefensiveAccess:
 
     def test_aggressive_debator_missing_risk_debate_state(self):
         """Aggressive Debator 缺失 risk_debate_state 时不崩溃。"""
-        from ifa.agents.risk_mgmt.aggressive_debator import create_aggressive_debator
+        from ifa.agents.risk_mgmt.debator import create_aggressive_debator
 
         mock_llm = self._make_mock_llm("积极观点")
         node = create_aggressive_debator(mock_llm)
@@ -207,7 +207,7 @@ class TestAgentDefensiveAccess:
 
     def test_conservative_debator_missing_risk_debate_state(self):
         """Conservative Debator 缺失 risk_debate_state 时不崩溃。"""
-        from ifa.agents.risk_mgmt.conservative_debator import create_conservative_debator
+        from ifa.agents.risk_mgmt.debator import create_conservative_debator
 
         mock_llm = self._make_mock_llm("保守观点")
         node = create_conservative_debator(mock_llm)
@@ -218,7 +218,7 @@ class TestAgentDefensiveAccess:
 
     def test_neutral_debator_missing_risk_debate_state(self):
         """Neutral Debator 缺失 risk_debate_state 时不崩溃。"""
-        from ifa.agents.risk_mgmt.neutral_debator import create_neutral_debator
+        from ifa.agents.risk_mgmt.debator import create_neutral_debator
 
         mock_llm = self._make_mock_llm("中立观点")
         node = create_neutral_debator(mock_llm)

@@ -117,28 +117,32 @@ class RequestTracer:
         return str(filepath)
 
 
-# ── 全局追踪上下文 ──
+# ── 上下文安全追踪 ──
 
-_current_tracer: RequestTracer | None = None
+import contextvars
+
+_current_tracer_var: contextvars.ContextVar[RequestTracer | None] = contextvars.ContextVar(
+    "ifa_tracer", default=None
+)
 
 
 def start_trace(request_id: str, mode: str, fund_codes: str = "") -> RequestTracer:
     """开始一次请求追踪。"""
-    global _current_tracer
-    _current_tracer = RequestTracer(request_id, mode, fund_codes)
-    return _current_tracer
+    tracer = RequestTracer(request_id, mode, fund_codes)
+    _current_tracer_var.set(tracer)
+    return tracer
 
 
 def get_current_tracer() -> RequestTracer | None:
-    """获取当前请求追踪器。"""
-    return _current_tracer
+    """获取当前请求追踪器（线程安全）。"""
+    return _current_tracer_var.get()
 
 
 def end_trace(output_dir: str = "results/traces") -> str | None:
     """结束并保存当前请求追踪。"""
-    global _current_tracer
-    if _current_tracer is None:
+    tracer = _current_tracer_var.get()
+    if tracer is None:
         return None
-    path = _current_tracer.save(output_dir)
-    _current_tracer = None
+    path = tracer.save(output_dir)
+    _current_tracer_var.set(None)
     return path

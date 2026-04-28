@@ -2,8 +2,27 @@
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 ModelOption = tuple[str, str]
 ProviderModeOptions = dict[str, dict[str, list[ModelOption]]]
+
+_CUSTOM_CATALOG_PATH = Path(os.environ.get("IFA_MODEL_CATALOG", ""))
+
+
+def _load_custom_catalog() -> ProviderModeOptions | None:
+    """从环境变量 IFA_MODEL_CATALOG 指向的 JSON 文件加载自定义模型目录。"""
+    if not _CUSTOM_CATALOG_PATH.exists():
+        return None
+    try:
+        data = json.loads(_CUSTOM_CATALOG_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return None
 
 
 MODEL_OPTIONS: ProviderModeOptions = {
@@ -107,6 +126,8 @@ def get_model_options(provider: str, mode: str) -> list[ModelOption]:
     """
     返回指定提供方和选择模式对应的模型选项。
 
+    优先使用自定义目录（IFA_MODEL_CATALOG 环境变量），回退到内置目录。
+
     参数：
         provider: 模型提供方名称。
         mode: 当前查询对应的选择模式。
@@ -114,7 +135,8 @@ def get_model_options(provider: str, mode: str) -> list[ModelOption]:
     返回：
         List[ModelOption]: 当前查询结果。
     """
-    return MODEL_OPTIONS[provider.lower()][mode]
+    catalog = _load_custom_catalog() or MODEL_OPTIONS
+    return catalog[provider.lower()][mode]
 
 
 def get_known_models() -> dict[str, list[str]]:

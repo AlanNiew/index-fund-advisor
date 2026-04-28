@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import time
@@ -106,20 +107,16 @@ class RequestTracer:
             "spans": [s.to_dict() for s in self.spans],
         }
 
-    def save(self, output_dir: str = "results/traces"):
+    def save(self, output_dir: str = "results"):
         """保存追踪结果到 JSON 文件。"""
-        path = Path(output_dir)
+        fund_dir = self.fund_codes.replace(",", "_").strip() if self.fund_codes else "unknown"
+        path = Path(output_dir) / fund_dir
         path.mkdir(parents=True, exist_ok=True)
         filepath = path / f"{self.request_id}.json"
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
         logger.debug("追踪已保存: %s", filepath)
         return str(filepath)
-
-
-# ── 上下文安全追踪 ──
-
-import contextvars
 
 _current_tracer_var: contextvars.ContextVar[RequestTracer | None] = contextvars.ContextVar("ifa_tracer", default=None)
 
@@ -136,7 +133,7 @@ def get_current_tracer() -> RequestTracer | None:
     return _current_tracer_var.get()
 
 
-def end_trace(output_dir: str = "results/traces") -> str | None:
+def end_trace(output_dir: str = "results") -> str | None:
     """结束并保存当前请求追踪。"""
     tracer = _current_tracer_var.get()
     if tracer is None:

@@ -1,6 +1,7 @@
 """历史记录页面 — 展示 results/ 目录下的历史分析报告。"""
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -30,8 +31,6 @@ def render_history_page():
     for md_file in md_files[:50]:
         fund_dir = md_file.parent.name
         mod_time = md_file.stat().st_mtime
-        from datetime import datetime
-
         time_str = datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M")
 
         with st.expander(f"📄 {md_file.name} — {fund_dir} — {time_str}"):

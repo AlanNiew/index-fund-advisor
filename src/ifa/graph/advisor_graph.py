@@ -517,6 +517,7 @@ class AdvisorGraph:
 
         # 开始请求追踪
         fund_codes = state.get("fund_codes", "")
+        results_dir = self.config.get("results_dir", "results")
         trace = start_trace(uuid.uuid4().hex[:12], mode, fund_codes)
         trace.start_span("AdvisorGraph.run", "orchestrator")
 
@@ -562,7 +563,7 @@ class AdvisorGraph:
                 self._log_state(partial_state)
             except Exception:
                 logger.error("日志保存也失败，放弃")
-            end_trace()
+            end_trace(output_dir=results_dir)
             return partial_state
 
         self.curr_state = final_state
@@ -571,7 +572,7 @@ class AdvisorGraph:
         except Exception as e:
             logger.warning("日志保存失败: %s（不影响分析结果）", e)
 
-        end_trace()
+        end_trace(output_dir=results_dir)
         return final_state
 
     @staticmethod
@@ -622,10 +623,10 @@ class AdvisorGraph:
             "error": final_state.get("error", ""),
         }
 
-        directory = Path(results_dir) / fund_codes / "ifa_logs"
+        directory = Path(results_dir) / fund_codes
         directory.mkdir(parents=True, exist_ok=True)
 
-        log_path = directory / f"state_log_{analysis_date}_{mode}.json"
+        log_path = directory / f"{analysis_date}_{mode}.json"
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(log_entry, f, indent=4, ensure_ascii=False)
 

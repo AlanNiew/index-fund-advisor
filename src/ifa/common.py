@@ -102,10 +102,16 @@ def save_report(state: dict) -> str | None:
     date = state.get("analysis_date", datetime.now().strftime("%Y-%m-%d"))
     fund_codes = state.get("fund_codes", "").replace(",", "_").strip()
 
-    filename = f"{fund_codes}_{date}_{mode}.md" if fund_codes else f"{_MODE_LABEL.get(mode, mode)}_{date}.md"
+    if fund_codes:
+        # 同一次分析的所有产出物放在同一个基金目录下
+        save_dir = os.path.join(results_dir, fund_codes)
+        filename = f"{date}_{mode}.md"
+    else:
+        save_dir = results_dir
+        filename = f"{_MODE_LABEL.get(mode, mode)}_{date}.md"
 
-    os.makedirs(results_dir, exist_ok=True)
-    filepath = os.path.join(results_dir, filename)
+    os.makedirs(save_dir, exist_ok=True)
+    filepath = os.path.join(save_dir, filename)
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(report)

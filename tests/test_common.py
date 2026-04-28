@@ -114,7 +114,7 @@ class TestSaveReport:
                 assert "测试报告" in f.read()
 
     def test_filename_format(self):
-        """文件名格式正确。"""
+        """文件名格式正确 — 基金代码作为目录，日期和模式作为文件名。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = {
                 "final_report": "report",
@@ -126,7 +126,8 @@ class TestSaveReport:
                 mock_config.return_value = {"results_dir": tmpdir}
                 filepath = save_report(state)
 
+            # 基金代码在目录路径中
+            assert "510300_159919" in filepath
+            # 日期和模式在文件名中
             filename = os.path.basename(filepath)
-            assert "510300_159919" in filename
-            assert "2024-06-01" in filename
-            assert "deep" in filename
+            assert filename == "2024-06-01_deep.md"

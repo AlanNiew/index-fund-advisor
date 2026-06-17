@@ -42,7 +42,7 @@ DEFAULT_CONFIG = {
     "market_region": "cn_a",
     # ── LLM 配置 ──
     "llm_provider": "zhipu",
-    "deep_think_llm": "glm-5.1",
+    "deep_think_llm": "glm-5.2",
     "quick_think_llm": "glm-5-turbo",
     "backend_url": "https://open.bigmodel.cn/api/coding/paas/v4",
     # ── 提供方专属思考参数 ──

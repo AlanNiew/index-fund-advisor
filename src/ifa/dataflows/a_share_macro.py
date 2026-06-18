@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 import akshare as ak
@@ -328,6 +329,17 @@ def _compute_metric(series, label: str) -> str:
     return f"| {label} | {current:.2f} | {mean_val:.2f} | {pct:.1f}% | {_valuation_label(pct)} |"
 
 
+def _clean_float(value) -> float | None:
+    """把可能为 NaN/inf 或非数值的值统一转为 None；正常数值原样返回。"""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
+
+
 def fetch_valuation_metrics(index_name: str) -> dict:
     """
     获取指数的结构化估值指标，用于脚本和程序化消费。
@@ -338,6 +350,7 @@ def fetch_valuation_metrics(index_name: str) -> dict:
     返回：
         dict: 包含 pe_ttm / pb / roe / dividend_yield / earnings_yield /
               risk_free_rate / erp 等字段，不可用字段为 None。
+              注意：dividend_yield 为「上证A股」整体市场参考值，并非该指数自身股息率。
     """
     result: dict = {
         "index_name": index_name,
@@ -357,9 +370,10 @@ def fetch_valuation_metrics(index_name: str) -> dict:
         if pe_df is not None and not pe_df.empty:
             pe_recent = pe_df.tail(_LOOKBACK_ROWS)
             result["date"] = str(pe_recent["日期"].iloc[-1])[:10]
-            result["pe_ttm"] = float(pe_recent["滚动市盈率"].iloc[-1])
-            if result["pe_ttm"] > 0:
-                result["earnings_yield"] = 1 / result["pe_ttm"] * 100
+            pe_ttm = _clean_float(pe_recent["滚动市盈率"].iloc[-1])
+            result["pe_ttm"] = pe_ttm
+            if pe_ttm is not None and pe_ttm > 0:
+                result["earnings_yield"] = 1 / pe_ttm * 100
     except Exception:  # noqa: BLE001
         pass
 
@@ -367,7 +381,7 @@ def fetch_valuation_metrics(index_name: str) -> dict:
     try:
         pb_df = _call_akshare_api(ak.stock_index_pb_lg, symbol=index_name)
         if pb_df is not None and not pb_df.empty:
-            result["pb"] = float(pb_df["市净率"].iloc[-1])
+            result["pb"] = _clean_float(pb_df["市净率"].iloc[-1])
     except Exception:  # noqa: BLE001
         pass
 
@@ -375,16 +389,16 @@ def fetch_valuation_metrics(index_name: str) -> dict:
     if result["pb"] is not None and result["pe_ttm"] is not None and result["pe_ttm"] > 0:
         result["roe"] = result["pb"] / result["pe_ttm"] * 100
 
-    # ── 股息率（A股整体参考） ──
+    # ── 股息率（上证A股整体参考，非该指数自身股息率） ──
     try:
         div_df = _call_akshare_api(ak.stock_a_gxl_lg, symbol="上证A股")
         if div_df is not None and not div_df.empty:
-            result["dividend_yield"] = float(div_df["股息率"].iloc[-1])
+            result["dividend_yield"] = _clean_float(div_df["股息率"].iloc[-1])
     except Exception:  # noqa: BLE001
         pass
 
     # ── 10年期国债收益率（无风险利率） ──
-    result["risk_free_rate"] = _get_bond_yield_10y()
+    result["risk_free_rate"] = _clean_float(_get_bond_yield_10y())
 
     # ── ERP = 盈利收益率 - 无风险利率 ──
     if result["earnings_yield"] is not None and result["risk_free_rate"] is not None:

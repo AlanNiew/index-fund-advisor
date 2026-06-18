@@ -16,6 +16,7 @@
 
 import argparse
 import logging
+import math
 import sys
 import time
 from datetime import datetime
@@ -81,6 +82,11 @@ def fetch_valuations(fund_codes: list[str]) -> dict[str, dict]:
     """获取基金列表涉及的指数估值指标，返回 {fund_code: metrics_dict}。"""
     from ifa.dataflows.a_share_macro import fetch_valuation_metrics
 
+    # 提示未登记跟踪指数的基金（主动基金等），估值列将以 '-' 展示
+    unmapped = [c.strip() for c in fund_codes if not FUND_INDEX_MAP.get(c.strip())]
+    if unmapped:
+        logger.info("以下基金未登记跟踪指数，跳过估值展示: %s", ", ".join(unmapped))
+
     # 收集涉及的指数（去重）
     index_names = set()
     for code in fund_codes:
@@ -107,18 +113,25 @@ def fetch_valuations(fund_codes: list[str]) -> dict[str, dict]:
     return fund_metrics
 
 
+def _is_nan(value) -> bool:
+    """判断是否为 NaN（仅 float 类型，其余返回 False）。"""
+    return isinstance(value, float) and math.isnan(value)
+
+
 def _fmt_val(value, suffix: str = "") -> str:
-    """格式化估值指标，None 时返回 '-'。"""
-    if value is None:
+    """格式化估值指标，None/NaN 时返回 '-'。"""
+    if value is None or _is_nan(value):
         return "-"
     return f"{value:.2f}{suffix}"
 
 
-def _fmt_erp(value) -> str:
-    """格式化 ERP 指标，正值标绿带 + 号，负值标红，None 时返回 '-'。"""
-    if value is None:
+def _fmt_erp(value, markup: bool = True) -> str:
+    """格式化 ERP 指标，正值带 + 号、负值带号；markup=True 时叠加 Rich 颜色，None/NaN 返回 '-'。"""
+    if value is None or _is_nan(value):
         return "-"
-    return f"[green]+{value:.2f}%[/]" if value >= 0 else f"[red]{value:.2f}%[/]"
+    if value >= 0:
+        return f"[green]+{value:.2f}%[/]" if markup else f"+{value:.2f}%"
+    return f"[red]{value:.2f}%[/]" if markup else f"{value:.2f}%"
 
 
 def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict]):
@@ -146,7 +159,7 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
         table.add_column("PE(TTM)", justify="right")
         table.add_column("PB", justify="right")
         table.add_column("ROE", justify="right")
-        table.add_column("股息率", justify="right")
+        table.add_column("股息率(参考)", justify="right")
         table.add_column("盈利收益率", justify="right")
         table.add_column("无风险利率", justify="right")
         table.add_column("ERP", justify="right")
@@ -174,7 +187,7 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
         print(f"\n{'=' * 90}")
         print("  指数估值概览")
         print(f"{'=' * 90}")
-        header = f"  {'指数':<10} {'PE(TTM)':>8} {'PB':>8} {'ROE':>8} {'股息率':>8} {'盈利收益率':>10} {'无风险利率':>10} {'ERP':>8}"
+        header = f"  {'指数':<10} {'PE(TTM)':>8} {'PB':>8} {'ROE':>8} {'股息率(参考)':>8} {'盈利收益率':>10} {'无风险利率':>10} {'ERP':>8}"
         print(header)
         print(f"  {'-' * 86}")
         for idx_name, m in indices:
@@ -186,7 +199,7 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
                 f"{_fmt_val(m.get('dividend_yield'), '%'):>8} "
                 f"{_fmt_val(m.get('earnings_yield'), '%'):>10} "
                 f"{_fmt_val(m.get('risk_free_rate'), '%'):>10} "
-                f"{_fmt_val(m.get('erp'), '%'):>8}"
+                f"{_fmt_erp(m.get('erp'), markup=False):>8}"
             )
             print(row)
         print(f"{'=' * 90}\n")
@@ -263,7 +276,7 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
         table.add_column("评级", justify="center")
         table.add_column("置信度", justify="center")
         table.add_column("PE(TTM)", justify="right")
-        table.add_column("股息率", justify="right")
+        table.add_column("股息率(参考)", justify="right")
         table.add_column("ERP", justify="right")
         table.add_column("耗时", justify="right")
         table.add_column("状态", justify="center")
@@ -320,14 +333,14 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
         print(f"\n{'=' * 90}")
         print(f"  IFA 每日基金分析汇总 — {analysis_date}")
         print(f"{'=' * 90}")
-        print(f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'PE(TTM)':>8} {'股息率':>8} {'ERP':>8} {'耗时':>8}  {'状态'}")
+        print(f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'PE(TTM)':>8} {'股息率(参考)':>8} {'ERP':>8} {'耗时':>8}  {'状态'}")
         print(f"  {'-' * 86}")
         for r in results:
             status = "失败" if r["error"] else "成功"
             m = fund_metrics.get(r["fund_code"], {})
             pe_str = _fmt_val(m.get("pe_ttm"))
             div_str = _fmt_val(m.get("dividend_yield"), "%")
-            erp_str = _fmt_val(m.get("erp"), "%")
+            erp_str = _fmt_erp(m.get("erp"), markup=False)
             print(
                 f"  {r['fund_code']:<10} {r['rating']:<15} {r['confidence']:<10} "
                 f"{pe_str:>8} {div_str:>8} {erp_str:>8} {r['elapsed']:>7.1f}s  {status}"

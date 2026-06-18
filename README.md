@@ -49,7 +49,7 @@ ZHIPUAI_API_KEY=...
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
 | `llm_provider` | LLM 提供方 | `zhipu` |
-| `deep_think_llm` | 深度推理模型 | `glm-5.1` |
+| `deep_think_llm` | 深度推理模型 | `glm-5.2` |
 | `quick_think_llm` | 快速调用模型 | `glm-5-turbo` |
 | `backend_url` | API 基础地址 | `https://open.bigmodel.cn/api/coding/paas/v4` |
 | `max_debate_rounds` | 基金辩论轮数 | `2` |

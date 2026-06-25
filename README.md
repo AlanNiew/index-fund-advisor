@@ -116,6 +116,43 @@ API 端点：
 - `GET /api/v1/funds/search?q=关键词` — 快速搜索
 - `GET /api/v1/funds/{code}/basic` — 基金基本信息
 
+### MCP Server
+
+把 IFA 的数据 / 估值 / 分析能力暴露给 MCP 客户端（如 Claude Desktop、Claude Code），让 AI 在对话里直接查基金、看估值、跑分析。
+
+```bash
+# 安装 MCP 可选依赖（含 ifa-mcp 入口脚本）
+pip install -e ".[mcp]"
+```
+
+采用 stdio 传输，无需单独起服务。Claude Desktop 配置文件（macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`；Windows: `%APPDATA%\Claude\claude_desktop_config.json`）中加入：
+
+```json
+{
+  "mcpServers": {
+    "ifa": { "command": "ifa-mcp" }
+  }
+}
+```
+
+> Claude Code 用命令行添加：`claude mcp add ifa -- ifa-mcp`
+
+暴露 9 个工具：
+
+| 工具 | 说明 | 需 LLM Key |
+| --- | --- | --- |
+| `search_funds` | 按关键词 / 代码搜索公募基金 | 否 |
+| `get_fund_info` | 基金基本信息 | 否 |
+| `get_index_valuation_metrics` | 指数结构化估值指标（PE/PB/ROE/股息率/ERP，返回 dict） | 否 |
+| `get_index_valuation_report` | 指数综合估值报告（含历史百分位） | 否 |
+| `get_valuation_signal` | 估值信号（买入 / 持有 / 卖出） | 否 |
+| `screen_index_funds` | 按分类 + 跟踪方式筛选指数基金 | 否 |
+| `get_index_constituents` | 指数成份股 | 否 |
+| `get_north_flow` | 北向资金流向（市场情绪） | 否 |
+| `analyze_fund` | 单基金 AI 深度分析（`deep_simple` 快速 / `deep` 含辩论） | **是** |
+
+数据 / 估值工具走 AkShare 公开数据，无需 Key；`analyze_fund` 需在 `.env` 配置有效的 LLM API Key。详见 `src/ifa/mcp/server.py`。
+
 ## 数据工具
 
 Agent 可使用 36 个数据工具（`src/ifa/agents/tools/`），覆盖以下维度：
@@ -192,4 +229,5 @@ pytest -x             # 遇到第一个失败即停止
 - **CLI**: Typer + Rich
 - **Web**: Streamlit + Plotly
 - **API**: FastAPI + Uvicorn
+- **MCP**: FastMCP（stdio，接入 Claude 等 MCP 客户端）
 - **Python**: >= 3.10

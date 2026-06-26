@@ -53,8 +53,11 @@ def _run_deep_analysis(fund_code: str, analysis_date: str, bt_enabled: bool, bt_
             st.error(f"分析失败: {e}")
             return
 
+    error = final_state.get("error")
     report = final_state.get("final_report", "")
-    if report:
+    if error:
+        st.error(f"分析过程中出现错误: {error}")
+    elif report:
         st.markdown(report)
         from ifa.common import save_report
 

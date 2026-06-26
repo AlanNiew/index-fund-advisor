@@ -3,7 +3,6 @@
 
 import asyncio
 import uuid
-import weakref
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -19,13 +18,15 @@ from api.tasks.manager import add_task, all_tasks, get_task
 
 router = APIRouter(prefix="/api/v1")
 
-_background_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
+# 持有后台任务的强引用集合。WeakSet 不持强引用，task 会被 GC 静默回收。
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _create_tracked_task(coro) -> asyncio.Task:
-    """创建带引用跟踪的后台任务，防止 GC 回收。"""
+    """创建带引用跟踪的后台任务，task 完成后自动从集合移除。"""
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return task
 
 
@@ -107,7 +108,11 @@ async def _run_analysis(task: dict):
     try:
         result = await asyncio.to_thread(_execute_graph, task)
         task["result"] = result
-        task["status"] = "completed"
+        if result.get("error"):
+            task["error"] = result["error"]
+            task["status"] = "failed"
+        else:
+            task["status"] = "completed"
     except Exception as e:
         task["error"] = str(e)
         task["status"] = "failed"
@@ -141,4 +146,5 @@ def _execute_graph(task: dict) -> dict:
     return {
         "report_md": final_state.get("final_report", ""),
         "mode": mode,
+        "error": final_state.get("error"),
     }

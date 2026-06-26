@@ -126,65 +126,82 @@ class TestAPIEndpoints:
 
 
 class TestNoProxyThreadSafety:
-    """no_proxy() 上下文管理器多线程隔离测试。"""
+    """no_proxy() 上下文管理器线程安全测试。
 
-    def test_no_proxy_env_isolation(self):
-        import os
+    新实现通过永久 patch requests.utils.get_environ_proxies + TLS 标记工作，
+    不再修改 os.environ，不再修改全局 requests.Session.__init__。
+    """
+
+    def test_no_proxy_disables_proxies(self):
+        """no_proxy 活跃时，get_environ_proxies 返回空代理。"""
+        import requests.utils
 
         from ifa.dataflows.a_share_common import no_proxy
 
-        os.environ["TEST_PROXY_R5"] = "original"
+        # 先触发一次性 patch
+        with no_proxy():
+            pass
 
-        errors = []
+        url = "http://example.com"
+        outside = requests.utils.get_environ_proxies(url)
+        with no_proxy():
+            assert requests.utils.get_environ_proxies(url) == {}
+        after = requests.utils.get_environ_proxies(url)
+        assert after == outside
+
+    def test_no_proxy_thread_isolation(self):
+        """多线程并发进入 no_proxy，TLS 标记互不影响。"""
+        import requests.utils
+
+        from ifa.dataflows.a_share_common import no_proxy
+
+        # 先触发一次性 patch
+        with no_proxy():
+            pass
+
+        url = "http://example.com"
         results = {}
+        errors = []
 
-        def worker(thread_id, enter_first):
+        def inside_worker(tid, hold):
             try:
-                if enter_first:
-                    os.environ["TEST_PROXY_R5"] = f"modified_by_{thread_id}"
-                    with no_proxy():
+                with no_proxy():
+                    if hold:
                         time.sleep(0.05)
-                        val = os.environ.get("TEST_PROXY_R5", "MISSING")
-                        results[thread_id] = val
-                else:
-                    time.sleep(0.02)
-                    val = os.environ.get("TEST_PROXY_R5", "MISSING")
-                    results[thread_id] = val
+                    results[tid] = requests.utils.get_environ_proxies(url)
             except Exception as e:
                 errors.append(e)
 
-        t1 = threading.Thread(target=worker, args=(1, True))
-        t2 = threading.Thread(target=worker, args=(2, False))
+        def outside_worker(tid):
+            try:
+                time.sleep(0.02)
+                results[tid] = requests.utils.get_environ_proxies(url)
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=inside_worker, args=(1, True))
+        t2 = threading.Thread(target=inside_worker, args=(2, False))
+        t3 = threading.Thread(target=outside_worker, args=(3,))
         t1.start()
         t2.start()
+        t3.start()
         t1.join()
         t2.join()
+        t3.join()
 
         assert len(errors) == 0, f"Thread errors: {errors}"
-
-        os.environ.pop("TEST_PROXY_R5", None)
-
-    def test_no_proxy_restores_env(self):
-        import os
-
-        from ifa.dataflows.a_share_common import no_proxy
-
-        os.environ["HTTP_PROXY"] = "http://original:8080"
-        with no_proxy():
-            assert "HTTP_PROXY" not in os.environ
-        assert os.environ.get("HTTP_PROXY") == "http://original:8080"
-        os.environ.pop("HTTP_PROXY", None)
+        assert results.get(1) == {}, f"Thread 1 (in no_proxy) got {results.get(1)}"
+        assert results.get(2) == {}, f"Thread 2 (in no_proxy) got {results.get(2)}"
 
     def test_no_proxy_nested(self):
-        import os
+        """嵌套 no_proxy 上下文，退出后 TLS 标记正确恢复。"""
+        import requests.utils
 
         from ifa.dataflows.a_share_common import no_proxy
 
-        os.environ["HTTPS_PROXY"] = "http://outer:8080"
+        url = "http://example.com"
         with no_proxy():
-            assert "HTTPS_PROXY" not in os.environ
-            os.environ["HTTPS_PROXY"] = "http://inner:9090"
+            assert requests.utils.get_environ_proxies(url) == {}
             with no_proxy():
-                assert "HTTPS_PROXY" not in os.environ
-        assert os.environ.get("HTTPS_PROXY") == "http://outer:8080"
-        os.environ.pop("HTTPS_PROXY", None)
+                assert requests.utils.get_environ_proxies(url) == {}
+            assert requests.utils.get_environ_proxies(url) == {}

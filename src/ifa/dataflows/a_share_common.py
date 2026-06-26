@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 import threading
 from contextlib import contextmanager
@@ -11,62 +10,52 @@ import pandas as pd
 
 _tls = threading.local()
 _TLS_KEY = "no_proxy_active"
+_patch_lock = threading.Lock()
+_patched = False
+
+
+def _ensure_proxy_patch() -> None:
+    """一次性永久 patch requests.utils.get_environ_proxies。
+
+    patch 后的函数读取线程局部标记：标记活跃时返回空代理（绕过系统代理），
+    标记不活跃时走原始逻辑。永久 patch 不涉及进入/退出竞态，
+    线程局部标记保证多线程隔离。
+    """
+    global _patched
+    if _patched:
+        return
+    with _patch_lock:
+        if _patched:
+            return
+        import requests.utils  # type: ignore[import-untyped]
+
+        _original_get_environ_proxies = requests.utils.get_environ_proxies
+
+        def _patched_get_environ_proxies(*args, **kwargs):
+            if getattr(_tls, _TLS_KEY, False):
+                return {}
+            return _original_get_environ_proxies(*args, **kwargs)
+
+        requests.utils.get_environ_proxies = _patched_get_environ_proxies
+        _patched = True
 
 
 @contextmanager
 def no_proxy():
     """
-    临时绕过所有代理（环境变量 + requests Session），避免代理干扰 AkShare 请求。
+    临时绕过系统代理，避免代理干扰 AkShare 请求。
 
-    通过线程局部标记 + requests Session transport adapter 的方式实现，
-    避免修改全局 ``requests.Session.__init__``，从而保证线程安全。
-
-    返回：
-        None: 无返回值。
+    通过一次性永久 patch ``requests.utils.get_environ_proxies`` + 线程局部标记实现，
+    不修改全局 ``os.environ``，不修改全局 ``requests.Session.__init__``，
+    线程安全且支持并发。
     """
-    saved = {}
-    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
-        val = os.environ.pop(key, None)
-        if val is not None:
-            saved[key] = val
-
+    _ensure_proxy_patch()
     old_active = getattr(_tls, _TLS_KEY, False)
     setattr(_tls, _TLS_KEY, True)
-    _install_session_adapter()
-
     try:
         yield
     finally:
         setattr(_tls, _TLS_KEY, old_active)
-        if not old_active:
-            _uninstall_session_adapter()
-        os.environ.update(saved)
-
-
-def _install_session_adapter() -> None:
-    """替换 requests.Session.__init__，使其在线程活跃时禁用代理。"""
-    import requests
-
-    _original_init = requests.Session.__init__
-    _tls._original_session_init = _original_init
-
-    def _patched_init(self, *args, **kwargs):
-        _original_init(self, *args, **kwargs)
-        if getattr(_tls, _TLS_KEY, False):
-            self.trust_env = False
-            self.proxies = {}
-
-    requests.Session.__init__ = _patched_init
-
-
-def _uninstall_session_adapter() -> None:
-    """恢复 requests.Session.__init__ 为原始实现。"""
-    import requests
-
-    original = getattr(_tls, "_original_session_init", None)
-    if original is not None:
-        requests.Session.__init__ = original
-        del _tls._original_session_init
 
 
 SH_PREFIXES = (

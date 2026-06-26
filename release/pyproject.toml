@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "index-fund-advisor"
+version = "0.1.0"
+description = "IFA MCP server — expose Chinese A-share index fund data & valuation tools to AI clients (Claude / OpenCode) via Model Context Protocol."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "AlanNiew", email = "728097735@qq.com" },
+]
+keywords = ["mcp", "model-context-protocol", "akshare", "index-fund", "a-share", "valuation", "claude", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "mcp>=1.0",
+    "akshare>=1.18.49",
+    "pandas>=2.3.0",
+    "python-dotenv>=1.0",
+    "requests>=2.32",
+    "pytz>=2024.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/AlanNiew/index-fund-advisor"
+Repository = "https://github.com/AlanNiew/index-fund-advisor"
+Documentation = "https://github.com/AlanNiew/index-fund-advisor/blob/main/MCP.md"
+Issues = "https://github.com/AlanNiew/index-fund-advisor/issues"
+
+[project.scripts]
+ifa-mcp = "ifa.mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ifa*"]

@@ -170,7 +170,17 @@ async def analyze_fund(
     """
 
     def _run() -> dict:
-        from ifa.common import build_advisor, build_state
+        try:
+            from ifa.common import build_advisor, build_state
+        except ImportError as exc:
+            return {
+                "error": (
+                    "AI 分析能力不可用：未安装完整依赖（ifa.common 缺失）。"
+                    "轻量发行版仅含数据/估值工具；如需 analyze_fund，"
+                    "请安装完整版（含 langchain/langgraph）。"
+                    f"（{exc}）"
+                )
+            }
 
         state_kwargs: dict[str, str] = {"fund_codes": code}
         if analysis_date:

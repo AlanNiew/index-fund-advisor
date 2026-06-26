@@ -40,15 +40,24 @@ class TestNorthFlowValidation:
     """get_north_flow 参数回退测试。"""
 
     def test_invalid_symbol_falls_back(self):
-        """无效渠道自动回退到北向资金（但仍会调用 API，此处仅验证不崩溃）。"""
-        # 由于会尝试调用 API，我们只验证不抛出异常
-        try:
+        """无效渠道自动回退到北向资金（mock AkShare，不依赖网络）。"""
+        from unittest.mock import patch
+
+        fake_df = pd.DataFrame({
+            "日期": ["2024-01-01", "2024-01-02"],
+            "当日成交净买额": [100.5, -50.3],
+            "买入成交额": [200.0, 150.0],
+            "卖出成交额": [99.5, 200.3],
+            "历史累计净买额": [1000.0, 949.7],
+            "当日资金流入": [100.5, -50.3],
+        })
+
+        with patch("ifa.dataflows.a_share_macro._call_akshare_api", return_value=fake_df):
             result = get_north_flow("无效渠道")
-            # 回退逻辑：label = "北向资金"
-            assert isinstance(result, str)
-        except Exception:
-            # API 调用可能失败（网络），但不应是参数校验错误
-            pass
+
+        assert isinstance(result, str)
+        assert "北向资金" in result  # 回退到北向资金
+        assert "2024-01-01" in result  # 包含数据行
 
 
 class TestMarketValuationValidation:

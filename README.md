@@ -151,7 +151,7 @@ pip install -e ".[mcp]"
 | `get_north_flow` | 北向资金流向（市场情绪） | 否 |
 | `analyze_fund` | 单基金 AI 深度分析（`deep_simple` 快速 / `deep` 含辩论） | **是** |
 
-数据 / 估值工具走 AkShare 公开数据，无需 Key；`analyze_fund` 需在 `.env` 配置有效的 LLM API Key。详见 `src/ifa/mcp/server.py`。
+数据 / 估值工具走 AkShare 公开数据，无需 Key；`analyze_fund` 需在 `.env` 配置有效的 LLM API Key。完整说明见 [`MCP.md`](MCP.md) 与 [`src/ifa/mcp/server.py`](src/ifa/mcp/server.py)。
 
 ## 数据工具
 

@@ -40,13 +40,18 @@ class BacktestResult:
 
 
 def _parse_raw_to_dataframe(raw) -> pd.DataFrame | None:
-    """将原始数据（CSV 字符串或 DataFrame）解析为 DataFrame。"""
+    """将原始数据（CSV 字符串或 DataFrame）解析为 DataFrame。
+
+    数据工具返回的 CSV 字符串通常带 ``#`` 开头的元信息行（如
+    ``# ETF price data for ...``），必须跳过，否则 pandas 会把注释
+    内容误解析为数据行。
+    """
     if isinstance(raw, str) and "暂无数据" in raw:
         return None
     if isinstance(raw, str):
         from io import StringIO
 
-        return pd.read_csv(StringIO(raw))
+        return pd.read_csv(StringIO(raw), comment="#")
     if isinstance(raw, pd.DataFrame):
         return raw.copy()
     return None

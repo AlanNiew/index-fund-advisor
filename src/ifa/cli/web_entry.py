@@ -1,4 +1,3 @@
-# cli/web_entry.py
 """ifa-web 命令的入口点。
 
 直接通过 subprocess 调用 streamlit，避免 exe 环境下模块路径问题。
@@ -10,7 +9,8 @@ import sys
 
 
 def main():
-    project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    # 本模块位于 src/ifa/cli/，项目根在三层目录之上。
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     src_dir = os.path.join(project_root, "src")
     app_path = os.path.join(project_root, "web", "app.py")
 

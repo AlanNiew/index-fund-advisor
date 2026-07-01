@@ -10,7 +10,11 @@ import re
 from rank_bm25 import BM25Okapi
 
 # 默认最大记忆条数
-_DEFAULT_MAX_SITUATIONS = 100
+# 说明：BM25 情景记忆按相似度检索历史决策，不是按标的穷举。
+# 100 条在 A 股 5000+ 基金、多牛熊周期下覆盖率不足，会把短期噪声编码成「经验」。
+# 提到 1000 以平衡覆盖率与内存（每条仅存字符串，内存开销可忽略）。
+# 真正的瓶颈不是上限而是反思信号质量——见 graph/reflection.py 的注释。
+_DEFAULT_MAX_SITUATIONS = 1000
 
 # CJK 统一汉字范围（包含扩展 A 区）
 _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
@@ -24,7 +28,7 @@ class FinancialSituationMemory:
     参数:
         name: 记忆实例名称
         config: 可选配置字典，支持:
-            - max_situations: 最大记忆条数（默认 100）
+            - max_situations: 最大记忆条数（默认 1000）
     """
 
     def __init__(self, name: str, config: dict = None):

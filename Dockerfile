@@ -5,7 +5,6 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src/ src/
-COPY cli/ cli/
 COPY api/ api/
 COPY web/ web/
 

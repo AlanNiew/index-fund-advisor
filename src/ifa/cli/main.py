@@ -1,7 +1,7 @@
-# cli/main.py
 """IFA CLI 入口，基于 Typer 框架。"""
 
 import os
+import re
 import sys
 
 import typer
@@ -10,17 +10,40 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-# 确保项目根目录和 src 目录都在 sys.path 中
-_PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
+# 仅匹配 6 位纯数字的基金代码（如 510300、161725）。
+# 用途：让 `ifa 161725` 这种简写等价于 `ifa info 161725`。
+_FUND_CODE_RE = re.compile(r"^\d{6}$")
+
+# 本模块位于 src/ifa/cli/，项目根在三层目录之上。
+# 将 src 和项目根加入 sys.path，保证 api/、web/ 等顶层包在开发模式下可导入。
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 sys.path.insert(0, _PROJECT_ROOT)
 
 load_dotenv()
 
+
+class _FundCodeGroup(typer.core.TyperGroup):
+    """容错分发：`ifa <6位数字>` 自动转走 `analyze` 命令。
+
+    其他场景保持 Typer 原生行为——未知子命令（如 `ifa foobar`）仍按正常报错处理，
+    避免把拼写错误的子命令静默当成基金代码。
+    """
+
+    def resolve_command(self, ctx, args):
+        # 仅当存在首个位置参数、且恰好是 6 位纯数字时进行转发。
+        # 排除带 `-`/`--` 的选项（如 `ifa --help`），以免误判。
+        if args and not args[0].startswith("-") and _FUND_CODE_RE.match(args[0]):
+            # 把 `161725` 重写为 `analyze 161725`，再交给 Typer 正常解析。
+            args = ["analyze", *args]
+        return super().resolve_command(ctx, args)
+
+
 app = typer.Typer(
     name="ifa",
     help="IFA - AI 驱动的指数基金分析工具",
     no_args_is_help=True,
+    cls=_FundCodeGroup,
 )
 
 console = Console()
@@ -137,7 +160,7 @@ def info(
     console.print(result)
 
 
-@app.command()
+@app.command(name="config")
 def config_cmd(
     key: str = typer.Argument(None, help="配置项名称"),
     value: str = typer.Argument(None, help="配置值"),

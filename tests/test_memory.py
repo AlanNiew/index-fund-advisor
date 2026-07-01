@@ -141,9 +141,9 @@ class TestFIFOEviction:
     """FIFO 淘汰机制测试。"""
 
     def test_default_max_situations(self):
-        """默认最大条数为 100。"""
+        """默认最大条数为 1000（见 memory.py 注释：覆盖率 vs 内存权衡）。"""
         mem = FinancialSituationMemory("default")
-        assert mem._max_situations == 100
+        assert mem._max_situations == 1000
 
     def test_custom_max_situations(self):
         """自定义最大条数。"""

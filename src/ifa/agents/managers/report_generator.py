@@ -6,6 +6,18 @@ from ifa.agents.utils import (
     invoke_llm_safely,
 )
 
+# 智识诚实免责声明（程序强制注入，不可关闭）。
+# 理由：本报告的评级/置信度由 LLM 多 Agent 辩论生成，其历史预测准确率未经验证。
+# 把仪式感（辩论/裁决/置信度）和真严谨区分开，是用户做决策的前提。
+# LLM 自由发挥的免责声明不可靠——这里硬注入，保证不丢。
+_DISCLAIMER = (
+    "【智识诚实声明】\n"
+    "本报告的评级（BUY/HOLD/SELL）与置信度由统计模型（多 Agent 辩论）生成，"
+    "不构成任何投资建议；其历史预测准确率未经任何独立验证，"
+    "不应作为买卖决策的依据。报告中的客观数据（估值百分位、PE/PB、费率、"
+    "规模、持仓）来自公开数据源，可独立核查；模型的判断部分仅供参考与学习。\n"
+)
+
 _REPORT_GENERATOR_PROMPT = """You are a report generator for index fund analysis. Your task is to
 synthesize all analysis results into a well-structured, professional Markdown report.
 
@@ -113,9 +125,12 @@ def create_report_generator(llm):
 
         response = invoke_llm_safely(llm, prompt)
 
+        # 程序硬注入免责声明，置于报告顶部，不依赖 LLM 自觉输出。
+        report_with_disclaimer = f"{_DISCLAIMER}\n---\n\n{response.content}"
+
         return {
             "messages": [response],
-            "final_report": response.content,
+            "final_report": report_with_disclaimer,
         }
 
     return report_generator_node

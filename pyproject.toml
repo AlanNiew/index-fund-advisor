@@ -38,8 +38,8 @@ dependencies = [
 ]
 
 [project.scripts]
-ifa = "cli.main:app"
-ifa-web = "cli.web_entry:main"
+ifa = "ifa.cli.main:app"
+ifa-web = "ifa.cli.web_entry:main"
 ifa-mcp = "ifa.mcp.server:main"
 
 [project.optional-dependencies]
@@ -57,7 +57,7 @@ mcp = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["ifa*", "api*", "web*", "cli*"]
+include = ["ifa*"]
 
 [tool.ruff]
 target-version = "py310"
@@ -68,7 +68,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = ["E501", "F403", "F405", "E402"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ifa", "api", "cli", "web"]
+known-first-party = ["ifa", "api", "web"]
 
 [tool.mypy]
 python_version = "3.10"

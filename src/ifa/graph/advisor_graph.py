@@ -567,6 +567,20 @@ class AdvisorGraph:
             return partial_state
 
         self.curr_state = final_state
+
+        # ── 提取评级/置信度写入 state（修复 final_rating 从不写入的 bug）──
+        # ReportGenerator 只填 final_report，不填 final_rating/final_confidence。
+        # 这里在图执行成功后统一提取一次，让 MCP/API/日志/回测验证都能读到结构化评级。
+        # 用 try/except 隔离：提取失败不影响主流程（评级留空，消费者自行兜底）。
+        if not final_state.get("error") and final_state.get("final_report"):
+            try:
+                if not final_state.get("final_rating"):
+                    final_state["final_rating"] = self.process_signal(final_state["final_report"])
+                if not final_state.get("final_confidence"):
+                    final_state["final_confidence"] = self.process_confidence(final_state["final_report"])
+            except Exception as e:
+                logger.warning("评级提取失败，final_rating/final_confidence 留空: %s", e)
+
         try:
             self._log_state(final_state)
         except Exception as e:
@@ -620,6 +634,8 @@ class AdvisorGraph:
                 "count": g(final_state, "risk_debate_state", "count", default=0),
             },
             "final_report": final_state.get("final_report", ""),
+            "final_rating": final_state.get("final_rating", ""),
+            "final_confidence": final_state.get("final_confidence", ""),
             "error": final_state.get("error", ""),
         }
 

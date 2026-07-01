@@ -177,5 +177,138 @@ def config_cmd(
             console.print(f"  {k}: {v}")
 
 
+@app.command()
+def validate(
+    codes: str = typer.Option(..., "--codes", help="逗号分隔的基金代码，如 510300,159919"),
+    dates: str = typer.Option(None, "--dates", help="逗号分隔的分析日期 YYYY-MM-DD（与 --months-back 二选一）"),
+    months_back: int = typer.Option(None, "--months-back", help="自动生成过去 N 个月每月一个分析日期"),
+    hold_days: int = typer.Option(60, "--hold-days", help="评级后持有多少交易日看收益（默认 60）"),
+    update_memory: bool = typer.Option(False, "--update-memory", help="显式开启：把结果喂回反思系统（注意幸存者偏差风险）"),
+    output: str = typer.Option(None, "--output", "-o", help="报告输出路径（默认 results/validation/）"),
+):
+    """评级 vs 实际收益 回测验证。
+
+    跑历史分析，对比「AI 当时给的评级」和「事后实际收益」，
+    输出命中率、置信区间、混淆矩阵、基准对比。
+
+    智识诚实提醒：样本量 < 30 时统计结论无显著性，本验证不证明评级「有效」或「无效」。
+    """
+    import datetime as _dt
+    import json
+    from pathlib import Path
+
+    from ifa.backtest.rating_validator import (
+        format_validation_report,
+        generate_monthly_dates,
+        run_rating_validation,
+    )
+    from ifa.common import build_advisor
+
+    # 解析参数
+    fund_codes = [c.strip() for c in codes.split(",") if c.strip()]
+    if not fund_codes:
+        console.print("[red]未提供有效基金代码[/red]")
+        raise typer.Exit(1)
+
+    if dates:
+        analysis_dates = [d.strip() for d in dates.split(",") if d.strip()]
+    elif months_back:
+        analysis_dates = generate_monthly_dates(months_back)
+    else:
+        console.print("[red]必须指定 --dates 或 --months-back[/red]")
+        raise typer.Exit(1)
+
+    total_tasks = len(fund_codes) * len(analysis_dates)
+    console.print(
+        Panel(
+            f"[bold]评级验证回测[/bold]\n"
+            f"基金: {', '.join(fund_codes)}\n"
+            f"分析日期: {', '.join(analysis_dates)}\n"
+            f"持有周期: {hold_days} 个交易日\n"
+            f"总任务数: {total_tasks}"
+        )
+    )
+
+    advisor = build_advisor()
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
+        task = progress.add_task("启动验证...", total=total_tasks)
+
+        def on_progress(phase: str, idx: int, total: int, code: str, date: str, status: str):
+            progress.update(task, completed=idx, description=f"[{phase}] {code} @ {date}: {status}")
+
+        result = run_rating_validation(
+            fund_codes=fund_codes,
+            analysis_dates=analysis_dates,
+            hold_days=hold_days,
+            advisor=advisor,
+            on_progress=on_progress,
+            update_memory=update_memory,
+        )
+
+    # 输出报告
+    report_md = format_validation_report(result)
+    console.print(Panel(report_md, title="评级验证报告", border_style="cyan"))
+
+    # 落盘
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = Path(output) if output else Path("results/validation")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = out_dir / f"validation_{ts}.json"
+    payload = {
+        "meta": {
+            "generated_at": _dt.datetime.now().isoformat(),
+            "hold_days": result.hold_days,
+            "period_start": result.period_start,
+            "period_end": result.period_end,
+            "fund_codes": fund_codes,
+            "update_memory": update_memory,
+        },
+        "summary": {
+            "total": result.total,
+            "valid": result.valid,
+            "skipped": result.skipped,
+            "bullish_hit_rate": result.bullish_hit_rate,
+            "bullish_n": result.bullish_n,
+            "bullish_ci_95": [result.bullish_ci_low, result.bullish_ci_high],
+            "bearish_hit_rate": result.bearish_hit_rate,
+            "bearish_n": result.bearish_n,
+            "bearish_ci_95": [result.bearish_ci_low, result.bearish_ci_high],
+            "alpha_vs_random": result.alpha_vs_random,
+            "alpha_vs_csi300": result.alpha_vs_csi300,
+            "random_benchmark": result.random_benchmark,
+            "csi300_benchmark": result.csi300_benchmark,
+        },
+        "confusion_matrix": result.confusion_matrix,
+        "records": [
+            {
+                "fund_code": r.fund_code,
+                "analysis_date": r.analysis_date,
+                "rating": r.rating,
+                "confidence": r.confidence,
+                "forward_return_pct": r.forward_return_pct,
+                "benchmark_return_pct": r.benchmark_return_pct,
+                "excess_return_pct": r.excess_return_pct,
+                "hold_days": r.hold_days,
+                "fetch_error": r.fetch_error,
+            }
+            for r in result.records
+        ],
+        "warnings": result.warnings,
+    }
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    md_path = out_dir / f"validation_{ts}.md"
+    md_path.write_text(report_md, encoding="utf-8")
+
+    console.print(f"[dim]JSON: {json_path}[/dim]")
+    console.print(f"[dim]Markdown: {md_path}[/dim]")
+
+    if update_memory:
+        console.print("[yellow]⚠️ 已开启 --update-memory，Agent 记忆已被本次结果更新（存在幸存者偏差风险）[/yellow]")
+
+
 if __name__ == "__main__":
     app()

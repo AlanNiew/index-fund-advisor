@@ -16,7 +16,7 @@
 - deep_simple: 原始的 Fund Analyst → Index Analyst? → Report Generator（无辩论，向后兼容）
 """
 
-import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -518,7 +518,11 @@ class AdvisorGraph:
         # 开始请求追踪
         fund_codes = state.get("fund_codes", "")
         results_dir = self.config.get("results_dir", "results")
-        trace = start_trace(uuid.uuid4().hex[:12], mode, fund_codes)
+        # 生成 request_id 并写入 state,让下游(save_report / _log_state)可读,
+        # 使报告/日志/追踪三处文件名共享同一 id,既防并发覆盖又便于交叉检索
+        request_id = state.get("request_id") or uuid.uuid4().hex[:12]
+        state["request_id"] = request_id
+        trace = start_trace(request_id, mode, fund_codes)
         trace.start_span("AdvisorGraph.run", "orchestrator")
 
         first_code = fund_codes.split(",")[0].strip() if fund_codes else ""
@@ -551,6 +555,9 @@ class AdvisorGraph:
                 # ── 原有 invoke 路径，保持不变 ──
                 args = self.propagator.get_graph_args(self.callbacks)
                 final_state = graph.invoke(state, **args)
+
+            # request_id 兜底:图执行可能返回不含 request_id 的快照,这里确保带回去
+            final_state.setdefault("request_id", request_id)
 
             trace.finish_current(status="ok")
         except Exception as e:
@@ -636,15 +643,18 @@ class AdvisorGraph:
             "final_report": final_state.get("final_report", ""),
             "final_rating": final_state.get("final_rating", ""),
             "final_confidence": final_state.get("final_confidence", ""),
+            "request_id": final_state.get("request_id", ""),
             "error": final_state.get("error", ""),
         }
 
         directory = Path(results_dir) / "logs" / fund_codes
-        directory.mkdir(parents=True, exist_ok=True)
+        # request_id 后缀防并发覆盖(与 save_report / tracer 一致);缺失 fallback 到秒级时间戳
+        suffix = (final_state.get("request_id") or datetime.now().strftime("%H%M%S"))[:8]
+        log_path = directory / f"{analysis_date}_{mode}_{suffix}.json"
+        # 延迟导入避免与 common.py 的循环导入(common 顶部 import AdvisorGraph)
+        from ifa.common import _atomic_write_json
 
-        log_path = directory / f"{analysis_date}_{mode}.json"
-        with open(log_path, "w", encoding="utf-8") as f:
-            json.dump(log_entry, f, indent=4, ensure_ascii=False)
+        _atomic_write_json(log_path, log_entry)
 
     def process_signal(self, full_signal: str) -> str:
         """从最终决策中提取标准化评级。"""

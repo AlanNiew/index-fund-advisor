@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import contextvars
-import json
 import logging
 import time
 from datetime import datetime
@@ -109,14 +108,16 @@ class RequestTracer:
 
     def save(self, output_dir: str = "results"):
         """保存追踪结果到 JSON 文件。"""
+        from ifa.common import _atomic_write_json
+
         fund_dir = self.fund_codes.replace(",", "_").strip() if self.fund_codes else "unknown"
         path = Path(output_dir) / "traces" / fund_dir
-        path.mkdir(parents=True, exist_ok=True)
         filepath = path / f"{self.request_id}.json"
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+        # 原子写:崩溃不会留下半截 JSON(文件名已用 request_id 天然唯一,无需加后缀)
+        _atomic_write_json(filepath, self.to_dict())
         logger.debug("追踪已保存: %s", filepath)
         return str(filepath)
+
 
 _current_tracer_var: contextvars.ContextVar[RequestTracer | None] = contextvars.ContextVar("ifa_tracer", default=None)
 

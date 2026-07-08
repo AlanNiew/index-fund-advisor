@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from ifa.graph.advisor_graph import AdvisorGraph
 from ifa.llm_clients.factory import create_llm_client
+
+logger = logging.getLogger(__name__)
 
 
 def get_provider_kwargs(config: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +93,39 @@ def build_state(mode: str, **kwargs: str) -> dict[str, str]:
 _MODE_LABEL = {"deep": "深度分析", "screen": "筛选对比", "portfolio": "组合配置"}
 
 
+def _atomic_write_text(path: str | os.PathLike, content: str) -> None:
+    """原子写文本:先写 tmp 文件,再 Path.replace 原子改名。
+
+    参考 default_config.save_last_config 的模式。replace 失败则清理 tmp 并降级为直写
+    (非原子但保证能写,避免 tmp 残留或写入完全失败)。
+    """
+    _atomic_write(path, lambda t: t.write_text(content, encoding="utf-8"))
+
+
+def _atomic_write_json(path: str | os.PathLike, obj: dict) -> None:
+    """原子写 JSON。"""
+    _atomic_write(path, lambda t: t.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8"))
+
+
+def _atomic_write(path: str | os.PathLike, write_fn) -> None:
+    """原子写内部实现:tmp 文件 → Path.replace,失败兜底直写。
+
+    write_fn(tmp_path) 负责把内容写到 tmp 文件。tmp 与目标同目录(同文件系统)保证 replace 原子。
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    try:
+        write_fn(tmp)
+        tmp.replace(target)
+    except Exception:
+        with contextlib.suppress(Exception):
+            tmp.unlink(missing_ok=True)
+        # 兜底:非原子直写。崩溃可能截断,但好过完全不写
+        logger.warning("原子写失败,降级为直写: %s", target)
+        write_fn(target)
+
+
 def save_report(state: dict) -> str | None:
     """将分析报告保存为 Markdown 文件，返回文件路径。无报告时返回 None。"""
     report = state.get("final_report", "")
@@ -101,19 +140,20 @@ def save_report(state: dict) -> str | None:
     mode = state.get("mode", "unknown")
     date = state.get("analysis_date", datetime.now().strftime("%Y-%m-%d"))
     fund_codes = state.get("fund_codes", "").replace(",", "_").strip()
+    # request_id 后缀防并发覆盖:同基金同日同模式并发时各自落不同文件;
+    # request_id 缺失时(兼容未走 run() 的旧调用)fallback 到秒级时间戳
+    suffix = state.get("request_id") or datetime.now().strftime("%H%M%S")
+    suffix = suffix[:8]
 
     if fund_codes:
         # 人读报告统一放在 reports/ 下，与日志/追踪分离
         save_dir = os.path.join(results_dir, "reports", fund_codes)
-        filename = f"{date}_{mode}.md"
+        filename = f"{date}_{mode}_{suffix}.md"
     else:
         save_dir = os.path.join(results_dir, "reports")
-        filename = f"{_MODE_LABEL.get(mode, mode)}_{date}.md"
+        filename = f"{_MODE_LABEL.get(mode, mode)}_{date}_{suffix}.md"
 
-    os.makedirs(save_dir, exist_ok=True)
     filepath = os.path.join(save_dir, filename)
-
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(report)
+    _atomic_write_text(filepath, report)
 
     return os.path.abspath(filepath)

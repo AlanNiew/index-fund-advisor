@@ -1,10 +1,19 @@
 """公共模块测试 — get_provider_kwargs, build_state, save_report。"""
 
+import json
 import os
 import tempfile
+import threading
+from pathlib import Path
 from unittest.mock import patch
 
-from ifa.common import build_state, get_provider_kwargs, save_report
+from ifa.common import (
+    _atomic_write_json,
+    _atomic_write_text,
+    build_state,
+    get_provider_kwargs,
+    save_report,
+)
 
 # ════════════════════════════════════════════
 #  get_provider_kwargs
@@ -114,13 +123,14 @@ class TestSaveReport:
                 assert "测试报告" in f.read()
 
     def test_filename_format(self):
-        """文件名格式正确 — 基金代码作为目录，日期和模式作为文件名。"""
+        """文件名格式正确 — 基金代码作为目录，日期+模式+request_id 作为文件名。"""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = {
                 "final_report": "report",
                 "mode": "deep",
                 "analysis_date": "2024-06-01",
                 "fund_codes": "510300,159919",
+                "request_id": "a1b2c3d4e5f6",
             }
             with patch("ifa.default_config.build_runtime_config") as mock_config:
                 mock_config.return_value = {"results_dir": tmpdir}
@@ -128,6 +138,102 @@ class TestSaveReport:
 
             # 基金代码在目录路径中
             assert "510300_159919" in filepath
-            # 日期和模式在文件名中
+            # 日期+模式+request_id[:8] 在文件名中
             filename = os.path.basename(filepath)
-            assert filename == "2024-06-01_deep.md"
+            assert filename == "2024-06-01_deep_a1b2c3d4.md"
+
+    def test_concurrent_writes_no_overwrite(self):
+        """同基金同日同模式并发写入不互相覆盖 — 每个请求落独立文件。
+
+        验证 request_id 后缀方案:5 线程并发调 save_report,各自带不同 request_id,
+        join 后应有 5 个文件,内容各自完整。
+        """
+        N = 5
+        with tempfile.TemporaryDirectory() as tmpdir:
+            errors = []
+            paths = {}
+
+            def worker(tid):
+                try:
+                    # 前 8 位必须各不相同(request_id[:8] 作为文件名后缀)
+                    state = {
+                        "final_report": f"# 报告 {tid}",
+                        "mode": "deep",
+                        "analysis_date": "2024-06-01",
+                        "fund_codes": "510300",
+                        "request_id": f"{tid:08x}abcd5678",
+                    }
+                    with patch("ifa.default_config.build_runtime_config") as mock_config:
+                        mock_config.return_value = {"results_dir": tmpdir}
+                        paths[tid] = save_report(state)
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            assert errors == [], f"并发写入出错: {errors}"
+            # 5 个不同路径
+            assert len(set(paths.values())) == N, "并发写入产生重复路径,说明 request_id 后缀未生效"
+            # 每个文件都存在且内容完整可读
+            for tid, p in paths.items():
+                assert os.path.exists(p), f"文件丢失: {p}"
+                with open(p, encoding="utf-8") as f:
+                    content = f.read()
+                assert f"报告 {tid}" in content, f"文件内容不匹配: {p}"
+
+
+# ════════════════════════════════════════════
+#  _atomic_write_text / _atomic_write_json
+# ════════════════════════════════════════════
+
+
+class TestAtomicWrite:
+    """原子写 helper 测试。"""
+
+    def test_atomic_write_text_creates_file(self):
+        """原子写文本正常落盘。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "sub" / "f.txt"
+            _atomic_write_text(path, "hello")
+            assert path.read_text(encoding="utf-8") == "hello"
+            # tmp 文件已清理
+            assert not (path.with_suffix(".txt.tmp")).exists()
+
+    def test_atomic_write_json_creates_file(self):
+        """原子写 JSON 正常落盘且可解析。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "data.json"
+            _atomic_write_json(path, {"a": 1, "b": "中文"})
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            assert loaded == {"a": 1, "b": "中文"}
+
+    def test_atomic_write_text_preserves_old_on_replace_failure(self):
+        """replace 失败时,旧文件不被截断(降级直写会覆盖,但内容是新的而非空)。
+
+        重点验证:tmp 写入失败后不会留下截断的旧文件。我们让 replace 抛异常,
+        断言兜底直写后文件内容完整(非空)。
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "f.txt"
+            # 预置旧内容
+            path.write_text("OLD_CONTENT", encoding="utf-8")
+
+            # mock Path.replace 抛异常,触发兜底
+            original_replace = Path.replace
+
+            def failing_replace(self, target):
+                raise OSError("mocked replace failure")
+
+            with patch.object(Path, "replace", failing_replace):
+                _atomic_write_text(path, "NEW_CONTENT")
+
+            # 兜底直写成功,内容是新的(非空,非截断)
+            assert path.read_text(encoding="utf-8") == "NEW_CONTENT"
+            # tmp 已清理
+            assert not path.with_suffix(".txt.tmp").exists()
+            # 恢复(避免影响后续测试)
+            Path.replace = original_replace

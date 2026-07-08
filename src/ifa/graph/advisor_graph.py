@@ -639,7 +639,7 @@ class AdvisorGraph:
             "error": final_state.get("error", ""),
         }
 
-        directory = Path(results_dir) / fund_codes
+        directory = Path(results_dir) / "logs" / fund_codes
         directory.mkdir(parents=True, exist_ok=True)
 
         log_path = directory / f"{analysis_date}_{mode}.json"

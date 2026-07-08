@@ -103,11 +103,11 @@ def save_report(state: dict) -> str | None:
     fund_codes = state.get("fund_codes", "").replace(",", "_").strip()
 
     if fund_codes:
-        # 同一次分析的所有产出物放在同一个基金目录下
-        save_dir = os.path.join(results_dir, fund_codes)
+        # 人读报告统一放在 reports/ 下，与日志/追踪分离
+        save_dir = os.path.join(results_dir, "reports", fund_codes)
         filename = f"{date}_{mode}.md"
     else:
-        save_dir = results_dir
+        save_dir = os.path.join(results_dir, "reports")
         filename = f"{_MODE_LABEL.get(mode, mode)}_{date}.md"
 
     os.makedirs(save_dir, exist_ok=True)

@@ -110,7 +110,7 @@ class RequestTracer:
     def save(self, output_dir: str = "results"):
         """保存追踪结果到 JSON 文件。"""
         fund_dir = self.fund_codes.replace(",", "_").strip() if self.fund_codes else "unknown"
-        path = Path(output_dir) / fund_dir
+        path = Path(output_dir) / "traces" / fund_dir
         path.mkdir(parents=True, exist_ok=True)
         filepath = path / f"{self.request_id}.json"
         with open(filepath, "w", encoding="utf-8") as f:

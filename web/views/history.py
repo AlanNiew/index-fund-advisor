@@ -14,19 +14,20 @@ def render_history_page():
         "IFA_RESULTS_DIR",
         os.path.join(os.path.dirname(__file__), "..", "..", "results"),
     )
-    results_path = Path(results_dir)
+    # 人读报告统一存放在 reports/ 子目录下
+    reports_path = Path(results_dir) / "reports"
 
-    if not results_path.exists():
+    if not reports_path.exists():
         st.info("暂无历史记录。运行分析后，报告将自动保存。")
         return
 
-    md_files = sorted(results_path.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    md_files = sorted(reports_path.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
 
     if not md_files:
         st.info("暂无历史记录。运行分析后，报告将自动保存。")
         return
 
-    st.caption(f"共 {len(md_files)} 份报告（存储于 {results_path}）")
+    st.caption(f"共 {len(md_files)} 份报告（存储于 {reports_path}）")
 
     for md_file in md_files[:50]:
         fund_dir = md_file.parent.name

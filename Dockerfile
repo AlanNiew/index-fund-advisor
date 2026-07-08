@@ -3,12 +3,14 @@ FROM python:3.13-slim AS builder
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.lock ./
 COPY src/ src/
 COPY api/ api/
 COPY web/ web/
 
-RUN pip install --no-cache-dir --prefix=/install -e .
+# 按锁文件安装,保证容器与 CI 环境一致
+RUN pip install --no-cache-dir --prefix=/install -r requirements.lock \
+    && pip install --no-cache-dir --prefix=/install -e . --no-deps
 
 
 # ── 阶段 2: 运行 ──

@@ -16,11 +16,13 @@ dependencies = [
     "requests>=2.32.4",
     "pytz>=2025.2",
     # LLM
-    "langchain-core>=0.3.81",
-    "langchain-openai>=0.3.23",
-    "langchain-anthropic>=0.3.15",
-    "langchain-google-genai>=2.1.5",
-    "langgraph>=0.4.8",
+    # 上限作为第二道防线（防止绕过 requirements.lock 拉到 breaking 大版本）；
+    # 精确钉版见 requirements.lock（由 pip-compile 生成，CI/容器按锁安装）
+    "langchain-core>=0.3.81,<2",
+    "langchain-openai>=0.3.23,<2",
+    "langchain-anthropic>=0.3.15,<2",
+    "langchain-google-genai>=2.1.5,<3",
+    "langgraph>=0.4.8,<2",
     # Agent
     "rank-bm25>=0.2.2",
     # CLI

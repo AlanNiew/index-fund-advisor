@@ -37,9 +37,13 @@ pip install -e ".[dev]"
 
 # 如需接入 MCP 客户端（Claude Desktop 等）
 pip install -e ".[mcp]"
+
+# 如需锁定到经 CI 验证的依赖版本（推荐生产/协作时使用）
+pip install -r requirements.lock && pip install -e . --no-deps
 ```
 
 `-e` 是 editable install，会同时把 `ifa`、`ifa-web`、`ifa-mcp` 三个入口脚本注册到 PATH。
+`requirements.lock` 由 `pip-compile` 生成（`pip-compile pyproject.toml --extra dev --extra mcp --no-emit-index-url -o requirements.lock`），精确钉死全部传递依赖。CI 按锁文件安装以保证可复现。
 
 ---
 

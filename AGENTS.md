@@ -11,6 +11,7 @@ IFA (Index Fund Advisor) — AI-driven analyzer for Chinese A-share index funds.
 ```bash
 # Install (editable; registers ifa / ifa-web / ifa-mcp scripts)
 pip install -e ".[dev]"            # add ",[mcp]" if touching the MCP server
+# For reproducible CI-matched deps: pip install -r requirements.lock && pip install -e . --no-deps
 
 # Run
 ifa analyze 510300 --date 2024-01-15

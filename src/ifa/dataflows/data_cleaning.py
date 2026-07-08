@@ -75,8 +75,10 @@ def _coerce_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
         # 跳过明确的非数值列
         if col_lower in _NUMERIC_EXCLUDE:
             continue
-        # 对 object 类型尝试转换
-        if df[col].dtype == object:
+        # 对 object / string 类型尝试转换
+        # 注意:pandas 3.0 起字符串列默认 dtype 由 object 改为 str(StringDtype),
+        # 单用 `dtype == object` 会漏掉 str 列,改用 is_object_dtype/is_string_dtype 兼容两版
+        if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
             try:
                 converted = pd.to_numeric(df[col], errors="coerce")
                 # 如果转换后非空率 > 80%，接受转换

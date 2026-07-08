@@ -38,7 +38,9 @@ class TestDataCleaning:
         df = pd.DataFrame({"price": ["1.5", "2.3", "3.1"], "name": ["A", "B", "C"]})
         result = clean_dataframe(df)
         assert pd.api.types.is_numeric_dtype(result["price"])
-        assert result["name"].dtype == object  # name 不转换
+        # name 保持字符串类型(不转数值)。pandas 3.0 起字符串默认 dtype 为 str(StringDtype),
+        # 旧版为 object,用 is_string_dtype 兼容两版
+        assert pd.api.types.is_string_dtype(result["name"])
 
     def test_clean_dataframe_empty_input(self):
         from ifa.dataflows.data_cleaning import clean_dataframe

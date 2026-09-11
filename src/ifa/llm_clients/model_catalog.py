@@ -120,6 +120,15 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("GLM-5 Turbo - Fast, cost-effective", "glm-5-turbo"),
         ],
     },
+    "deepseek": {
+        "quick": [
+            ("DeepSeek Chat (V3) - Fast, cost-effective, tool use", "deepseek-chat"),
+        ],
+        "deep": [
+            ("DeepSeek Reasoner (R1) - Deep reasoning, best for analysis", "deepseek-reasoner"),
+            ("DeepSeek Chat (V3) - Fast, cost-effective, tool use", "deepseek-chat"),
+        ],
+    },
 }
 
 

@@ -44,6 +44,14 @@ class TestCreateLLMClient:
         client = create_llm_client("anthropic", "claude-sonnet-4-6")
         assert isinstance(client, AnthropicClient)
 
+    def test_deepseek_provider(self):
+        """DeepSeek 提供方返回 OpenAIClient 实例。"""
+        from ifa.llm_clients.openai_client import OpenAIClient
+
+        client = create_llm_client("deepseek", "deepseek-chat")
+        assert isinstance(client, OpenAIClient)
+        assert client.provider == "deepseek"
+
     def test_provider_case_insensitive(self):
         """提供方名称不区分大小写。"""
         client = create_llm_client("OpenAI", "gpt-4.1")
@@ -61,6 +69,15 @@ class TestValidateModel:
     def test_valid_openai_model(self):
         """OpenAI 已知模型返回 True。"""
         assert validate_model("openai", "gpt-5.4") is True
+
+    def test_valid_deepseek_model(self):
+        """DeepSeek 已知模型返回 True。"""
+        assert validate_model("deepseek", "deepseek-chat") is True
+        assert validate_model("deepseek", "deepseek-reasoner") is True
+
+    def test_invalid_deepseek_model(self):
+        """DeepSeek 未知模型返回 False。"""
+        assert validate_model("deepseek", "deepseek-999") is False
 
     def test_invalid_openai_model(self):
         """OpenAI 未知模型返回 False。"""

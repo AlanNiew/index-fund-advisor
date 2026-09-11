@@ -141,7 +141,7 @@ claude mcp add ifa -- ifa-mcp
 | --- | --- |
 | 客户端报「找不到 python」 | `command` 第一项换成 python 全路径，如 `D:/Programing/devEnvironment/python3.13/python.exe` |
 | Windows 下 `ifa-mcp` spawn 失败 | 改用 `["python", "-m", "ifa.mcp.server"]` |
-| `analyze_fund` 报 401 / Key 错误 | `.env` 未加载：设置 `cwd` 指向 IFA 项目根，或在配置里加 `"environment": {"ZHIPUAI_API_KEY": "..."}` |
+| `analyze_fund` 报 401 / Key 错误 | `.env` 未加载：设置 `cwd` 指向 IFA 项目根，或在配置里加 `"environment": {"DEEPSEEK_API_KEY": "..."}`（按实际配置的提供方填对应 Key） |
 | 数据工具返回错误文本 | 多为 AkShare 网络/限流；重试即可，底层有 3 次指数退避 |
 | 工具调用超时 | `analyze_fund` 深度模式可达数分钟；数据工具若卡住通常是网络问题 |
 

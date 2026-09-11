@@ -44,9 +44,11 @@ DEFAULT_CONFIG = {
     # 注：quick_think_llm 用于工具调用与结构化输出解析，是数据采集链路的根基。
     # 不要用最便宜的 turbo 档——结构化输出在弱模型上不可靠，会污染整条分析管道。
     # 若确需降级，请显式覆盖此配置并接受工具调用失败率上升。
-    "llm_provider": "zhipu",
-    "deep_think_llm": "glm-5.2",
-    "quick_think_llm": "glm-5.2",
+    # deepseek 走 OpenAI 兼容协议（OpenAIClient），base_url 见 llm_clients/openai_client.py 的 _PROVIDER_CONFIG；
+    # 下方 backend_url 仅对未内置 base_url 的提供方生效。
+    "llm_provider": "deepseek",
+    "deep_think_llm": "deepseek-reasoner",
+    "quick_think_llm": "deepseek-chat",
     "backend_url": "https://open.bigmodel.cn/api/coding/paas/v4",
     # ── 提供方专属思考参数 ──
     "google_thinking_level": "high",

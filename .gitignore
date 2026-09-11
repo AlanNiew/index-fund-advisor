@@ -31,3 +31,6 @@ test_results/
 # OS
 Thumbs.db
 .DS_Store
+
+# zhipu
+.zcode

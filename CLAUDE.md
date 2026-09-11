@@ -82,7 +82,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - 所有工具通过 `route_to_vendor()` 路由到具体数据源
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
   - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
-- **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu），另有 Anthropic/Google 独立客户端
+- **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek），另有 Anthropic/Google 独立客户端
 - **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
 - **回测引擎** (`src/ifa/backtest/`) — 买入-持有策略回测，`run_backtest()` 输出年化收益、最大回撤、Sharpe、月度收益、净值曲线
 - **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
@@ -119,7 +119,7 @@ CLI / Web / API 三个接口层共用四个函数：
 
 - `src/ifa/default_config.py` — 默认配置 + `build_runtime_config()` 运行时配置构建
 - CLI 通过 `save_last_config()` 持久化到 `src/ifa/last_config.py`
-- 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI）
+- 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK）
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 2）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
 

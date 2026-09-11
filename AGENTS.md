@@ -15,9 +15,12 @@ pip install -e ".[dev]"            # add ",[mcp]" if touching the MCP server
 
 # Run
 ifa analyze 510300 --date 2024-01-15
+ifa 510300                         # shorthand — 6-digit codes auto-route to analyze
 ifa screen --query "..." --top 10
 ifa portfolio --risk moderate
 ifa search 沪深300                  # no LLM
+ifa info 510300                    # no LLM
+ifa validate --codes 510300,159919 --months-back 12   # rating-vs-return backtest (LLM, slow)
 ifa config
 ifa-web                           # Streamlit (http://localhost:8501)
 uvicorn api.main:app --port 8000   # API — no registered ifa-api script; call uvicorn directly
@@ -44,7 +47,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (36 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
 - **`src/ifa/data_tools/`** — declarative `_TOOL_SPECS` registry + `CachedDataToolExecutor` (SHA1-keyed cache + snapshots, disk-failure → degrade to direct execution).
 - **`src/ifa/dataflows/`** — AkShare wrappers (retry, asset-type auto-detect) + `clean_dataframe`/`truncate_report`.
-- **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu; Anthropic + Google have dedicated clients.
+- **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek; Anthropic + Google have dedicated clients.
 - **`src/ifa/backtest/`** — buy-and-hold `run_backtest()` + `rating_validator.py` (rating-vs-actual-return validation).
 - **`src/ifa/observability/`** — `RequestTracer` auto-traces `AdvisorGraph.run()` to `results/traces/`.
 - **Shared init for CLI/Web/API** lives in `src/ifa/common.py`: `build_advisor()`, `build_state()`, `save_report()`, `get_provider_kwargs()`. All three interface layers must use these — don't re-init the graph ad hoc.
@@ -60,12 +63,13 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 
 ## Gotchas
 
-- **Default LLM provider is Zhipu GLM** → a valid `ZHIPUAI_API_KEY` in `.env` is required out of the box. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai) selectable in `src/ifa/default_config.py`.
+- **`ifa <6位数字>` auto-routes to `analyze`** via `_FundCodeGroup` in `src/ifa/cli/main.py` — so `ifa 510300` works with no subcommand, but a typo'd subcommand (e.g. `ifa analyz`) still errors normally.
+- **Default LLM provider is DeepSeek** → a valid `DEEPSEEK_API_KEY` in `.env` is required out of the box. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai/zhipu) selectable in `src/ifa/default_config.py`.
 - **`quick_think_llm` must not be the cheapest tier** — weak models produce unreliable structured output that pollutes the whole pipeline.
 - **`IFA_API_KEY` empty = API auth disabled, all routes open.** Set it before exposing the API.
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.
 - **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately.
-- **CI** (`.github/workflows/ci.yml`) runs on **Python 3.13**; the mypy step is `continue-on-error` (don't fail a PR solely on mypy).
+- **CI** (`.github/workflows/ci.yml`) runs **ruff + pytest on a Python 3.10–3.13 matrix**; the mypy step is `continue-on-error` (don't fail a PR solely on mypy).
 - **Generated outputs** `results/`, `test_results/`, `local_data/`, `release/src/`, `release/dist/`, `.claude/` are gitignored.
 
 ## Read before changing sensitive areas

@@ -350,6 +350,8 @@ Agent 可使用 **36 个数据工具**（`src/ifa/agents/tools/`），全部来�
 | ETF / 指数 | 5 | `etf_index_tools.py` | ETF 行情、指数行情、基金净值、成份股 |
 | 成分股 | 3 | `constituent_tools.py` | 成份股概览、行业分布、成份股表现 |
 
+此外，CLI `ifa search` / REST `GET /funds/search` / MCP `search_funds` 共用数据工具 `search_funds`：它在**完整**基金列表（约 2.8 万只）上按代码/简称/类型/拼音过滤后再分页，不依赖 `get_fund_list()` 的前 30 行。取数失败时 CLI 以非零退出码结束、REST 返回 502，不会伪装成「查无结果」。
+
 ### 记忆与反思
 
 - 每个 Agent 可携带 `FinancialSituationMemory`（`src/ifa/agents/memory.py`），基于 BM25 检索历史相似情景，中英混合分词（中文按字、英文按词）。
@@ -443,7 +445,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（442 个测试，覆盖 14 个模块）
+# 测试（485 个测试，覆盖 14 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -504,7 +506,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 442 个测试（14 个模块）
+├── tests/                    # 485 个测试（14 个模块）
 ├── scripts/                  # 每日分析等脚本
 ├── release/                  # PyPI 轻量发行脚手架（assemble.py）
 ├── pyproject.toml

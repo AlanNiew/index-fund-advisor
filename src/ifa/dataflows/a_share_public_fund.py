@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import akshare as ak
+import pandas as pd
 
 from .a_share import (
     _call_akshare_api,
@@ -46,6 +47,89 @@ def get_fund_list() -> str:
     sample = selected.head(30)
     header = f"# All Public Funds List\n# Total: {total} funds (showing top 30)\n\n"
     return header + str(sample.to_csv(index=False))
+
+
+# ── 1b. 公募基金搜索 ────────────────────────────────────────────
+
+# 搜索结果默认与最大行数。上限用于防止把 2.8 万只基金一次性塞进上下文。
+DEFAULT_FUND_SEARCH_LIMIT = 20
+MAX_FUND_SEARCH_LIMIT = 200
+
+# 参与关键词匹配的字段：代码 / 简称 / 类型 / 拼音，匹配大小写不敏感。
+_FUND_SEARCH_FIELDS = ("基金代码", "基金简称", "基金类型", "拼音缩写", "拼音全称")
+
+
+def _normalize_fund_code(value: object) -> str:
+    """把基金代码规范化为 6 位字符串（兼容数值型代码与 "159919.0" 形态）。"""
+    text = str(value).strip().split(".", 1)[0]
+    return text.zfill(6) if text.isdigit() else text
+
+
+def _select_fund_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """选取基金列表输出列（代码 / 简称 / 类型），并把代码统一补成 6 位。"""
+    preferred_cols = ["基金代码", "基金简称", "基金类型"]
+    available_cols = [c for c in preferred_cols if c in df.columns]
+    if not available_cols:
+        available_cols = list(df.columns[:4])
+    selected = df[available_cols].copy()
+    if "基金代码" in selected.columns:
+        selected["基金代码"] = selected["基金代码"].map(_normalize_fund_code)
+    return selected
+
+
+def _filter_funds(df: pd.DataFrame, query: str) -> pd.DataFrame:
+    """在完整基金列表中按关键词做大小写不敏感的子串过滤。"""
+    needle = (query or "").strip().upper()
+    if not needle:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for field in _FUND_SEARCH_FIELDS:
+        if field in df.columns:
+            mask = mask | df[field].astype(str).str.upper().str.contains(needle, regex=False, na=False)
+    return df[mask]
+
+
+def search_funds(query: str = "", limit: int = DEFAULT_FUND_SEARCH_LIMIT) -> str:
+    """
+    在**全部**公募基金中按关键词搜索（不再只搜列表头部 30 行）。
+
+    说明：
+        CLI / REST / MCP 此前的搜索都是在 get_fund_list() 返回的「前 30 行」文本上
+        做关键字过滤，任何不在前 30 行的基金都搜不到（如「沪深300」有 366 只命中，
+        但 CLI 返回「未找到」）。本函数在完整列表（约 2.8 万只）上过滤，只对**结果**
+        分页。
+
+    参数：
+        query: 关键词，匹配基金代码 / 简称 / 类型 / 拼音；留空返回列表头部。
+        limit: 最多返回多少行（默认 20，上限 200）。
+
+    返回：
+        str: 带匹配总数的 CSV 文本；数据源失败时返回带 DATA_SOURCE_ERROR_MARKER
+        标记的错误文本。
+    """
+    try:
+        df = _call_akshare_api(ak.fund_name_em)
+    except Exception as exc:  # noqa: BLE001
+        return _format_data_error("# Fund Search", exc)
+
+    if df is None or df.empty:
+        return "未获取到基金列表数据。"
+
+    keyword = (query or "").strip()
+    matched = _filter_funds(df, keyword)
+    total = len(matched)
+    label = keyword or "（全部）"
+    title = f"# Fund Search: {label}"
+    if total == 0:
+        return f"{title}\n# Matches: 0\n\n未找到匹配「{label}」的基金。"
+
+    try:
+        limit_value = int(limit)
+    except (TypeError, ValueError):
+        limit_value = DEFAULT_FUND_SEARCH_LIMIT
+    limit_value = max(1, min(limit_value, MAX_FUND_SEARCH_LIMIT))
+    rows = _select_fund_columns(matched).head(limit_value)
+    return f"{title}\n# Matches: {total} (showing {len(rows)})\n\n{rows.to_csv(index=False)}"
 
 
 # ── 2. 基金基本信息 ─────────────────────────────────────────────

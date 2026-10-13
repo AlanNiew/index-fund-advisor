@@ -142,17 +142,17 @@ def search(
     keyword: str = typer.Argument(help="搜索关键词"),
     limit: int = typer.Option(20, "--limit", "-n", help="最大返回数量"),
 ):
-    """快速搜索基金。"""
+    """快速搜索基金（不经过 LLM）。"""
     from ifa.data_tools.api import run_data_tool
+    from ifa.dataflows.a_share import DATA_SOURCE_ERROR_MARKER
 
     console.print(f"搜索基金: {keyword}")
-    result = run_data_tool("get_fund_list")
-    lines = result.strip().split("\n")
-    matched = [line for line in lines if keyword.upper() in line.upper()][:limit]
-    if matched:
-        console.print("\n".join(matched))
-    else:
-        console.print(f"[yellow]未找到匹配 '{keyword}' 的基金[/yellow]")
+    result = run_data_tool("search_funds", query=keyword, limit=limit)
+    if DATA_SOURCE_ERROR_MARKER in result:
+        # 取数失败必须是非零退出码：否则脚本 / CI 会把「数据源挂了」当成「查无结果」。
+        console.print(f"[red]{result}[/red]")
+        raise typer.Exit(code=1)
+    console.print(result)
 
 
 @app.command()

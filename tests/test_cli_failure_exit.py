@@ -63,3 +63,44 @@ class TestSuccessPath:
         monkeypatch.setattr(common, "save_report", fake_save)
         _run_analysis("deep", {}, "报告")  # 不应抛 typer.Exit
         assert saved["state"]["final_report"] == "## 报告"
+
+
+class TestSearchCommand:
+    """`ifa search` 的三条路径：有命中 / 无命中 / 数据源失败。
+
+    `search` 内部延迟导入 run_data_tool，故 patch `ifa.data_tools.api.run_data_tool`
+    即可拦截取数；无命中必须保持退出码 0，只有取数失败才是非零。
+    """
+
+    @staticmethod
+    def _patch_result(monkeypatch, result: str):
+        import ifa.data_tools.api as data_api
+
+        monkeypatch.setattr(data_api, "run_data_tool", lambda *args, **kwargs: result)
+
+    def test_matches_are_printed(self, monkeypatch, capsys):
+        from ifa.cli.main import search
+
+        self._patch_result(
+            monkeypatch,
+            "# Fund Search: 沪深300\n# Matches: 366 (showing 1)\n\n000051,华夏沪深300ETF联接A,指数型-股票\n",
+        )
+        search(keyword="沪深300", limit=1)  # 不抛
+        out = capsys.readouterr().out
+        assert "000051" in out
+        assert "Matches: 366" in out
+
+    def test_data_source_failure_exits_nonzero(self, monkeypatch, capsys):
+        from ifa.cli.main import search
+
+        self._patch_result(monkeypatch, "数据源访问失败：ConnectionError: 连接被重置")
+        with pytest.raises(typer.Exit) as excinfo:
+            search(keyword="沪深300", limit=1)
+        assert excinfo.value.exit_code == 1
+        assert "数据源访问失败" in capsys.readouterr().out
+
+    def test_no_match_stays_exit_zero(self, monkeypatch):
+        from ifa.cli.main import search
+
+        self._patch_result(monkeypatch, "# Fund Search: 不存在\n# Matches: 0\n\n未找到匹配「不存在」的基金。")
+        search(keyword="不存在", limit=1)  # 查无结果不是故障 → 不得抛 typer.Exit

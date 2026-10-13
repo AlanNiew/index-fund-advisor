@@ -6,6 +6,11 @@ from typing import Any
 
 import pandas as pd
 
+# 缓存键的 schema 版本。缓存目录默认长期留存（无 TTL），若某个数据工具改了输出形态，
+# 旧载荷会继续命中并**遮蔽新实现**——get_fund_list 就曾因此在「有缓存的机器上搜索正常、
+# 在干净环境里失效」。修改任何工具的输出契约时，请递增此版本号，让旧条目自然失效。
+CACHE_SCHEMA_VERSION = 2
+
 
 class LocalArtifactStore:
     """负责缓存与快照文件的本地存储。"""
@@ -39,6 +44,7 @@ class LocalArtifactStore:
         """
         normalized = {
             "tool_name": tool_name,
+            "schema": CACHE_SCHEMA_VERSION,
             "params": self._normalize_value(params),
         }
         payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True)
@@ -159,6 +165,7 @@ class LocalArtifactStore:
 
         manifest = {
             "tool_name": tool_name,
+            "schema_version": CACHE_SCHEMA_VERSION,
             "params": self._normalize_value(params),
             "payload_file": payload_path.name,
             "payload_format": payload_format,

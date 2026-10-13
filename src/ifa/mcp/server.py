@@ -50,11 +50,24 @@ async def search_funds(query: str = "", limit: int = 20) -> dict:
     返回：{"query": str, "results": list[str], "total": int}，每行含代码与名称。
     """
     from ifa.data_tools.api import run_data_tool
+    from ifa.dataflows.a_share import DATA_SOURCE_ERROR_MARKER
 
-    result = await asyncio.to_thread(run_data_tool, "get_fund_list")
-    lines = result.strip().split("\n")
-    matched = [line for line in lines if query.upper() in line.upper()][:limit]
-    return {"query": query, "results": matched, "total": len(matched)}
+    result = await asyncio.to_thread(run_data_tool, "search_funds", query=query, limit=limit)
+    if DATA_SOURCE_ERROR_MARKER in result:
+        # 区分「数据源不可用」与「查无结果」：前者带 error 字段返回，不伪装成空结果。
+        return {"query": query, "results": [], "total": 0, "error": result}
+    lines = [line for line in result.split("\n") if line and not line.startswith("#")]
+    total = 0
+    for line in result.split("\n"):
+        if line.startswith("# Matches: "):
+            try:
+                total = int(line.split(":", 1)[1].strip().split()[0])
+            except (IndexError, ValueError):
+                total = len(lines)
+            break
+    else:
+        total = len(lines)
+    return {"query": query, "results": lines, "total": total}
 
 
 @mcp.tool()

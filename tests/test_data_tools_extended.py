@@ -6,7 +6,7 @@ import time
 import pandas as pd
 import pytest
 
-from ifa.data_tools.storage import LocalArtifactStore
+from ifa.data_tools.storage import CACHE_SCHEMA_VERSION, LocalArtifactStore
 from ifa.data_tools.types import DataToolDefinition, SnapshotConfig
 
 
@@ -42,6 +42,23 @@ class TestLocalArtifactStore:
         key1 = store.build_cache_key("tool_a", {"x": 1})
         key2 = store.build_cache_key("tool_b", {"x": 1})
         assert key1 != key2
+
+    def test_build_cache_key_covers_schema_version(self, store, monkeypatch):
+        """缓存键必须绑定 schema 版本。
+
+        回归背景：缓存无 TTL，get_fund_list 曾因旧实现的载荷长期命中而遮蔽新实现
+        （有缓存的机器搜索正常、干净环境失效）。递增版本号必须让旧键自然失效。
+        """
+        import ifa.data_tools.storage as storage
+
+        key_before = store.build_cache_key("get_fund_list", {})
+        monkeypatch.setattr(storage, "CACHE_SCHEMA_VERSION", CACHE_SCHEMA_VERSION + 1)
+        assert store.build_cache_key("get_fund_list", {}) != key_before
+
+    def test_manifest_records_schema_version(self, store):
+        store.save_cache("my_tool", {"p": 1}, "text")
+        manifest = json.loads(store._cache_manifest_path("my_tool", {"p": 1}).read_text(encoding="utf-8"))
+        assert manifest["schema_version"] == CACHE_SCHEMA_VERSION
 
     def test_save_and_load_text(self, store):
         path = store.save_cache("my_tool", {"k": "v"}, "hello world")

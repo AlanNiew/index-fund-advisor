@@ -51,6 +51,11 @@ def get_fund_list_tool():
     return route_to_vendor("get_fund_list")
 
 
+def search_funds_tool(query: str = "", limit: int = 20):
+    """执行基金搜索工具（在全部公募基金中按关键词过滤，而非只搜列表头部）。"""
+    return route_to_vendor("search_funds", query, limit)
+
+
 def get_fund_basic_info_tool(symbol: str):
     """执行基金基本信息工具。"""
     return route_to_vendor("get_fund_basic_info", symbol)
@@ -213,6 +218,7 @@ _TOOL_SPECS: list[tuple[str, Callable[..., Any], str]] = [
     ("get_fund_nav", get_fund_nav_tool, "场外基金净值工具"),
     # 公募基金
     ("get_fund_list", get_fund_list_tool, "公募基金列表查询工具"),
+    ("search_funds", search_funds_tool, "公募基金搜索工具（按关键词过滤全部基金）"),
     ("get_fund_basic_info", get_fund_basic_info_tool, "公募基金基本信息工具"),
     ("get_open_fund_rank", get_open_fund_rank_tool, "开放式基金排行工具"),
     ("get_fund_stock_holdings", get_fund_stock_holdings_tool, "基金股票持仓工具"),

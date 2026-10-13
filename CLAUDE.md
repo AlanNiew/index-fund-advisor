@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（469 个，覆盖 14 个模块）
+pytest                # 全部测试（485 个，覆盖 14 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -77,8 +77,9 @@ CLI / Web / API 三个接口层共用四个函数：
   - `reflection.py` — 决策反思模块 (`Reflector`)，基于实际收益更新记忆
   - `signal_processing.py` — 信号处理 (`SignalProcessor`)，提取标准化评级（含合法性校验和模糊匹配 fallback）
 - **数据工具层** (`src/ifa/data_tools/`) — 声明式注册表模式
-  - `builtin.py` 定义 `_TOOL_SPECS` 列表（35 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
-  - `executor.py` 的 `CachedDataToolExecutor` 提供缓存（SHA1 键含参数哈希）和快照
+  - `builtin.py` 定义 `_TOOL_SPECS` 列表（36 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
+  - `search_funds`（`search_funds_tool`）在**完整**基金列表上过滤：CLI / REST / MCP 的搜索必须走它，`get_fund_list()` 只返回前 30 行，**不能**用于搜索
+  - `executor.py` 的 `CachedDataToolExecutor` 提供缓存（SHA1 键含参数哈希 + `storage.CACHE_SCHEMA_VERSION`）和快照；改动任何数据工具的输出契约都要递增该版本号，否则旧载荷会永久遮蔽新实现
   - 所有工具通过 `route_to_vendor()` 路由到具体数据源
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
   - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
@@ -142,6 +143,9 @@ CLI / Web / API 三个接口层共用四个函数：
 - **原子写统一走 `src/ifa/atomic_io.py`** — 报告 / 日志 / 追踪 / 记忆的落盘都经 `atomic_write*()`（tmp 文件 → `Path.replace`，失败清理 tmp 并降级为直写）。该模块独立于 `common.py`，使 `agents/memory.py` 这类叶子模块无需 import 组合根
 - **Agent 工具取数统一走 `run_data_tool()`**（`ifa.data_tools.api`）— 不要直连 `akshare`，也不要直接调 `route_to_vendor()`，否则绕过缓存/快照层。历史上 `constituent_tools` 三个工具正是如此漏掉了缓存；其中 `get_constituent_performance` 还把个股行情路由到从未注册的 `get_stock_data`，导致对全部成分股恒定返回「数据获取失败」
 - **缓存层以文本/CSV 落盘，不保留 dtype** — DataFrame 往返后纯数字列会丢前导零（`"000001" → 1`），消费方必须自行补零（见 `constituent_tools._normalize_stock_code`）
+- **搜索必须走 `search_funds`，不要在 `get_fund_list()` 的文本上过滤** — 后者只返回 `head(30)`，历史上 CLI / REST / MCP 三处都在它上面 grep，导致干净环境里「沪深300」的 366 只基金一只都搜不到（且退出码为 0，看起来像「查无结果」）
+- **数据源失败必须可识别** — `a_share.DATA_SOURCE_ERROR_MARKER`（"数据源访问失败："）用于区分「取数失败」与「查无结果」：CLI 打红字并 `typer.Exit(1)`，REST 返 502，MCP 返 `error` 字段
+- **改动数据工具的输出契约时递增 `CACHE_SCHEMA_VERSION`** — 缓存无 TTL，旧载荷会一直命中并遮蔽新实现（`get_fund_list` 曾因此「有缓存机器正常、干净环境失效」）
 - **数据源能力边界要变成可操作报错** — 上游把「不支持」表现为误导性报错时（如用 ETF 代码取中证成分股 → pandas "Excel file format cannot be determined"），不要原样透出：换成说明约束与正确用法的信息，同时把底层异常保留在 `__cause__` 与文本里（见 `_constituents_source_hint`）。反向要求同样成立——不要把网络抖动误诊成用法错误
 - **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
 - **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
@@ -157,5 +161,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：469 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：485 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

@@ -149,6 +149,11 @@ def _call_akshare_api(func, *args, retries: int = 3, retry_delay: float = 1.0, *
     raise RuntimeError(f"AkShare 调用失败：retries={retries} 未执行任何重试尝试") from last_exc
 
 
+# 数据源失败的统一标记。接口层（CLI / REST / MCP）据此把「取数失败」与「查无结果」
+# 区分开：前者必须上报为非零退出码 / 错误响应，而不是被当成空结果安静返回。
+DATA_SOURCE_ERROR_MARKER = "数据源访问失败："
+
+
 def _format_data_error(title: str, exc: Exception) -> str:
     """
     将外部数据源异常转换为可读文本，避免工具节点直接崩溃。
@@ -160,4 +165,4 @@ def _format_data_error(title: str, exc: Exception) -> str:
     返回：
         str: 适合直接返回给上层代理的错误说明。
     """
-    return f"{title}\n\n数据源访问失败：{type(exc).__name__}: {_safe_truncate(str(exc), 220)}"
+    return f"{title}\n\n{DATA_SOURCE_ERROR_MARKER}{type(exc).__name__}: {_safe_truncate(str(exc), 220)}"

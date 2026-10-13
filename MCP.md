@@ -126,7 +126,7 @@ claude mcp add ifa -- ifa-mcp
 ## 设计说明
 
 - **直接复用 IFA 既有层，不包 HTTP、不重复实现**
-  - 数据工具 → [`ifa.data_tools.api.run_data_tool`](src/ifa/data_tools/api.py)（声明式注册表，33 个数据工具）
+  - 数据工具 → [`ifa.data_tools.api.run_data_tool`](src/ifa/data_tools/api.py)（声明式注册表，36 个数据工具）
   - 结构化估值 → [`ifa.dataflows.a_share_macro.fetch_valuation_metrics`](src/ifa/dataflows/a_share_macro.py)
   - AI 分析 → [`ifa.common.build_advisor`](src/ifa/common.py) / `build_state` + `AdvisorGraph.run`
 - **异步包装**：底层调用都是同步阻塞（AkShare 网络 / LLM），用 `asyncio.to_thread`（Python 3.10+ 自带）包到线程池，不卡事件循环，**无新依赖**。

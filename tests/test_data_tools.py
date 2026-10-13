@@ -105,12 +105,12 @@ class TestDefaultDataToolRegistry:
         assert len(tools) == len(_TOOL_SPECS)
 
     def test_tool_count(self):
-        """默认注册的工具数量为 35 个。
+        """默认注册的工具数量为 36 个。
 
-        构成：ETF/指数/场外 5 + 公募基金 20 + 宏观/情绪/估值 8 +
+        构成：ETF/指数/场外 5 + 公募基金 21（含 search_funds）+ 宏观/情绪/估值 8 +
         成分股原始数据 1 + 个股日线 1（后两个服务于 agents/tools/constituent_tools.py）。
         """
-        assert len(_TOOL_SPECS) == 35
+        assert len(_TOOL_SPECS) == 36
 
     def test_each_tool_has_required_fields(self):
         """每个注册的工具都有名称、描述和处理器。"""
@@ -128,6 +128,7 @@ class TestDefaultDataToolRegistry:
             "get_etf_data",
             "get_index_data",
             "get_fund_list",
+            "search_funds",
             "get_macro_indicator",
             "get_north_flow",
             "get_index_valuation",

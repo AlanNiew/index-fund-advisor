@@ -44,8 +44,8 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 ## Architecture boundaries (respect when editing)
 
 - **`src/ifa/graph/`** — `AdvisorGraph` orchestrates all 4 modes over the shared `IFAdvisorState`. Conditional edges (`conditional_logic.py`) drive tool loops + fund/risk debate loops. `Propagator` builds initial state; `Reflector` updates agent memory post-decision; `SignalProcessor` normalizes LLM ratings.
-- **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (35 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
-- **`src/ifa/data_tools/`** — declarative `_TOOL_SPECS` registry + `CachedDataToolExecutor` (SHA1-keyed cache + snapshots, disk-failure → degrade to direct execution).
+- **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (36 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
+- **`src/ifa/data_tools/`** — declarative `_TOOL_SPECS` registry (36 tools) + `CachedDataToolExecutor` (SHA1-keyed cache + snapshots, disk-failure → degrade to direct execution). The cache key includes `storage.CACHE_SCHEMA_VERSION` — bump it when a tool's output contract changes, or stale payloads keep shadowing the new implementation. Fund search must go through the `search_funds` tool: `get_fund_list()` returns only the first 30 rows.
 - **`src/ifa/dataflows/`** — AkShare wrappers (retry, asset-type auto-detect) + `clean_dataframe`/`truncate_report`.
 - **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode; Anthropic + Google have dedicated clients. `opencode` talks to the OpenCode Go gateway (`https://opencode.ai/inference/go/v1`) and auto-attaches a custom `User-Agent` plus a process-scoped `x-opencode-session` header (override the session via `OPENCODE_SESSION_ID`).
 - **`src/ifa/backtest/`** — buy-and-hold `run_backtest()` + `rating_validator.py` (rating-vs-actual-return validation).

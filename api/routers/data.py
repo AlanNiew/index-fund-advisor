@@ -8,15 +8,31 @@ from fastapi import APIRouter
 router = APIRouter(prefix="/api/v1")
 
 
+def _parse_match_total(result: str, fallback: int) -> int:
+    """从 `# Matches: N (showing M)` 头部解析真实匹配总数。"""
+    for line in result.split("\n"):
+        if line.startswith("# Matches: "):
+            try:
+                return int(line.split(":", 1)[1].strip().split()[0])
+            except (IndexError, ValueError):
+                break
+    return fallback
+
+
 @router.get("/funds/search")
 async def search_funds(q: str = "", limit: int = 20):
-    """快速搜索基金（同步，不经过 LLM）。"""
-    from ifa.data_tools.api import run_data_tool
+    """快速搜索基金（同步，不经过 LLM，在全部公募基金中过滤）。"""
+    from fastapi import HTTPException
 
-    result = await asyncio.to_thread(run_data_tool, "get_fund_list")
-    lines = result.strip().split("\n")
-    matched = [line for line in lines if q.upper() in line.upper()][:limit]
-    return {"results": matched, "total": len(matched)}
+    from ifa.data_tools.api import run_data_tool
+    from ifa.dataflows.a_share import DATA_SOURCE_ERROR_MARKER
+
+    result = await asyncio.to_thread(run_data_tool, "search_funds", query=q, limit=limit)
+    if DATA_SOURCE_ERROR_MARKER in result:
+        # 取数失败不能伪装成「空结果」：返回 502，让调用方能区分「没有匹配」与「数据源不可用」。
+        raise HTTPException(status_code=502, detail=result)
+    lines = [line for line in result.split("\n") if line and not line.startswith("#")]
+    return {"results": lines, "total": _parse_match_total(result, len(lines)), "showing": len(lines)}
 
 
 @router.get("/funds/{code}/basic")

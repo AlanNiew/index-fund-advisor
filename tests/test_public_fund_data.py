@@ -295,3 +295,81 @@ class TestFundBasicInfoRouting:
         assert calls["ak"] == ["fund_individual_basic_info_xq"]
         assert calls["row"] == []
         assert "# Fund Basic Info for" in out
+
+
+class TestSearchFunds:
+    """search_funds —— 在完整基金列表上过滤，而不是只在列表头部 30 行里过滤。
+
+    回归背景：CLI / REST / MCP 三处此前都是在 get_fund_list() 返回的前 30 行文本上
+    做关键字过滤，导致「沪深300」的 366 只基金在干净环境里一只都搜不到（返回
+    「未找到」且退出码为 0）。命中行必须能在第 30 行之后被找到。
+    """
+
+    @staticmethod
+    def _big_frame() -> pd.DataFrame:
+        """100 只基金，命中的两只都排在 30 行之后。"""
+        names = [f"普通混合基金{i}" for i in range(100)]
+        names[80] = "华夏沪深300ETF联接A"
+        names[81] = "嘉实沪深300指数研究增强A"
+        return pd.DataFrame(
+            {
+                "基金代码": [f"{i:06d}" for i in range(100)],
+                "基金简称": names,
+                "基金类型": ["混合型"] * 100,
+            }
+        )
+
+    def test_matches_beyond_the_first_30_rows(self, monkeypatch):
+        _patch(monkeypatch, value=self._big_frame())
+        out = pf.search_funds("沪深300")
+        assert "# Matches: 2 (showing 2)" in out
+        assert "000080" in out
+        assert "000081" in out
+        assert "000000" not in out  # 头部 30 行里的无关基金不得出现
+
+    def test_matches_by_code_and_pads_to_six_digits(self, monkeypatch):
+        """数值型代码 510300 必须能按「510300」搜到，且输出补零。"""
+        _patch(monkeypatch, value=pd.DataFrame({"基金代码": [510300], "基金简称": ["沪深300ETF华泰柏瑞"]}))
+        out = pf.search_funds("510300")
+        assert "# Matches: 1" in out
+        assert "510300,沪深300ETF华泰柏瑞" in out
+
+    def test_pinyin_match_is_case_insensitive(self, monkeypatch):
+        df = pd.DataFrame({"基金代码": ["510300"], "基金简称": ["沪深300ETF"], "拼音缩写": ["HS300ETF"]})
+        _patch(monkeypatch, value=df)
+        assert "# Matches: 1" in pf.search_funds("hs300")
+
+    def test_fund_type_is_searchable(self, monkeypatch):
+        _patch(monkeypatch, value=self._big_frame())
+        assert "# Matches: 100" in pf.search_funds("混合型")
+
+    def test_no_match_reports_zero_and_reason(self, monkeypatch):
+        _patch(monkeypatch, value=self._big_frame())
+        out = pf.search_funds("不存在的关键词")
+        assert "# Matches: 0" in out
+        assert "未找到匹配「不存在的关键词」的基金。" in out
+
+    def test_limit_is_clamped_to_1_and_200(self, monkeypatch):
+        _patch(monkeypatch, value=self._big_frame())
+        assert "(showing 1)" in pf.search_funds("", limit=0)  # 下限 1
+        # 上限 200 高于总行数，故按实际命中数截断
+        assert "(showing 100)" in pf.search_funds("", limit=10**6)
+
+    def test_blank_query_returns_list_head(self, monkeypatch):
+        _patch(monkeypatch, value=self._big_frame())
+        out = pf.search_funds("", limit=3)
+        assert "# Fund Search: （全部）" in out
+        assert "(showing 3)" in out
+
+    def test_source_failure_is_marked_in_output(self, monkeypatch):
+        from ifa.dataflows.a_share import DATA_SOURCE_ERROR_MARKER
+
+        _patch(monkeypatch, exc=ConnectionError("连接被重置"))
+        out = pf.search_funds("沪深300")
+        assert DATA_SOURCE_ERROR_MARKER in out
+        assert "ConnectionError" in out
+        assert "连接被重置" in out
+
+    def test_empty_dataframe_is_reported_not_silently_empty(self, monkeypatch):
+        _patch(monkeypatch, value=pd.DataFrame())
+        assert pf.search_funds("沪深300") == "未获取到基金列表数据。"

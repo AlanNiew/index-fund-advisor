@@ -44,6 +44,30 @@ class TestAPIEndpoints:
         assert "categories" in data
         assert "tracking_methods" in data
 
+    def test_funds_search_parses_match_total(self, client, monkeypatch):
+        """搜索结果必须给出真实匹配总数，而不是只报分页后的行数。"""
+        import ifa.data_tools.api as data_api
+
+        payload = "# Fund Search: 沪深300\n# Matches: 366 (showing 1)\n\n000051,华夏沪深300ETF联接A,指数型-股票\n"
+        monkeypatch.setattr(data_api, "run_data_tool", lambda *args, **kwargs: payload)
+        resp = client.get("/api/v1/funds/search", params={"q": "沪深300", "limit": 1})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 366
+        assert data["showing"] == 1
+        assert data["results"] == ["000051,华夏沪深300ETF联接A,指数型-股票"]
+
+    def test_funds_search_source_failure_is_502(self, client, monkeypatch):
+        """取数失败不能伪装成空结果，否则调用方无法区分「没有匹配」与「数据源不可用」。"""
+        import ifa.data_tools.api as data_api
+
+        monkeypatch.setattr(
+            data_api, "run_data_tool", lambda *args, **kwargs: "数据源访问失败：ConnectionError: 连接被重置"
+        )
+        resp = client.get("/api/v1/funds/search", params={"q": "沪深300"})
+        assert resp.status_code == 502
+        assert "数据源访问失败" in resp.json()["detail"]
+
     def test_deep_analyze_creates_task(self, client):
         resp = client.post("/api/v1/analyze/deep", json={"fund_code": "510300"})
         assert resp.status_code == 200

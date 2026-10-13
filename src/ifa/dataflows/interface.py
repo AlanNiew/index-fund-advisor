@@ -107,6 +107,9 @@ from .a_share_public_fund import (
 from .a_share_public_fund import (
     get_open_fund_rank as get_akshare_open_fund_rank,
 )
+from .a_share_public_fund import (
+    search_funds as get_akshare_search_funds,
+)
 from .config import get_config
 
 logger = logging.getLogger(__name__)
@@ -127,6 +130,7 @@ TOOLS_CATEGORIES = {
     "public_fund": {
         "description": "Public fund (公募基金) data including basic info, rankings, holdings, risk, and performance",
         "tools": [
+            "search_funds",
             "get_fund_list",
             "get_fund_basic_info",
             "get_open_fund_rank",
@@ -192,6 +196,9 @@ VENDOR_METHODS: dict[str, dict[str, Callable[..., Any]]] = {
         "akshare": get_akshare_fund_nav,
     },
     # ── 公募基金 ──
+    "search_funds": {
+        "akshare": get_akshare_search_funds,
+    },
     "get_fund_list": {
         "akshare": get_akshare_fund_list,
     },

@@ -70,6 +70,7 @@ from ifa.agents.tools.public_fund_tools import (
 from ifa.agents.types import IFAdvisorState
 from ifa.agents.utils import create_msg_delete
 from ifa.dataflows.asset_type import detect_asset_type
+from ifa.default_config import DEFAULT_MAX_DEBATE_ROUNDS, DEFAULT_MAX_RISK_DISCUSS_ROUNDS
 
 from .conditional_logic import ConditionalLogic
 from .propagation import Propagator
@@ -117,8 +118,9 @@ class AdvisorGraph:
         self.config = config or {}
         self.callbacks = callbacks or []
 
-        max_debate_rounds = self.config.get("max_debate_rounds", 1)
-        max_risk_discuss_rounds = self.config.get("max_risk_discuss_rounds", 1)
+        # 兜底默认值取自 default_config 的常量，避免与 DEFAULT_CONFIG 各自维护而漂移
+        max_debate_rounds = self.config.get("max_debate_rounds", DEFAULT_MAX_DEBATE_ROUNDS)
+        max_risk_discuss_rounds = self.config.get("max_risk_discuss_rounds", DEFAULT_MAX_RISK_DISCUSS_ROUNDS)
 
         self.conditional_logic = ConditionalLogic(
             max_debate_rounds=max_debate_rounds,

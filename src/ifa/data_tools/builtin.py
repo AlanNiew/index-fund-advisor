@@ -28,6 +28,16 @@ def get_index_constituents_tool(symbol: str):
     return route_to_vendor("get_index_constituents", symbol)
 
 
+def get_index_constituents_raw_tool(symbol: str):
+    """执行指数成分股原始数据工具（返回 DataFrame，供上层二次加工）。"""
+    return route_to_vendor("get_index_constituents_raw", symbol)
+
+
+def get_stock_daily_tool(symbol: str, start_date: str, end_date: str):
+    """执行 A 股个股日线行情工具。"""
+    return route_to_vendor("get_stock_daily", symbol, start_date, end_date)
+
+
 def get_fund_nav_tool(symbol: str):
     """执行场外基金净值工具。"""
     return route_to_vendor("get_fund_nav", symbol)
@@ -198,6 +208,8 @@ _TOOL_SPECS: list[tuple[str, Callable[..., Any], str]] = [
     ("get_index_data", get_index_data_tool, "A 股指数日线行情工具"),
     ("get_etf_fund_info", get_etf_fund_info_tool, "ETF 基金基本信息工具"),
     ("get_index_constituents", get_index_constituents_tool, "指数成分股工具"),
+    ("get_index_constituents_raw", get_index_constituents_raw_tool, "指数成分股原始数据工具"),
+    ("get_stock_daily", get_stock_daily_tool, "A 股个股日线行情工具"),
     ("get_fund_nav", get_fund_nav_tool, "场外基金净值工具"),
     # 公募基金
     ("get_fund_list", get_fund_list_tool, "公募基金列表查询工具"),

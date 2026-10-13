@@ -45,10 +45,13 @@
   - 追踪日志保存到 `results/traces/{request_id}.json`
   - 无外部依赖，后续可切换到 Langfuse/OTel
 
-- [x] **多数据源扩展**
-  - `_KNOWN_DATA_VENDORS` 新增 tushare 供应商
-  - 已有 `VENDOR_METHODS` + `route_to_vendor` fallback 架构支持即插即用
-  - 配置级供应商选择：`data_vendors` 字典
+- [x] **多数据源 fallback 架构**（供应商实现待补）
+  - `route_to_vendor()` 对每个供应商独立 try/except，失败自动尝试下一个；接口层已就绪
+  - 配置级供应商选择：`data_vendors` / `tool_vendors` 字典
+  - ⚠️ **更正**：原文「`_KNOWN_DATA_VENDORS` 新增 tushare 供应商」不成立——`tushare` 只是被
+    加进可配置名单，`VENDOR_METHODS` 中**没有任何 tushare 实现**，配置它会被静默回退到
+    akshare（无日志、无提示）。现已从名单移除：宁可让 `validate_config` 明确报错，
+    也不要保留「配置了却不生效」的选项。新增供应商需要同时补实现，不只是加个名字
 
 - [x] **Web 界面可视化增强**
   - 新增 `web/views/charts.py`：Plotly 图表组件（净值曲线、月度收益柱状图、指标卡片）
@@ -186,10 +189,13 @@
   - 问题：当前只有占位提示 `"历史记录功能开发中..."`
   - 方案：读取 `results/` 目录下的历史分析报告，提供列表和查看功能
 
-- [x] **`interface.py` 的 VENDOR_METHODS 自动注册**
+- [ ] **`interface.py` 的 VENDOR_METHODS 自动注册**（实际未完成）
   - 文件：`src/ifa/dataflows/interface.py`
-  - 问题：100 行导入 + 250 行手动映射，新增数据函数需改 3 处
+  - 问题：约 60 行导入 + 手动映射表，新增一个数据函数需手改 3 处
+    （`interface.py` 的导入与映射、`data_tools/builtin.py` 的 spec、调用方）
   - 方案：使用装饰器或注册表模式自动收集
+  - ⚠️ **更正**：此前标记为「已完成」，但该文件仍是全量手动映射；本次新增
+    `get_stock_daily` / `get_index_constituents_raw` 仍需逐处手改，可直接证伪
 
 ### S7 — 生产化增强 ✅ 已完成
 

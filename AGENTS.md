@@ -56,6 +56,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 
 - **LLM calls go through `invoke_llm_safely()` / `invoke_chain_safely()`** (`src/ifa/agents/utils.py`, exponential-backoff retry). **Never raw `llm.invoke()`** in agents or graph code.
 - **`AdvisorGraph.run()` keeps its top-level try/except** — on failure it still saves the log and returns a state with an `error` field. Preserve this.
+- **Agent tools must fetch data through `run_data_tool()`** (`ifa.data_tools.api`), never by importing `akshare` directly or calling `route_to_vendor()` — otherwise the tool bypasses the cache/snapshot layer. The cache stores text/CSV, so a cached DataFrame loses leading zeros in numeric code columns; zero-pad on the consumer side (see `constituent_tools._normalize_stock_code`).
 - **Agent report inputs are truncated** via `truncate_report(report, max_chars=3000)` to avoid token overflow.
 - **`SignalProcessor` validates + fuzzy-matches LLM ratings/confidence**, falling back to `HOLD` / `Medium` on garbage. Don't bypass.
 - **Honesty disclaimer is hard-injected by `report_generator.py`** — not left to the LLM to emit.

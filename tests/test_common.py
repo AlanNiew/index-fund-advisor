@@ -163,17 +163,22 @@ class TestSaveReport:
                         "fund_codes": "510300",
                         "request_id": f"{tid:08x}abcd5678",
                     }
-                    with patch("ifa.default_config.build_runtime_config") as mock_config:
-                        mock_config.return_value = {"results_dir": tmpdir}
-                        paths[tid] = save_report(state)
+                    paths[tid] = save_report(state)
                 except Exception as e:
                     errors.append(e)
 
-            threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
+            # patch 必须在所有线程之外统一进入/退出。
+            # unittest.mock.patch 操作的是全局可变状态：若在每个线程里各自 with，
+            # 两个线程交错时后进入者会把「已被替换的 mock」当成原值保存，
+            # 先退出者恢复真值、后退出者又把 mock 写回去 —— mock 被永久留在模块上，
+            # 污染此后所有依赖 build_runtime_config 的测试（表现为随机失败）。
+            with patch("ifa.default_config.build_runtime_config") as mock_config:
+                mock_config.return_value = {"results_dir": tmpdir}
+                threads = [threading.Thread(target=worker, args=(i,)) for i in range(N)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
 
             assert errors == [], f"并发写入出错: {errors}"
             # 5 个不同路径

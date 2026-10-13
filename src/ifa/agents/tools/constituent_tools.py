@@ -6,17 +6,16 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Annotated
 
-import akshare as ak
 from langchain_core.tools import tool
 
-from ifa.dataflows.a_share import _call_akshare_api, _format_data_error, _format_table
+from ifa.data_tools.api import run_data_tool
+from ifa.dataflows.a_share import _format_data_error, _format_table
 from ifa.dataflows.a_share_common import (
     find_column,
     safe_display_symbol,
     safe_plain_code,
 )
 from ifa.dataflows.asset_type import AssetType, detect_asset_type
-from ifa.dataflows.interface import route_to_vendor
 
 
 @tool
@@ -37,10 +36,8 @@ def get_constituent_overview(
     display = safe_display_symbol(symbol)
     try:
         plain = safe_plain_code(symbol)
-        df = _call_akshare_api(
-            ak.index_stock_cons_csindex,
-            symbol=plain,
-        )
+        # 经数据工具层取数（而非直连 akShare）：三个成分股工具因此共享同一份缓存与快照
+        df = run_data_tool("get_index_constituents_raw", symbol=plain)
     except Exception as exc:  # noqa: BLE001
         return _format_data_error(f"# Top Constituents for {display}", exc)
 
@@ -80,10 +77,8 @@ def get_constituent_sector_distribution(
     display = safe_display_symbol(symbol)
     try:
         plain = safe_plain_code(symbol)
-        df = _call_akshare_api(
-            ak.index_stock_cons_csindex,
-            symbol=plain,
-        )
+        # 经数据工具层取数（而非直连 akShare）：三个成分股工具因此共享同一份缓存与快照
+        df = run_data_tool("get_index_constituents_raw", symbol=plain)
     except Exception as exc:  # noqa: BLE001
         return _format_data_error(f"# Sector Distribution for {display}", exc)
 
@@ -131,10 +126,8 @@ def get_constituent_performance(
     display = safe_display_symbol(symbol)
     try:
         plain = safe_plain_code(symbol)
-        df = _call_akshare_api(
-            ak.index_stock_cons_csindex,
-            symbol=plain,
-        )
+        # 经数据工具层取数（而非直连 akShare）：三个成分股工具因此共享同一份缓存与快照
+        df = run_data_tool("get_index_constituents_raw", symbol=plain)
     except Exception as exc:  # noqa: BLE001
         return _format_data_error(f"# Constituent Performance for {display}", exc)
 
@@ -152,15 +145,15 @@ def get_constituent_performance(
 
     stock_items = []
     for _, row in top_stocks.iterrows():
-        stock_code = str(row[code_col])
+        stock_code = _normalize_stock_code(row[code_col])
         stock_name = str(row.get(name_col, "")) if name_col else ""
         stock_items.append((stock_code, stock_name))
 
     def _fetch_one(item):
         stock_code, stock_name = item
         try:
-            stock_data = route_to_vendor(
-                "get_stock_data",
+            stock_data = run_data_tool(
+                "get_stock_daily",
                 symbol=stock_code,
                 start_date=_get_start_date(look_back_days),
                 end_date=_get_today_str(),
@@ -180,6 +173,20 @@ def get_constituent_performance(
 
     header = f"# Top 10 Constituent Performance for {display} (Last {look_back_days} days)\n\n"
     return header + "\n\n".join(results)
+
+
+def _normalize_stock_code(value: object) -> str:
+    """把成分股代码规范化为 6 位字符串。
+
+    代码必须保留前导零（000001 是平安银行，1 不是任何股票）。成分股数据来自
+    数据工具层：首次调用返回原始 DataFrame，命中缓存则是 CSV 落盘后读回，
+    此时纯数字列会被 pandas 推断成整数、前导零丢失。这里统一补零，
+    保证「首次调用」与「命中缓存」两条路径行为一致。
+    """
+    text = str(value).strip()
+    if text.endswith(".0"):  # CSV 读回 float 列时会出现 "1.0" 这类形式
+        text = text[:-2]
+    return text.zfill(6)
 
 
 def _get_today_str() -> str:

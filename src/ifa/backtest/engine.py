@@ -138,7 +138,12 @@ def _fetch_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFra
 
 
 def _find_column(df: pd.DataFrame, *candidates: str) -> str | None:
-    """按候选名查找列。"""
+    """按候选名做「大小写不敏感 + 子串包含」的模糊查找。
+
+    注意：这与 `ifa.dataflows.a_share_common.find_column`（精确匹配列名）语义不同，
+    是刻意保留的差异——行情/净值列名在不同数据源间存在后缀差异（「收盘」vs「收盘价」），
+    精确匹配会漏。不要为了「消除重复」把两者合并，那会让回测静默取不到价格列。
+    """
     for col in df.columns:
         col_lower = col.lower().strip()
         for c in candidates:

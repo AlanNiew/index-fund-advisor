@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（405 个，覆盖 14 个模块）
+pytest                # 全部测试（442 个，覆盖 14 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -77,7 +77,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - `reflection.py` — 决策反思模块 (`Reflector`)，基于实际收益更新记忆
   - `signal_processing.py` — 信号处理 (`SignalProcessor`)，提取标准化评级（含合法性校验和模糊匹配 fallback）
 - **数据工具层** (`src/ifa/data_tools/`) — 声明式注册表模式
-  - `builtin.py` 定义 `_TOOL_SPECS` 列表（33 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
+  - `builtin.py` 定义 `_TOOL_SPECS` 列表（35 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
   - `executor.py` 的 `CachedDataToolExecutor` 提供缓存（SHA1 键含参数哈希）和快照
   - 所有工具通过 `route_to_vendor()` 路由到具体数据源
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
@@ -138,6 +138,8 @@ CLI / Web / API 三个接口层共用四个函数：
 - **LLM 调用统一走 `invoke_llm_safely()` / `invoke_chain_safely()`** — 定义在 `src/ifa/agents/utils.py`，带指数退避重试。所有 Agent 和图模块中的 LLM 调用都必须使用它，禁止裸调用 `llm.invoke()`
 - **`run()` 顶层异常保护** — `AdvisorGraph.run()` 用 try/except 包裹 `graph.invoke()`，失败时仍保存日志并返回含 `error` 字段的状态
 - **原子写统一走 `src/ifa/atomic_io.py`** — 报告 / 日志 / 追踪 / 记忆的落盘都经 `atomic_write*()`（tmp 文件 → `Path.replace`，失败清理 tmp 并降级为直写）。该模块独立于 `common.py`，使 `agents/memory.py` 这类叶子模块无需 import 组合根
+- **Agent 工具取数统一走 `run_data_tool()`**（`ifa.data_tools.api`）— 不要直连 `akshare`，也不要直接调 `route_to_vendor()`，否则绕过缓存/快照层。历史上 `constituent_tools` 三个工具正是如此漏掉了缓存；其中 `get_constituent_performance` 还把个股行情路由到从未注册的 `get_stock_data`，导致对全部成分股恒定返回「数据获取失败」
+- **缓存层以文本/CSV 落盘，不保留 dtype** — DataFrame 往返后纯数字列会丢前导零（`"000001" → 1`），消费方必须自行补零（见 `constituent_tools._normalize_stock_code`）
 - **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
 - **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
 - **安全字典访问** — 所有 Agent 节点使用 `.get()` + `isinstance` 检查访问嵌套状态；`_safe_get_nested()` 用于日志；`Reflector._safe_get_debate()` 用于反思
@@ -152,5 +154,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：405 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：442 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

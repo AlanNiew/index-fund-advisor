@@ -172,6 +172,28 @@ def get_etf_fund_info(symbol: str) -> str:
 # ── 指数成分股 ───────────────────────────────────────────────
 
 
+def get_index_constituents_raw(symbol: str) -> pd.DataFrame:
+    """
+    获取指数成分股原始数据表（未格式化）。
+
+    单独提供原始变体，是为了让上层工具（如 agents/tools/constituent_tools.py）
+    能经由 CachedDataToolExecutor 复用同一份缓存；已格式化的
+    get_index_constituents() 只服务于直接喂给 LLM 的场景。
+
+    注意：返回的是 DataFrame，缓存层以 CSV 形式落盘，读回时纯数字列会丢失
+    前导零（"000001" → 1）。消费方必须先经 _normalize_stock_code 之类的
+    规范化再使用代码列。
+
+    参数：
+        symbol: 指数代码（如 000300）。
+
+    返回：
+        pd.DataFrame: 成分股原始数据表；调用失败时抛出异常，由上层决定如何降级。
+    """
+    plain = safe_plain_code(symbol)
+    return _call_akshare_api(ak.index_stock_cons_csindex, symbol=plain)
+
+
 def get_index_constituents(symbol: str) -> str:
     """
     获取指数的成分股列表及权重信息。
@@ -183,20 +205,15 @@ def get_index_constituents(symbol: str) -> str:
         str: 成分股列表文本。
     """
     display = safe_display_symbol(symbol)
-    plain = safe_plain_code(symbol)
     try:
-        df = _call_akshare_api(
-            ak.index_stock_cons_csindex,
-            symbol=plain,
-        )
+        df = get_index_constituents_raw(symbol)
     except Exception as exc:  # noqa: BLE001
         return _format_data_error(f"# Index constituents for {display}", exc)
 
     if df is None or df.empty:
         return f"未找到 {display} 的成分股数据。"
 
-    result = _format_table(df, f"# Index Constituents for {display}", rows=60)
-    return result
+    return _format_table(df, f"# Index Constituents for {display}", rows=60)
 
 
 # ── 场外基金净值 ─────────────────────────────────────────────
@@ -229,3 +246,65 @@ def get_fund_nav(symbol: str) -> str:
     # 只取最近 60 个交易日
     recent = df.tail(60)
     return _format_table(recent, f"# Fund NAV History for {display}")
+
+
+# ── 个股日线行情（成分股表现分析用）────────────────────────────
+
+
+def get_stock_daily(symbol: str, start_date: str, end_date: str) -> str:
+    """
+    获取 A 股个股日线行情（前复权）。
+
+    成分股表现分析此前路由到 `get_stock_data`，但该方法从未注册进
+    VENDOR_METHODS，导致每次都抛 ValueError 并被吞成「数据获取失败」。
+    本函数提供真实可用的实现。
+
+    参数：
+        symbol: 股票代码（如 600519）。
+        start_date: 起始日期，格式 YYYY-MM-DD。
+        end_date: 结束日期，格式 YYYY-MM-DD。
+
+    返回：
+        str: CSV 格式的日线行情数据。
+    """
+    display = safe_display_symbol(symbol)
+    plain = safe_plain_code(symbol)
+    try:
+        df = _call_akshare_api(
+            ak.stock_zh_a_hist,
+            symbol=plain,
+            period="daily",
+            start_date=format_date_for_api(start_date),
+            end_date=format_date_for_api(end_date),
+            adjust="qfq",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _format_data_error(f"# Stock price data for {display} from {start_date} to {end_date}", exc)
+
+    if df is None or df.empty:
+        return f"未找到 {display} 在 {start_date} 到 {end_date} 之间的个股行情数据。"
+
+    col_map = {
+        "日期": "Date",
+        "开盘": "Open",
+        "最高": "High",
+        "最低": "Low",
+        "收盘": "Close",
+        "成交量": "Volume",
+        "成交额": "Amount",
+        "涨跌幅": "PctChange",
+        "换手率": "TurnoverPct",
+    }
+    renamed = df.rename(columns=col_map).copy()
+    if "Date" in renamed.columns:
+        renamed["Date"] = pd.to_datetime(renamed["Date"]).dt.strftime("%Y-%m-%d")
+
+    selected_columns = [
+        col
+        for col in ["Date", "Open", "High", "Low", "Close", "Volume", "Amount", "PctChange", "TurnoverPct"]
+        if col in renamed.columns
+    ]
+    output = _round_numeric_frame(renamed.loc[:, selected_columns])
+    header = f"# Stock price data for {display} from {start_date} to {end_date}\n"
+    header += f"# Records: {len(output)}\n\n"
+    return header + str(output.to_csv(index=False))

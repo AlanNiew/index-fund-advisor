@@ -29,7 +29,16 @@ LOCAL_DATA_DIR = os.getenv(
     os.path.join(PROJECT_DIR, "local_data"),
 )
 
-_KNOWN_DATA_VENDORS = {"akshare", "tushare"}
+# 可配置的数据供应商白名单：只列**真正有实现**的名字。
+# tushare 曾被列在这里，但 VENDOR_METHODS 中没有任何 tushare 实现，配置它会被
+# route_to_vendor 静默回退到 akshare（无日志、无提示）。与其保留「配置了却不生效」
+# 的选项，不如让 validate_config 直接报错。新增供应商必须同时补实现。
+_KNOWN_DATA_VENDORS = {"akshare"}
+
+# 辩论轮数默认值。AdvisorGraph 在 config 缺键时回退到同一常量——此前那里硬编码 1
+# 而这里写 2，配置不完整时辩论轮数会静默减半，与文档描述不符。
+DEFAULT_MAX_DEBATE_ROUNDS = 2
+DEFAULT_MAX_RISK_DISCUSS_ROUNDS = 2
 
 DEFAULT_CONFIG = {
     "project_dir": PROJECT_DIR,
@@ -65,8 +74,8 @@ DEFAULT_CONFIG = {
     "analysis_mode": "deep",
     # ── 辩论设置（借鉴 TradingAgents）──
     "enable_debate": True,
-    "max_debate_rounds": 2,
-    "max_risk_discuss_rounds": 2,
+    "max_debate_rounds": DEFAULT_MAX_DEBATE_ROUNDS,
+    "max_risk_discuss_rounds": DEFAULT_MAX_RISK_DISCUSS_ROUNDS,
     # ── 图执行 ──
     "max_recur_limit": 150,
     "timeout": 180,

@@ -15,7 +15,13 @@ from .a_share_index_fund import (
     get_index_constituents as get_akshare_index_constituents,
 )
 from .a_share_index_fund import (
+    get_index_constituents_raw as get_akshare_index_constituents_raw,
+)
+from .a_share_index_fund import (
     get_index_data as get_akshare_index_data,
+)
+from .a_share_index_fund import (
+    get_stock_daily as get_akshare_stock_daily,
 )
 from .a_share_macro import (
     get_index_valuation as get_akshare_index_valuation,
@@ -108,7 +114,15 @@ logger = logging.getLogger(__name__)
 TOOLS_CATEGORIES = {
     "etf_index_apis": {
         "description": "ETF and index market data",
-        "tools": ["get_etf_data", "get_index_data", "get_etf_fund_info", "get_index_constituents", "get_fund_nav"],
+        "tools": [
+            "get_etf_data",
+            "get_index_data",
+            "get_etf_fund_info",
+            "get_index_constituents",
+            "get_index_constituents_raw",
+            "get_stock_daily",
+            "get_fund_nav",
+        ],
     },
     "public_fund": {
         "description": "Public fund (公募基金) data including basic info, rankings, holdings, risk, and performance",
@@ -167,6 +181,12 @@ VENDOR_METHODS: dict[str, dict[str, Callable[..., Any]]] = {
     },
     "get_index_constituents": {
         "akshare": get_akshare_index_constituents,
+    },
+    "get_index_constituents_raw": {
+        "akshare": get_akshare_index_constituents_raw,
+    },
+    "get_stock_daily": {
+        "akshare": get_akshare_stock_daily,
     },
     "get_fund_nav": {
         "akshare": get_akshare_fund_nav,
@@ -345,4 +365,4 @@ def route_to_vendor(method: str, *args, **kwargs):
             )
             continue
 
-    raise RuntimeError(f"No available vendor for '{method}'") from last_error
+    raise RuntimeError(f"No available vendor for '{method}': {last_error}") from last_error

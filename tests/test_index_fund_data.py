@@ -66,6 +66,15 @@ _CASES = [
         "的成分股数据。",
     ),
     ("fund_nav", ix.get_fund_nav, ("510300",), {}, _PLAIN, "# Fund NAV History for", "的基金净值数据。"),
+    (
+        "stock_daily",
+        ix.get_stock_daily,
+        ("600519", "2024-01-01", "2024-03-01"),
+        {},
+        _OHLCV,
+        "# Stock price data for",
+        "个股行情数据。",
+    ),
 ]
 _IDS = [c[0] for c in _CASES]
 
@@ -168,3 +177,59 @@ class TestArgumentMapping:
         out = ix.get_fund_nav("510300")
         assert "# Records:" not in out  # _format_table 路径不带 Records 头
         assert "510300" in out or "净值日期" in out
+
+
+class TestIndexConstituentsRaw:
+    """get_index_constituents_raw —— 供缓存层复用的原始数据变体。
+
+    契约与其它 a_share_* 函数不同：它返回 DataFrame 且**不吞异常**，
+    因为调用方（数据工具层）需要按自己的语义决定如何降级。
+    """
+
+    def test_returns_dataframe(self, monkeypatch):
+        df = pd.DataFrame({"成分券代码": ["600000"], "权重": [1.5]})
+        _patch(monkeypatch, value=df)
+        out = ix.get_index_constituents_raw("000300")
+        assert isinstance(out, pd.DataFrame)
+        assert list(out["成分券代码"]) == ["600000"]
+
+    def test_raises_instead_of_swallowing(self, monkeypatch):
+        _patch(monkeypatch, exc=RuntimeError("接口挂了"))
+        with pytest.raises(RuntimeError, match="接口挂了"):
+            ix.get_index_constituents_raw("000300")
+
+    def test_passes_plain_code(self, monkeypatch):
+        captured = {}
+
+        def fake(func, *args, **kwargs):
+            captured.update(kwargs)
+            return pd.DataFrame({"成分券代码": ["600000"]})
+
+        monkeypatch.setattr(ix, "_call_akshare_api", fake)
+        ix.get_index_constituents_raw("000300.SH")
+        assert captured["symbol"] == "000300"
+
+
+class TestIndexConstituentsDelegation:
+    """格式化的 get_index_constituents 必须复用同一个取数实现（避免两套实现漂移）。"""
+
+    def test_formatted_version_reuses_raw_fetch(self, monkeypatch):
+        calls = []
+
+        def fake_raw(symbol):
+            calls.append(symbol)
+            return pd.DataFrame({"成分券代码": ["600000"], "权重": [1.5]})
+
+        monkeypatch.setattr(ix, "get_index_constituents_raw", fake_raw)
+        out = ix.get_index_constituents("000300")
+        assert calls == ["000300"]
+        assert "# Index Constituents for" in out
+
+    def test_raw_failure_degrades_to_error_text(self, monkeypatch):
+        def boom(symbol):
+            raise RuntimeError("模拟失败")
+
+        monkeypatch.setattr(ix, "get_index_constituents_raw", boom)
+        out = ix.get_index_constituents("000300")
+        assert "数据源访问失败" in out
+        assert "模拟失败" in out

@@ -178,3 +178,54 @@ class TestCachedDataToolExecutor:
         snapshot = SnapshotConfig(persist=True, group="test_group", date="2024-06-15")
         result = executor.execute("test_tool", snapshot=snapshot)
         assert result.snapshot_path is not None
+
+
+class TestTextPayloadNewline:
+    """文本载荷换行回归 —— 缓存不得改动被缓存字符串的内容。
+
+    背景：pandas 的 DataFrame.to_csv() 在 Windows 上返回 \r\n。此前的实现
+    （Path.write_text 默认换行转换 + Path.read_text 通用换行）会把 \r\n
+    写成 \r\r\n、再读成 \n\n，于是「命中缓存」的数据工具返回结果比
+    「首次调用」凭空多出空行。该缺陷影响到所有返回格式化文本的数据工具。
+    """
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        return LocalArtifactStore(
+            cache_dir=str(tmp_path / "cache"),
+            snapshot_dir=str(tmp_path / "snapshots"),
+        )
+
+    def test_multiline_text_round_trip_has_no_extra_blank_lines(self, store):
+        original = pd.DataFrame({"a": [1, 2], "b": [3, 4]}).to_csv(index=False)
+        store.save_cache("text_tool", {"symbol": "510300"}, original)
+        cached, _ = store.load_cache("text_tool", {"symbol": "510300"})
+
+        assert "\n\n" not in cached, "缓存往返注入了空行"
+        # 仅允许换行符风格差异（\r\n → \n），内容行数必须一致
+        assert cached == original.replace("\r\n", "\n")
+        assert [line for line in cached.splitlines() if line] == [
+            line for line in original.splitlines() if line
+        ]
+
+    def test_text_with_blank_lines_preserved(self, store):
+        """原本就含空行的文本必须原样保留（不能把空行也压掉）。"""
+        original = "line1\n\nline3"
+        store.save_cache("text2", {"a": 1}, original)
+        cached, _ = store.load_cache("text2", {"a": 1})
+        assert cached == original
+
+    def test_dataframe_round_trip_documented_as_dtype_lossy(self, store):
+        """DataFrame 经 CSV 往返会丢前导零 —— 这是缓存层的已知契约。
+
+        消费方（如 agents/tools/constituent_tools.py）必须自行补零，
+        本测试把该契约固定下来，避免有人误以为缓存能保留 dtype。
+        """
+        df = pd.DataFrame({"代码": ["000001", "600519"], "权重": [1.5, 2.5]})
+        store.save_cache("df_tool", {"a": 1}, df)
+        cached, _ = store.load_cache("df_tool", {"a": 1})
+
+        assert isinstance(cached, pd.DataFrame)
+        assert list(cached["权重"]) == [1.5, 2.5]  # 数值列无损
+        assert "000001" not in [str(v) for v in cached["代码"]]  # 前导零已在往返中丢失
+        assert str(cached["代码"].iloc[0]).zfill(6) == "000001"  # 消费方补零可恢复

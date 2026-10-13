@@ -12,9 +12,7 @@ dependencies = [
     # 数据
     "akshare>=1.18.49",
     "pandas>=2.3.0",
-    "stockstats>=0.6.5",
     "requests>=2.32.4",
-    "pytz>=2025.2",
     # LLM
     # 上限作为第二道防线（防止绕过 requirements.lock 拉到 breaking 大版本）；
     # 精确钉版见 requirements.lock（由 pip-compile 生成，CI/容器按锁安装）
@@ -28,7 +26,6 @@ dependencies = [
     # CLI
     "typer>=0.21.0",
     "rich>=14.0.0",
-    "questionary>=2.1.0",
     # API
     "fastapi>=0.115",
     "uvicorn>=0.34",

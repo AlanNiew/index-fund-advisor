@@ -224,7 +224,10 @@ class LocalArtifactStore:
                 encoding="utf-8",
             )
             return
-        payload_path.write_text(str(value), encoding="utf-8")
+        # 文本一律以 \n 落盘：pandas 的 to_csv() 在 Windows 上返回 \r\n，若走 Python
+        # 默认换行转换（写 \n→\r\n、读 \r\n→\n），\r\n 会被写成 \r\r\n 再读成 \n\n，
+        # 于是「命中缓存」的结果比「首次调用」凭空多出空行。
+        payload_path.write_text(str(value).replace("\r\n", "\n"), encoding="utf-8", newline="")
 
     def _read_payload(self, payload_path: Path, payload_format: str) -> Any:
         """
@@ -241,7 +244,11 @@ class LocalArtifactStore:
             return pd.read_csv(payload_path)
         if payload_format == "json":
             return json.loads(payload_path.read_text(encoding="utf-8"))
-        return payload_path.read_text(encoding="utf-8")
+        # newline="" 关闭通用换行转换，与 _write_payload 的写入方式对称。
+        # 注意：Path.read_text 的 newline 参数是 Python 3.13 才有的，项目支持 3.10+，
+        # 因此这里显式用 open()。
+        with open(payload_path, encoding="utf-8", newline="") as fh:
+            return fh.read()
 
     def _normalize_value(self, value: Any) -> Any:
         """

@@ -73,7 +73,13 @@ def _run_analysis(mode: str, state: dict, title: str, **build_kwargs):
         if path:
             console.print(f"[dim]报告已保存: {path}[/dim]")
     else:
-        console.print("[yellow]分析完成但未生成报告[/yellow]")
+        # 没有报告就是失败。此前这里只打印一行黄字就正常返回，退出码为 0，
+        # 包装脚本/定时任务因此无法发现故障（Web 入口有正确上报）。
+        error = final_state.get("error")
+        console.print("[red]分析失败：未生成报告[/red]")
+        if error:
+            console.print(f"[red]失败原因：{error}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command()

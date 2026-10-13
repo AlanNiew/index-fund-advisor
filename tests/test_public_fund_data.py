@@ -26,20 +26,34 @@ _SAMPLE = pd.DataFrame(
 
 
 def _patch(monkeypatch, *, value=None, exc=None):
-    """替换模块内的 _call_akshare_api；exc 优先于 value。"""
+    """替换模块内的取数函数；exc 优先于 value。
+
+    同时替换 _fetch_etf_daily_row：get_fund_basic_info 对 ETF 代码走的是场内
+    行情表而非蛋卷，若不替换就会真的触网。替换件必须复刻真实契约——查不到
+    返回 None（而不是空 DataFrame），否则空值分支测不到。
+    """
 
     def fake(*args, **kwargs):
         if exc is not None:
             raise exc
         return value
 
+    def fake_row(plain):
+        if exc is not None:
+            raise exc
+        if value is None or not isinstance(value, pd.DataFrame) or value.empty:
+            return None
+        return value
+
     monkeypatch.setattr(pf, "_call_akshare_api", fake)
+    monkeypatch.setattr(pf, "_fetch_etf_daily_row", fake_row)
 
 
 # (id, 函数, 位置参数, 关键字参数, 标题片段, 空值提示片段)
 _CASES = [
     ("fund_list", pf.get_fund_list, (), {}, "# All Public Funds List", "未获取到基金列表数据。"),
-    ("fund_basic_info", pf.get_fund_basic_info, ("510300",), {}, "# Fund Basic Info for", "的基金基本信息。"),
+    # 510300 是场内 ETF：这条用例走的是场内行情表分支，空值提示也随之不同
+    ("fund_basic_info", pf.get_fund_basic_info, ("510300",), {}, "# Fund Basic Info for", "的 ETF 行情记录"),
     ("open_fund_rank", pf.get_open_fund_rank, ("全部",), {}, "# Open Fund Rank (全部)", "的开放式基金排行数据。"),
     (
         "fund_stock_holdings",
@@ -221,3 +235,63 @@ class TestReportDateHandling:
         monkeypatch.setattr(pf, "_call_akshare_api", fake)
         pf.get_fund_asset_allocation("510300", date="2024-06-30")
         assert captured["date"] == "20240630"
+
+
+class TestFundBasicInfoRouting:
+    """ETF 与场外基金走不同数据源。
+
+    蛋卷（fund_individual_basic_info_xq）只有场外基金库：对 510300 这类场内
+    ETF 直接返回无 data 键的响应 → KeyError: 'data'。故 ETF 必须走场内行情表。
+    """
+
+    def test_etf_routes_to_quote_table_not_danjuan(self, monkeypatch):
+        calls = {"row": [], "ak": []}
+
+        def fake_row(plain):
+            calls["row"].append(plain)
+            return _SAMPLE.copy()
+
+        def fake_ak(func, *args, **kwargs):
+            calls["ak"].append(getattr(func, "__name__", str(func)))
+            return _SAMPLE.copy()
+
+        monkeypatch.setattr(pf, "_fetch_etf_daily_row", fake_row)
+        monkeypatch.setattr(pf, "_call_akshare_api", fake_ak)
+        out = pf.get_fund_basic_info("510300")
+        assert calls["row"] == ["510300"]
+        assert calls["ak"] == []  # 不得再打蛋卷
+        assert "基金简称" in out
+        assert "沪深300ETF" in out
+
+    def test_etf_not_found_reports_why(self, monkeypatch):
+        monkeypatch.setattr(pf, "_fetch_etf_daily_row", lambda plain: None)
+        out = pf.get_fund_basic_info("510300")
+        assert "未找到" in out
+        assert "ETF 行情记录" in out
+
+    def test_etf_source_failure_degrades_to_text(self, monkeypatch):
+        def boom(plain):
+            raise RuntimeError("模拟失败")
+
+        monkeypatch.setattr(pf, "_fetch_etf_daily_row", boom)
+        out = pf.get_fund_basic_info("510300")
+        assert "数据源访问失败" in out
+        assert "模拟失败" in out
+
+    def test_offshore_still_uses_danjuan(self, monkeypatch):
+        calls = {"ak": [], "row": []}
+
+        def fake_ak(func, *args, **kwargs):
+            calls["ak"].append(getattr(func, "__name__", str(func)))
+            return _SAMPLE.copy()
+
+        def fake_row(plain):
+            calls["row"].append(plain)
+            return _SAMPLE.copy()
+
+        monkeypatch.setattr(pf, "_call_akshare_api", fake_ak)
+        monkeypatch.setattr(pf, "_fetch_etf_daily_row", fake_row)
+        out = pf.get_fund_basic_info("000051")
+        assert calls["ak"] == ["fund_individual_basic_info_xq"]
+        assert calls["row"] == []
+        assert "# Fund Basic Info for" in out

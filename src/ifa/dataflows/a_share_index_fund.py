@@ -9,10 +9,12 @@ import pandas as pd
 from .a_share import (
     _call_akshare_api,
     _format_data_error,
+    _format_key_value,
     _format_table,
     _round_numeric_frame,
 )
 from .a_share_common import (
+    find_column,
     format_date_for_api,
     safe_display_symbol,
     safe_plain_code,
@@ -143,33 +145,83 @@ def get_index_data(symbol: str, start_date: str, end_date: str) -> str:
 # ── ETF 基金基本信息 ─────────────────────────────────────────
 
 
+def _fetch_etf_daily_row(plain: str) -> pd.DataFrame | None:
+    """
+    从东财「场内基金每日行情」表中取出单只 ETF 的一行。
+
+    场内 ETF 不在蛋卷基金的场外基金库里（fund_individual_basic_info_xq 对 ETF
+    会直接 KeyError: 'data'），此表是 ETF 基本信息唯一稳定的来源：约 1700 行、
+    单次请求约 1 秒，且能被数据工具缓存层复用。
+
+    参数：
+        plain: 6 位 ETF 代码。
+
+    返回：
+        pd.DataFrame | None: 单行数据表；查不到时返回 None。
+    """
+    df = _call_akshare_api(ak.fund_etf_fund_daily_em)
+    if df is None or df.empty:
+        return None
+
+    code_col = find_column(df, "基金代码", "代码")
+    if not code_col:
+        return None
+
+    hit = df[df[code_col].astype(str).str.zfill(6) == plain]
+    return None if hit.empty else hit.iloc[[0]]
+
+
 def get_etf_fund_info(symbol: str) -> str:
     """
-    获取 ETF 基金基本信息，包括规模、费率、跟踪指数等。
+    获取 ETF 基本信息（简称/类型/单位净值/累计净值/日增长率/市价）。
+
+    注意本数据源的能力边界：ETF 的费率与跟踪指数拿不到——蛋卷基金只覆盖场外
+    基金，而上游的 fund_etf_fund_info_em 对场内 ETF 会抛
+    "Length mismatch: Expected axis has 14 elements, new values have 13
+    elements"（且默认起止日期区间下要跑两分钟才会失败）。
 
     参数：
         symbol: ETF 代码（如 510300）。
 
     返回：
-        str: 基金基本信息文本。
+        str: 基金基本信息文本（字段/值两列）。
     """
     display = safe_display_symbol(symbol)
     plain = safe_plain_code(symbol)
     try:
-        df = _call_akshare_api(
-            ak.fund_etf_fund_info_em,
-            fund=plain,
-        )
+        row = _fetch_etf_daily_row(plain)
     except Exception as exc:  # noqa: BLE001
         return _format_data_error(f"# ETF fund info for {display}", exc)
 
-    if df is None or df.empty:
-        return f"未找到 {display} 的 ETF 基金信息。"
+    if row is None:
+        return f"未找到 {display} 的 ETF 行情记录：该代码可能不是场内 ETF，或尚未上市交易。"
 
-    return f"# ETF Fund Info for {display}\n\n{df.to_csv(index=False)}"
+    return _format_key_value(row.iloc[0], f"# ETF Fund Info for {display}")
 
 
 # ── 指数成分股 ───────────────────────────────────────────────
+
+
+def _constituents_source_hint(plain: str, exc: Exception | None = None) -> str:
+    """
+    生成成分股取数失败时的可操作说明。
+
+    中证成份股文件按「指数代码」寻址：ETF 代码（510300/159919）与深证指数代码
+    （399006）在该站点都返回 404，而且响应体是一张 JPEG 图片。此时 pandas 只会
+    抛出 "Excel file format cannot be determined, you must specify an engine
+    manually."，从中完全看不出真实原因，所以把约束直接写进错误信息。
+
+    遍历 exc 的底层原因也一并附上：该 except 会兜住所有异常，若把网络抖动也
+    说成「不是中证指数代码」就会误导排查，原始报错必须留在用户可见处。
+    """
+    hint = (
+        f"中证成份股文件按「指数代码」寻址，而「{plain}」不是中证系列指数代码："
+        "ETF 代码（510300/159919）与深证指数代码（399006）在该站点均返回 404。"
+        "请改用标的指数的中证代码，例如沪深300→000300、中证500→000905、中证1000→000852。"
+    )
+    if exc is None:
+        return hint
+    return f"{hint}（底层错误：{type(exc).__name__}: {str(exc)[:160]}）"
 
 
 def get_index_constituents_raw(symbol: str) -> pd.DataFrame:
@@ -185,13 +237,18 @@ def get_index_constituents_raw(symbol: str) -> pd.DataFrame:
     规范化再使用代码列。
 
     参数：
-        symbol: 指数代码（如 000300）。
+        symbol: 标的指数的中证代码（如 000300）。ETF 代码不受支持，见
+            _constituents_source_hint。
 
     返回：
-        pd.DataFrame: 成分股原始数据表；调用失败时抛出异常，由上层决定如何降级。
+        pd.DataFrame: 成分股原始数据表；调用失败时抛出带可操作说明的 ValueError，
+        由上层决定如何降级。
     """
     plain = safe_plain_code(symbol)
-    return _call_akshare_api(ak.index_stock_cons_csindex, symbol=plain)
+    try:
+        return _call_akshare_api(ak.index_stock_cons_csindex, symbol=plain)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(_constituents_source_hint(plain, exc)) from exc
 
 
 def get_index_constituents(symbol: str) -> str:

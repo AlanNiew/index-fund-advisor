@@ -55,7 +55,7 @@ _CASES = [
         "# Index data for",
         "指数行情数据。",
     ),
-    ("etf_fund_info", ix.get_etf_fund_info, ("510300",), {}, _PLAIN, "# ETF Fund Info for", "的 ETF 基金信息。"),
+    ("etf_fund_info", ix.get_etf_fund_info, ("510300",), {}, _PLAIN, "# ETF Fund Info for", "的 ETF 行情记录"),
     (
         "index_constituents",
         ix.get_index_constituents,
@@ -193,10 +193,20 @@ class TestIndexConstituentsRaw:
         assert isinstance(out, pd.DataFrame)
         assert list(out["成分券代码"]) == ["600000"]
 
-    def test_raises_instead_of_swallowing(self, monkeypatch):
-        _patch(monkeypatch, exc=RuntimeError("接口挂了"))
-        with pytest.raises(RuntimeError, match="接口挂了"):
-            ix.get_index_constituents_raw("000300")
+    def test_raises_with_actionable_hint_instead_of_raw_pandas_error(self, monkeypatch):
+        """原始异常被替换成可操作说明，但必须挂在 __cause__ 上，且底层报错可见。
+
+        真实触发方式是 ETF 代码：站点对 510300 返回 404 + JPEG，pandas 只会抛
+        "Excel file format cannot be determined, you must specify an engine
+        manually."，从报错完全看不出真实原因。
+        """
+        _patch(monkeypatch, exc=ValueError("Excel file format cannot be determined"))
+        with pytest.raises(ValueError, match="按「指数代码」寻址") as excinfo:
+            ix.get_index_constituents_raw("510300")
+        text = str(excinfo.value)
+        assert "000300" in text  # 给出了可操作的去处
+        assert "Excel file format cannot be determined" in text  # 底层错误没被吞掉
+        assert isinstance(excinfo.value.__cause__, ValueError)  # 保留异常链
 
     def test_passes_plain_code(self, monkeypatch):
         captured = {}
@@ -233,3 +243,45 @@ class TestIndexConstituentsDelegation:
         out = ix.get_index_constituents("000300")
         assert "数据源访问失败" in out
         assert "模拟失败" in out
+
+
+class TestEtfFundInfoSource:
+    """ETF 基本信息必须走东财场内行情表（fund_etf_fund_daily_em）。
+
+    历史缺陷：此前走 ak.fund_etf_fund_info_em(fund=...)，上游对场内 ETF 抛
+    "Length mismatch: Expected axis has 14 elements, new values have 13 elements"，
+    且默认日期区间下要跑约两分钟才失败 —— ETF 基本信息整条链路是坏的。
+    """
+
+    def test_uses_intraday_quote_table(self, monkeypatch):
+        import akshare as ak
+
+        seen = []
+
+        def fake(func, *args, **kwargs):
+            seen.append(func)
+            return _PLAIN.copy()
+
+        monkeypatch.setattr(ix, "_call_akshare_api", fake)
+        out = ix.get_etf_fund_info("510300")
+        assert seen == [ak.fund_etf_fund_daily_em]
+        assert "# ETF Fund Info for" in out
+        assert "基金简称" in out  # 宽表被转置成「字段/值」两列
+        assert "沪深300ETF" in out
+
+    def test_code_absent_from_table_reports_not_found(self, monkeypatch):
+        _patch(monkeypatch, value=pd.DataFrame({"基金代码": ["159915"], "基金简称": ["创业板ETF"]}))
+        out = ix.get_etf_fund_info("510300")
+        assert "未找到" in out
+        assert "ETF 行情记录" in out
+
+    def test_missing_code_column_reports_not_found(self, monkeypatch):
+        _patch(monkeypatch, value=pd.DataFrame({"名称": ["x"]}))
+        out = ix.get_etf_fund_info("510300")
+        assert "未找到" in out
+
+    def test_code_column_without_padding_still_matches(self, monkeypatch):
+        """代码列若是数值型（CSV 往返丢前导零），zfill(6) 仍应命中。"""
+        _patch(monkeypatch, value=pd.DataFrame({"基金代码": [510300], "基金简称": ["沪深300ETF"]}))
+        out = ix.get_etf_fund_info("510300")
+        assert "# ETF Fund Info for" in out

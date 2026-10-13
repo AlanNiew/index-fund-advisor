@@ -63,6 +63,28 @@ def _format_table(df: pd.DataFrame, title: str, rows: int = 10) -> str:
     return f"{title}\n\n{df.head(rows).to_csv(index=False)}"
 
 
+def _format_key_value(row: pd.Series, title: str) -> str:
+    """
+    把单行数据渲染成「字段/值」两列文本。
+
+    场内 ETF 的行情表是「1 行 × 十几列」的宽表，整行输出宽 CSV 对 LLM 不友好，
+    转置成纵向两列更易读（与 _format_table 的横向多行表格互补）。
+
+    参数：
+        row: 待渲染的单行数据。
+        title: 输出标题。
+
+    返回：
+        str: 格式化后的字符串结果。
+    """
+    if row is None or len(row) == 0:
+        return f"{title}\n\n暂无数据。"
+
+    pairs = [(str(col), row[col]) for col in row.index]
+    frame = pd.DataFrame(pairs, columns=["字段", "值"])
+    return f"{title}\n\n{frame.to_csv(index=False)}"
+
+
 def _round_numeric_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
     对数值型数据表执行四舍五入。

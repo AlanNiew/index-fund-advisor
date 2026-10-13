@@ -44,7 +44,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 ## Architecture boundaries (respect when editing)
 
 - **`src/ifa/graph/`** — `AdvisorGraph` orchestrates all 4 modes over the shared `IFAdvisorState`. Conditional edges (`conditional_logic.py`) drive tool loops + fund/risk debate loops. `Propagator` builds initial state; `Reflector` updates agent memory post-decision; `SignalProcessor` normalizes LLM ratings.
-- **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (36 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
+- **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (35 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
 - **`src/ifa/data_tools/`** — declarative `_TOOL_SPECS` registry + `CachedDataToolExecutor` (SHA1-keyed cache + snapshots, disk-failure → degrade to direct execution).
 - **`src/ifa/dataflows/`** — AkShare wrappers (retry, asset-type auto-detect) + `clean_dataframe`/`truncate_report`.
 - **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode; Anthropic + Google have dedicated clients. `opencode` talks to the OpenCode Go gateway (`https://opencode.ai/inference/go/v1`) and auto-attaches a custom `User-Agent` plus a process-scoped `x-opencode-session` header (override the session via `OPENCODE_SESSION_ID`).
@@ -68,6 +68,8 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **Default LLM provider is OpenCode Go** (`opencode`) → a valid `OPENCODE_API_KEY` in `.env` is required out of the box; requests go to `https://opencode.ai/inference/go/v1`. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai/zhipu/deepseek) selectable in `src/ifa/default_config.py`.
 - **`quick_think_llm` must not be the cheapest tier** — weak models produce unreliable structured output that pollutes the whole pipeline.
 - **`IFA_API_KEY` empty = API auth disabled, all routes open.** Set it before exposing the API.
+- **`ifa analyze` exits non-zero when no report is produced** — `_run_analysis` raises `typer.Exit(code=1)` and prints the `error` field, so wrapper scripts and cron jobs can detect failure. Keep it that way.
+- **Data-source ability limits are code-addressed, not ticker-addressed.** ETF basic info goes to East Money's intraday quote table (`fund_etf_fund_daily_em`), never the 蛋卷 out-of-exchange fund library; CSI constituent files are addressed by **index** code, so ETF codes (510300) and Shenzhen index codes (399006) 404 there. That failure now surfaces as an actionable `ValueError` (`_constituents_source_hint`) instead of pandas' "Excel file format cannot be determined".
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.
 - **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately. It is the *only* writer of agent memory; normal `analyze` runs only read.
 - **Agent memory persists to `<memory_dir>/<name>.json`** (`DEFAULT_CONFIG` → `local_data/memory`). Without `memory_dir` in the config, `FinancialSituationMemory` is in-memory only — that's why unit tests pass a bare config and stay side-effect free.

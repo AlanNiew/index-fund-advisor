@@ -8,10 +8,13 @@ import akshare as ak
 from .a_share import (
     _call_akshare_api,
     _format_data_error,
+    _format_key_value,
     _format_table,
     _round_numeric_frame,
 )
 from .a_share_common import safe_display_symbol, safe_plain_code
+from .a_share_index_fund import _fetch_etf_daily_row
+from .asset_type import AssetType, detect_asset_type
 
 # ── 1. 全部基金列表 ─────────────────────────────────────────────
 
@@ -50,16 +53,33 @@ def get_fund_list() -> str:
 
 def get_fund_basic_info(symbol: str) -> str:
     """
-    获取基金基本信息（规模/经理/评级/成立日期等）。
+    获取基金基本信息。
+
+    场内 ETF 与场外基金必须走不同数据源——两者字段不同，而且互不在对方的库里：
+    ETF 走东财场内行情表（简称/类型/单位净值/市价），场外基金走蛋卷基金
+    （规模/经理/成立日期等）。ETF 若走蛋卷的 fund_individual_basic_info_xq，
+    上游会直接 KeyError: 'data'（蛋卷只有场外基金库）。
 
     参数：
-        symbol: 基金代码（如 000001）。
+        symbol: 基金代码（如 000001、510300）。
 
     返回：
         str: 基金基本信息文本。
     """
     display = safe_display_symbol(symbol)
     plain = safe_plain_code(symbol)
+
+    if detect_asset_type(symbol) == AssetType.ETF:
+        try:
+            row = _fetch_etf_daily_row(plain)
+        except Exception as exc:  # noqa: BLE001
+            return _format_data_error(f"# Fund Basic Info for {display}", exc)
+
+        if row is None:
+            return f"未找到 {display} 的 ETF 行情记录：该代码可能不是场内 ETF，或尚未上市交易。"
+
+        return _format_key_value(row.iloc[0], f"# Fund Basic Info for {display}")
+
     try:
         df = _call_akshare_api(
             ak.fund_individual_basic_info_xq,

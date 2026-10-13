@@ -20,12 +20,17 @@ from ifa.dataflows.asset_type import AssetType, detect_asset_type
 
 @tool
 def get_constituent_overview(
-    symbol: Annotated[str, "Index or ETF ticker symbol, e.g. 000300, 510300"],
+    symbol: Annotated[
+        str,
+        "Index ticker symbol of the tracked index, e.g. 000300, 000905 "
+        "(ETF codes such as 510300 are not supported by the constituent data source)",
+    ],
 ) -> str:
     """
-    获取指数/ETF 的前 10 大权重股概况，包括代码、名称、权重占比。
+    获取标的指数前 10 大权重股概况，包括代码、名称、权重占比。
     参数：
-        symbol (str): 指数或 ETF 代码。
+        symbol (str): 标的指数的中证代码（如 000300）。ETF 代码不受支持，
+            中证成份股文件按指数代码寻址。
     返回：
         str: 权重股概况文本。
     """
@@ -61,12 +66,17 @@ def get_constituent_overview(
 
 @tool
 def get_constituent_sector_distribution(
-    symbol: Annotated[str, "Index or ETF ticker symbol, e.g. 000300, 510300"],
+    symbol: Annotated[
+        str,
+        "Index ticker symbol of the tracked index, e.g. 000300, 000905 "
+        "(ETF codes such as 510300 are not supported by the constituent data source)",
+    ],
 ) -> str:
     """
-    获取指数/ETF 的行业分布概况（基于申万一级行业分类）。
+    获取标的指数的行业分布概况（基于申万一级行业分类）。
     参数：
-        symbol (str): 指数或 ETF 代码。
+        symbol (str): 标的指数的中证代码（如 000300）。ETF 代码不受支持，
+            中证成份股文件按指数代码寻址。
     返回：
         str: 行业分布统计文本。
     """
@@ -108,13 +118,18 @@ def get_constituent_sector_distribution(
 
 @tool
 def get_constituent_performance(
-    symbol: Annotated[str, "Index or ETF ticker symbol, e.g. 000300, 510300"],
+    symbol: Annotated[
+        str,
+        "Index ticker symbol of the tracked index, e.g. 000300, 000905 "
+        "(ETF codes such as 510300 are not supported by the constituent data source)",
+    ],
     look_back_days: Annotated[int, "Number of days to look back for performance"] = 30,
 ) -> str:
     """
-    获取指数/ETF 前 10 大权重股的近期行情表现。
+    获取标的指数前 10 大权重股的近期行情表现。
     参数：
-        symbol (str): 指数或 ETF 代码。
+        symbol (str): 标的指数的中证代码（如 000300）。ETF 代码不受支持，
+            中证成份股文件按指数代码寻址。
         look_back_days (int): 回看天数，默认 30 天。
     返回：
         str: 权重股近期表现文本。
@@ -159,8 +174,10 @@ def get_constituent_performance(
                 end_date=_get_today_str(),
             )
             return f"## {stock_name}({stock_code})\n{stock_data[:500]}..."
-        except Exception:  # noqa: BLE001
-            return f"## {stock_name}({stock_code})\n数据获取失败。"
+        except Exception as exc:  # noqa: BLE001
+            # 不要把原因吞掉：历史上正是这里的静默 except 让「工具未注册进
+            # VENDOR_METHODS」这类链路缺陷长期表现为「数据获取失败」四个字。
+            return f"## {stock_name}({stock_code})\n数据获取失败：{type(exc).__name__}: {str(exc)[:120]}"
 
     # 并发收集后按原始顺序还原。indexed 显式标注，避免 mypy 依据首次 append 推断为元组列表
     indexed: list[tuple[int, str]] = []

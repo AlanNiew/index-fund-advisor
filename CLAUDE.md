@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（521 个，覆盖 15 个模块）
+pytest                # 全部测试（544 个，覆盖 16 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -154,6 +154,8 @@ CLI / Web / API 三个接口层共用四个函数：
 - **数据源失败必须可识别** — `a_share.DATA_SOURCE_ERROR_MARKER`（"数据源访问失败："）用于区分「取数失败」与「查无结果」：CLI 打红字并 `typer.Exit(1)`，REST 返 502，MCP 返 `error` 字段
 - **改动数据工具的输出契约时递增 `CACHE_SCHEMA_VERSION`** — 缓存无 TTL，旧载荷会一直命中并遮蔽新实现（`get_fund_list` 曾因此「有缓存机器正常、干净环境失效」）
 - **数据源能力边界要变成可操作报错** — 上游把「不支持」表现为误导性报错时（如用 ETF 代码取中证成分股 → pandas "Excel file format cannot be determined"），不要原样透出：换成说明约束与正确用法的信息，同时把底层异常保留在 `__cause__` 与文本里（见 `_constituents_source_hint`）。反向要求同样成立——不要把网络抖动误诊成用法错误
+- **`py_mini_racer` 构造必须串行化** — akshare 多个接口（估值 `stock_index_pe_lg`、交易日历 `tool_trade_date_hist_sina`、同花顺/巨潮系）在内部 new `MiniRacer()`。LangGraph 的 ToolNode 并行执行工具，两个线程同时构造会触发 V8 断言 `[FATAL:partition_address_space.cc(243)] Check failed: !IsConfigurablePoolInitialized().`，**直接 abort 整个进程**（退出码 0x80000003，try/except 无法捕获）。`src/ifa/dataflows/__init__.py` 在导入时安装 `_mini_racer_guard`：用 RLock 串行化构造，并遍历 `sys.modules` 替换所有已持有旧 `MiniRacer` 引用的模块属性。不要移除该 import，也不要自行构造 `MiniRacer`
+- **数据源请求必须能超时退出** — AkShare 大量接口直接 `requests.get(url)` 不传 timeout（如 `index_stock_cons_csindex`），上游建连后不再返回字节时整条分析链会无限期挂住（实测 `oss-ch.csindex.com.cn` 挂死 14 分钟：进程存活、CPU≈0、日志停滞、try/except 永不触发）。`src/ifa/dataflows/__init__.py` 导入时安装 `_network_guard`：包装 `requests.sessions.Session.request`，只在调用方未传 timeout（或显式传 None）时补上 `IFA_DATA_SOURCE_TIMEOUT`（默认 30 秒）。**不要改回 `socket.setdefaulttimeout`** —— requests 会把 `timeout=None` 包成 `Timeout(connect=None, read=None)` 并显式 `sock.settimeout(None)`，把 socket 默认值覆盖掉（该实测结论已由 `tests/test_network_guard.py` 固化）。超时的请求仍被 `is_retryable_akshare_error` 视为可重试，单个工具最坏耗时约为 `retries × 超时`
 - **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
 - **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
 - **安全字典访问** — 所有 Agent 节点使用 `.get()` + `isinstance` 检查访问嵌套状态；`_safe_get_nested()` 用于日志；`Reflector._safe_get_debate()` 用于反思
@@ -168,5 +170,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：521 个测试覆盖 15 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：544 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
 from ifa.agents.analysts.fund_analyst import create_fund_analyst
@@ -108,7 +109,7 @@ class AdvisorGraph:
         self,
         quick_llm,
         deep_llm,
-        config: dict[str, Any] = None,
+        config: dict[str, Any] | None = None,
         callbacks: list | None = None,
     ):
         self.quick_llm = quick_llm
@@ -137,7 +138,7 @@ class AdvisorGraph:
         self._create_tool_nodes()
 
         # ── 状态追踪 ──
-        self.curr_state = None
+        self.curr_state: dict[str, Any] | None = None
 
     def _create_tool_nodes(self):
         """创建各 Agent 的工具节点。"""
@@ -287,7 +288,7 @@ class AdvisorGraph:
     #  图构建方法
     # ════════════════════════════════════════════
 
-    def build_deep_analysis_graph(self) -> StateGraph:
+    def build_deep_analysis_graph(self) -> CompiledStateGraph:
         """构建深度分析图（含辩论）。
 
         流程: Fund Analyst → Index Analyst? → Bull/Bear Debate → Research Manager → Report Generator
@@ -346,7 +347,7 @@ class AdvisorGraph:
 
         return workflow.compile()
 
-    def build_deep_simple_graph(self) -> StateGraph:
+    def build_deep_simple_graph(self) -> CompiledStateGraph:
         """构建简化版深度分析图（无辩论，向后兼容）。
 
         流程: Fund Analyst → Index Analyst? → Report Generator
@@ -389,7 +390,7 @@ class AdvisorGraph:
 
         return workflow.compile()
 
-    def build_screen_graph(self) -> StateGraph:
+    def build_screen_graph(self) -> CompiledStateGraph:
         """构建筛选对比图（含辩论）。
 
         流程: Fund Screener → Fund Analyst → Bull/Bear Debate → Research Manager → Report Generator
@@ -426,7 +427,7 @@ class AdvisorGraph:
 
         return workflow.compile()
 
-    def build_portfolio_graph(self) -> StateGraph:
+    def build_portfolio_graph(self) -> CompiledStateGraph:
         """构建组合配置图（含风险评估辩论）。
 
         流程: Portfolio Advisor(R1) → Fund Screener → Fund Analyst →

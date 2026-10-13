@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from typing import Any
+
 from ifa.data_tools.registry import DataToolRegistry
 from ifa.data_tools.types import DataToolDefinition
 from ifa.dataflows.interface import route_to_vendor
@@ -189,7 +192,7 @@ def get_valuation_signal_tool(index_name: str = "沪深300"):
 
 
 # ── 声明式工具注册表（name, handler, description） ──
-_TOOL_SPECS: list[tuple[str, callable, str]] = [
+_TOOL_SPECS: list[tuple[str, Callable[..., Any], str]] = [
     # ETF / 指数 / 场外基金
     ("get_etf_data", get_etf_data_tool, "ETF 基金日线行情工具"),
     ("get_index_data", get_index_data_tool, "A 股指数日线行情工具"),

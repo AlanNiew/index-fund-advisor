@@ -3,6 +3,7 @@
 import os
 import re
 import sys
+from typing import Any
 
 import typer
 from dotenv import load_dotenv
@@ -91,7 +92,7 @@ def analyze(
 
     console.print(Panel(f"[bold]IFA 单只基金深度分析[/bold]\n基金代码: {fund_code}\n分析日期: {date}"))
     state = build_state("deep", fund_codes=fund_code, analysis_date=date)
-    build_kwargs = {"callbacks": []} if debug else {}
+    build_kwargs: dict[str, Any] = {"callbacks": []} if debug else {}
     _run_analysis("deep", state, "分析报告", **build_kwargs)
 
 
@@ -109,7 +110,7 @@ def screen(
     conditions = query or f"类别: {category}, 跟踪方式: {method}, 前 {top} 只"
     console.print(Panel(f"[bold]IFA 指数基金筛选[/bold]\n{conditions}"))
     state = build_state("screen", screen_conditions=conditions)
-    build_kwargs = {"callbacks": []} if debug else {}
+    build_kwargs: dict[str, Any] = {"callbacks": []} if debug else {}
     _run_analysis("screen", state, "筛选对比报告", **build_kwargs)
 
 
@@ -126,7 +127,7 @@ def portfolio(
         Panel(f"[bold]IFA 组合配置建议[/bold]\n风险偏好: {risk}" + (f"\n投资金额: {amount:,.0f} 元" if amount else ""))
     )
     state = build_state("portfolio", risk_profile=risk, screen_conditions=f"风险偏好: {risk}")
-    build_kwargs = {"callbacks": []} if debug else {}
+    build_kwargs: dict[str, Any] = {"callbacks": []} if debug else {}
     _run_analysis("portfolio", state, "组合配置报告", **build_kwargs)
 
 

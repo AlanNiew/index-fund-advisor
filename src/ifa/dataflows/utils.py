@@ -6,7 +6,7 @@ import pandas as pd
 SavePathType = Annotated[str, "File path to save data. If None, data is not saved."]
 
 
-def save_output(data: pd.DataFrame, tag: str, save_path: SavePathType = None) -> None:
+def save_output(data: pd.DataFrame, tag: str, save_path: SavePathType | None = None) -> None:
     """
     保存输出内容。
 

@@ -89,7 +89,7 @@ class OpenAIClient(BaseLLMClient):
             Any: 配置完成的 ChatOpenAI 实例。
         """
         self.warn_if_unknown_model()
-        llm_kwargs = {"model": self.model}
+        llm_kwargs: dict[str, Any] = {"model": self.model}
 
         # 提供方专属的基础地址与鉴权参数
         if self.provider in _PROVIDER_CONFIG:

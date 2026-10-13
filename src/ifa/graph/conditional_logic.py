@@ -16,21 +16,21 @@ class ConditionalLogic:
     def should_continue_fund_analyst(self, state: IFAdvisorState) -> str:
         messages = state["messages"]
         last_message = messages[-1]
-        if last_message.tool_calls:
+        if getattr(last_message, "tool_calls", None):
             return "tools_fund_analyst"
         return "Msg Clear Fund Analyst"
 
     def should_continue_index_analyst(self, state: IFAdvisorState) -> str:
         messages = state["messages"]
         last_message = messages[-1]
-        if last_message.tool_calls:
+        if getattr(last_message, "tool_calls", None):
             return "tools_index_analyst"
         return "Msg Clear Index Analyst"
 
     def should_continue_fund_screener(self, state: IFAdvisorState) -> str:
         messages = state["messages"]
         last_message = messages[-1]
-        if last_message.tool_calls:
+        if getattr(last_message, "tool_calls", None):
             return "tools_fund_screener"
         return "Msg Clear Fund Screener"
 

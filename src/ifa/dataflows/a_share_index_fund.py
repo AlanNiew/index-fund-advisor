@@ -78,7 +78,7 @@ def get_etf_data(symbol: str, start_date: str, end_date: str) -> str:
     output = _round_numeric_frame(renamed.loc[:, selected_columns])
     header = f"# ETF price data for {display} from {start_date} to {end_date}\n"
     header += f"# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ── 指数行情数据 ─────────────────────────────────────────────
@@ -137,7 +137,7 @@ def get_index_data(symbol: str, start_date: str, end_date: str) -> str:
     output = _round_numeric_frame(renamed.loc[:, selected_columns])
     header = f"# Index data for {display} from {start_date} to {end_date}\n"
     header += f"# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ── ETF 基金基本信息 ─────────────────────────────────────────

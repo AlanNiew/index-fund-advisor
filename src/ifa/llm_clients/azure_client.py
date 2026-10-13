@@ -119,7 +119,7 @@ class AzureClient(BaseLLMClient):
             Any: 配置完成的 AzureChatOpenAI 实例。
         """
         self.warn_if_unknown_model()
-        llm_kwargs = {
+        llm_kwargs: dict[str, Any] = {
             "azure_deployment": self.model,
         }
 

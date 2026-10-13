@@ -112,7 +112,7 @@ def _call_akshare_api(func, *args, retries: int = 3, retry_delay: float = 1.0, *
     返回：
         Any: AkShare 原始返回结果。
     """
-    last_exc = None
+    last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             with no_proxy():
@@ -122,7 +122,9 @@ def _call_akshare_api(func, *args, retries: int = 3, retry_delay: float = 1.0, *
             if attempt >= retries or not is_retryable_akshare_error(exc):
                 raise
             time.sleep(retry_delay * attempt)
-    raise last_exc
+    # retries <= 0 时循环体从未执行，last_exc 仍为 None——
+    # 直接 raise None 会抛 TypeError，这里给出明确错误
+    raise RuntimeError(f"AkShare 调用失败：retries={retries} 未执行任何重试尝试") from last_exc
 
 
 def _format_data_error(title: str, exc: Exception) -> str:

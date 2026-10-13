@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（148 个，覆盖 8 个模块）
+pytest                # 全部测试（255 个，覆盖 14 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -63,12 +63,12 @@ CLI / Web / API 三个接口层共用四个函数：
 ### 分层结构
 
 - **Agent 层** (`src/ifa/agents/`) — LangGraph ReAct Agent，每个 Agent 拥有独立的 ToolNode
-  - `analysts/` — fund_analyst（18 个数据工具）、index_analyst（11 个工具）、fund_screener（7 个工具）
+  - `analysts/` — fund_analyst（19 个数据工具）、index_analyst（11 个工具）、fund_screener（5 个工具）
   - `researchers/` — bull_researcher（看涨研究员）、bear_researcher（看跌研究员），带记忆的对抗辩论
   - `managers/` — portfolio_advisor、research_manager（研究经理裁决）、portfolio_manager（最终决策）、report_generator（整合辩论裁决生成报告）
   - `risk_mgmt/` — aggressive_debator（积极）、conservative_debator（保守）、neutral_debator（中立），三方风险辩论
   - `tools/` — 四类数据工具：`public_fund_tools`（20）、`macro_tools`（8）、`etf_index_tools`（5）、`constituent_tools`（3）
-  - `memory.py` — 基于 BM25 的金融情景记忆模块，中英混合分词（中文按字/英文按词），FIFO 淘汰（默认上限 100 条）
+  - `memory.py` — 基于 BM25 的金融情景记忆模块，中英混合分词（中文按字/英文按词），FIFO 淘汰（默认上限 1000 条）
   - `prompts/` — Agent prompt 模板，分离自 Agent 实现代码
 - **图编排层** (`src/ifa/graph/`) — 模块化图编排（借鉴 TradingAgents）
   - `advisor_graph.py` — 主编排类 `AdvisorGraph`，负责图构建、运行、日志、反思
@@ -77,7 +77,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - `reflection.py` — 决策反思模块 (`Reflector`)，基于实际收益更新记忆
   - `signal_processing.py` — 信号处理 (`SignalProcessor`)，提取标准化评级（含合法性校验和模糊匹配 fallback）
 - **数据工具层** (`src/ifa/data_tools/`) — 声明式注册表模式
-  - `builtin.py` 定义 `_TOOL_SPECS` 列表（25 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
+  - `builtin.py` 定义 `_TOOL_SPECS` 列表（33 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
   - `executor.py` 的 `CachedDataToolExecutor` 提供缓存（SHA1 键含参数哈希）和快照
   - 所有工具通过 `route_to_vendor()` 路由到具体数据源
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
@@ -106,7 +106,7 @@ CLI / Web / API 三个接口层共用四个函数：
 
 - 每个 Agent 可携带 `FinancialSituationMemory` 实例，基于 BM25 检索历史相似情景
 - `_tokenize()` 使用中英混合分词：中文按字拆分（每个汉字独立 token），英文/数字按词拆分
-- `add_situations()` 带 FIFO 淘汰机制（默认上限 100 条，可配置 `max_situations`）
+- `add_situations()` 带 FIFO 淘汰机制（默认上限 1000 条，可配置 `max_situations`）
 - `Reflector` 在决策后根据实际收益/亏损反思并更新各 Agent 的记忆（`reflect_and_remember()`）
 - `Reflector.reflect_all()` 按模式条件性反思：deep_simple 跳过，portfolio 额外反思 risk_debate
 
@@ -142,6 +142,6 @@ CLI / Web / API 三个接口层共用四个函数：
 - 入口点：`ifa`（`ifa.cli.main:app`）和 `ifa-web`（`ifa.cli.web_entry:main`）注册在 `[project.scripts]`；API 服务无注册脚本，需直接用 `uvicorn api.main:app` 启动
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
-- `isort.known-first-party`：`["ifa", "api", "cli", "web"]`
-- 测试：225 个测试覆盖 14 个模块（含 `test_core.py` 41、`test_macro_data.py` 19、`test_advisor_graph.py`、`test_api_and_thread_safety.py` 等）
+- `isort.known-first-party`：`["ifa", "api", "web"]`
+- 测试：255 个测试覆盖 14 个模块（含 `test_core.py` 41、`test_macro_data.py` 19、`test_advisor_graph.py`、`test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

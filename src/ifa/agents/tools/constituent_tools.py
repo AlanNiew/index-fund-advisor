@@ -169,13 +169,14 @@ def get_constituent_performance(
         except Exception:  # noqa: BLE001
             return f"## {stock_name}({stock_code})\n数据获取失败。"
 
-    results = []
+    # 并发收集后按原始顺序还原。indexed 显式标注，避免 mypy 依据首次 append 推断为元组列表
+    indexed: list[tuple[int, str]] = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(_fetch_one, item): i for i, item in enumerate(stock_items)}
         for future in as_completed(futures):
-            results.append((futures[future], future.result()))
-    results.sort(key=lambda x: x[0])
-    results = [r[1] for r in results]
+            indexed.append((futures[future], future.result()))
+    indexed.sort(key=lambda x: x[0])
+    results = [text for _, text in indexed]
 
     header = f"# Top 10 Constituent Performance for {display} (Last {look_back_days} days)\n\n"
     return header + "\n\n".join(results)

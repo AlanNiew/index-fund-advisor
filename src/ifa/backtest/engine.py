@@ -143,7 +143,7 @@ def _find_column(df: pd.DataFrame, *candidates: str) -> str | None:
         col_lower = col.lower().strip()
         for c in candidates:
             if col_lower == c.lower() or c.lower() in col_lower:
-                return col
+                return str(col)
     return None
 
 

@@ -64,7 +64,7 @@ class AnthropicClient(BaseLLMClient):
             Any: 配置完成的 ChatAnthropic 实例。
         """
         self.warn_if_unknown_model()
-        llm_kwargs = {"model": self.model}
+        llm_kwargs: dict[str, Any] = {"model": self.model}
 
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url

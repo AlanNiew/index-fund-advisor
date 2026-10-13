@@ -53,7 +53,7 @@ class GoogleClient(BaseLLMClient):
             Any: 配置完成的 ChatGoogleGenerativeAI 实例。
         """
         self.warn_if_unknown_model()
-        llm_kwargs = {"model": self.model}
+        llm_kwargs: dict[str, Any] = {"model": self.model}
 
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url

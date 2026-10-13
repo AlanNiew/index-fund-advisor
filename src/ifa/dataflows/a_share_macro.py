@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 import akshare as ak
+import pandas as pd
 
 from .a_share import (
     _call_akshare_api,
@@ -18,7 +21,7 @@ from .a_share import (
 #  P0 — 宏观经济指标映射
 # ---------------------------------------------------------------------------
 
-_MACRO_INDICATOR_MAP: dict[str, tuple[callable, str]] = {
+_MACRO_INDICATOR_MAP: dict[str, tuple[Callable[[], Any], str]] = {
     "CPI": (lambda: ak.macro_china_cpi_yearly, "China CPI Year-on-Year"),
     "PPI": (lambda: ak.macro_china_ppi_yearly, "China PPI Year-on-Year"),
     "PMI": (lambda: ak.macro_china_pmi_yearly, "China PMI"),
@@ -38,7 +41,7 @@ _NORTH_FLOW_SYMBOLS = ("沪股通", "深股通", "北向资金")
 #  P2 — 市场估值指标映射
 # ---------------------------------------------------------------------------
 
-_VALUATION_INDICATOR_MAP: dict[str, tuple[callable, str, dict]] = {
+_VALUATION_INDICATOR_MAP: dict[str, tuple[Callable[[], Any], str, dict[str, Any]]] = {
     "上证PE": (lambda: ak.stock_market_pe_lg, "Shanghai Market PE", {"symbol": "上证"}),
     "深证PE": (lambda: ak.stock_market_pe_lg, "Shenzhen Market PE", {"symbol": "深证"}),
     "上证PB": (lambda: ak.stock_market_pb_lg, "Shanghai Market PB", {"symbol": "上证"}),
@@ -82,7 +85,7 @@ def get_macro_indicator(indicator: str = "GDP") -> str:
     recent = df.tail(60)
     output = _round_numeric_frame(recent)
     header = f"# {title}\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +129,7 @@ def get_north_flow(symbol: str = "北向资金") -> str:
     recent = df[available_cols].tail(60)
     output = _round_numeric_frame(recent)
     header = f"# {title}\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +171,7 @@ def get_market_fund_flow() -> str:
     recent = df[available_cols].tail(60)
     output = _round_numeric_frame(recent)
     header = f"# {title}\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +198,7 @@ def get_margin_data() -> str:
     recent = df.tail(60)
     output = _round_numeric_frame(recent)
     header = f"# {title}\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +235,7 @@ def get_sector_fund_flow(
 
     output = _round_numeric_frame(df.head(50))
     header = f"# {title}\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +276,7 @@ def get_market_valuation(indicator: str = "上证PE") -> str:
     recent = df[preferred_cols].tail(60)
     output = _round_numeric_frame(recent)
     header = f"# {title}\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +556,7 @@ def _calc_ey_signal(pe_ttm: float, bond_yield: float) -> list[str]:
 
 def _calc_bogle_pe_signal(
     pe_ttm: float,
-    pe_series: pd.Series,  # noqa: F821
+    pe_series: pd.Series,
     div_yield: float | None,
 ) -> list[str]:
     """
@@ -602,7 +605,7 @@ def _calc_bogle_pe_signal(
 def _calc_bogle_pb_signal(
     pb: float,
     pe_ttm: float,
-    pb_series: pd.Series,  # noqa: F821
+    pb_series: pd.Series,
 ) -> list[str]:
     """
     博格公式（市净率）：预期年化收益率 ≈ ROE + PB 变化率。

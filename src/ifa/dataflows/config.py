@@ -20,9 +20,18 @@ def set_config(config: dict):
 
 
 def get_config() -> dict:
-    if _config_var.get() is None:
+    """获取当前配置的浅拷贝。
+
+    contextvars 在新线程中默认值为 None（不会被父线程继承），因此这里必须兜底初始化，
+    否则工作线程（如 asyncio.to_thread 中执行的数据工具）会读到 None。
+    """
+    config = _config_var.get()
+    if config is None:
         initialize_config()
-    return _config_var.get().copy()
+        config = _config_var.get()
+    if config is None:  # 兜底：initialize_config 理论上必然填充，防御性保留
+        config = copy.deepcopy(default_config.DEFAULT_CONFIG)
+    return config.copy()
 
 
 initialize_config()

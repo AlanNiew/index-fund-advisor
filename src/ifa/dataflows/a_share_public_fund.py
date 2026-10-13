@@ -42,7 +42,7 @@ def get_fund_list() -> str:
     total = len(selected)
     sample = selected.head(30)
     header = f"# All Public Funds List\n# Total: {total} funds (showing top 30)\n\n"
-    return header + sample.to_csv(index=False)
+    return header + str(sample.to_csv(index=False))
 
 
 # ── 2. 基金基本信息 ─────────────────────────────────────────────
@@ -102,7 +102,7 @@ def get_open_fund_rank(symbol: str = "") -> str:
     # 取前 50 条避免数据过大
     output = _round_numeric_frame(df.head(50))
     header = f"# Open Fund Rank ({filter_label})\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ── 4. 基金股票持仓 ────────────────────────────────────────────
@@ -137,7 +137,7 @@ def get_fund_stock_holdings(symbol: str, date: str = "") -> str:
 
     header = f"# Fund Stock Holdings for {display} ({report_date or 'latest'})\n# Records: {len(df)}\n\n"
     # 保留前 20 行（按持仓比例排序，前 20 = 十大重仓股，最有价值）
-    return header + df.head(20).to_csv(index=False)
+    return header + str(df.head(20).to_csv(index=False))
 
 
 # ── 5. 基金债券持仓 ────────────────────────────────────────────
@@ -172,7 +172,7 @@ def get_fund_bond_holdings(symbol: str, date: str = "") -> str:
 
     header = f"# Fund Bond Holdings for {display} ({report_date or 'latest'})\n# Records: {len(df)}\n\n"
     # 保留前 20 行（前 20 = 主要债券持仓）
-    return header + df.head(20).to_csv(index=False)
+    return header + str(df.head(20).to_csv(index=False))
 
 
 # ── 6. 行业配置 ────────────────────────────────────────────────
@@ -287,7 +287,7 @@ def get_etf_spot_data() -> str:
     # 取前 100 条避免数据过大
     output = _round_numeric_frame(df.head(100))
     header = f"# ETF Spot Data\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ── 10. 基金历史净值 / 累计收益率 / 排名走势 ──────────────────
@@ -353,7 +353,7 @@ def get_fund_value_estimation(symbol: str = "") -> str:
     # 取前 20 条
     output = _round_numeric_frame(df.head(20))
     header = f"# Fund Value Estimation ({filter_label})\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ── 12. 基金分红数据 ────────────────────────────────────────────
@@ -380,7 +380,7 @@ def get_fund_dividend(year: str = "") -> str:
 
     output = _round_numeric_frame(df.head(100))
     header = f"# Fund Dividend Data ({year_label})\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ── 13. 基金申购状态 ────────────────────────────────────────────
@@ -465,7 +465,7 @@ def get_index_fund_filter(symbol: str = "", indicator: str = "") -> str:
 
     output = _round_numeric_frame(df.head(50))
     header = f"# Index Fund Filter ({filter_label}/{indicator_label})\n# Records: {len(output)}\n\n"
-    return header + output.to_csv(index=False)
+    return header + str(output.to_csv(index=False))
 
 
 # ─────────────────────────────────────────────────────────────

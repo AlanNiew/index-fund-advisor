@@ -130,8 +130,8 @@ def cap_tool_result(result: str, max_chars: int = 5000) -> str:
 
     # 分离标题行（# 开头）和数据行
     lines = result.split("\n")
-    header_lines = []
-    data_lines = []
+    header_lines: list[str] = []
+    data_lines: list[str] = []
     for line in lines:
         if line.startswith("#") or (not data_lines and not line.strip()):
             header_lines.append(line)
@@ -146,7 +146,7 @@ def cap_tool_result(result: str, max_chars: int = 5000) -> str:
     data_budget = max_chars - len(header_block) - 50  # 预留省略提示空间
 
     # 逐行添加数据，直到超出预算
-    kept = []
+    kept: list[str] = []
     for line in data_lines:
         if sum(len(k) + 1 for k in kept) + len(line) + 1 > data_budget:
             break

@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from .a_share_index_fund import (
     get_etf_data as get_akshare_etf_data,
@@ -152,7 +154,7 @@ TOOLS_CATEGORIES = {
 
 VENDOR_LIST = ["akshare"]
 
-VENDOR_METHODS = {
+VENDOR_METHODS: dict[str, dict[str, Callable[..., Any]]] = {
     # ── ETF / 指数 / 场外基金 ──
     "get_etf_data": {
         "akshare": get_akshare_etf_data,
@@ -276,7 +278,7 @@ def get_category_for_method(method: str) -> str:
     raise ValueError(f"Method '{method}' not found in any category")
 
 
-def get_vendor(category: str, method: str = None) -> str:
+def get_vendor(category: str, method: str | None = None) -> str:
     """
     获取某个数据类别或工具方法对应的供应商配置。
 
@@ -293,10 +295,10 @@ def get_vendor(category: str, method: str = None) -> str:
     if method:
         tool_vendors = config.get("tool_vendors", {})
         if method in tool_vendors:
-            return tool_vendors[method]
+            return str(tool_vendors[method])
 
     # 回退到类别级配置
-    return config.get("data_vendors", {}).get(category, "akshare")
+    return str(config.get("data_vendors", {}).get(category, "akshare"))
 
 
 def route_to_vendor(method: str, *args, **kwargs):
@@ -318,19 +320,17 @@ def route_to_vendor(method: str, *args, **kwargs):
     if method not in VENDOR_METHODS:
         raise ValueError(f"Method '{method}' not supported")
 
-    all_available_vendors = list(VENDOR_METHODS[method].keys())
+    implementations = VENDOR_METHODS[method]
     fallback_vendors = primary_vendors.copy()
-    for vendor in all_available_vendors:
+    for vendor in implementations:
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
-    last_error = None
+    last_error: Exception | None = None
     for vendor in fallback_vendors:
-        if vendor not in VENDOR_METHODS[method]:
+        impl_func = implementations.get(vendor)
+        if impl_func is None:
             continue
-
-        vendor_impl = VENDOR_METHODS[method][vendor]
-        impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
             return impl_func(*args, **kwargs)

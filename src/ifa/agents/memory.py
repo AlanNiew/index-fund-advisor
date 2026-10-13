@@ -31,7 +31,7 @@ class FinancialSituationMemory:
             - max_situations: 最大记忆条数（默认 1000）
     """
 
-    def __init__(self, name: str, config: dict = None):
+    def __init__(self, name: str, config: dict | None = None):
         self.name = name
         self._config = config or {}
         self._max_situations = self._config.get("max_situations", _DEFAULT_MAX_SITUATIONS)

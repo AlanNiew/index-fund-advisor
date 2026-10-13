@@ -106,7 +106,7 @@ class RequestTracer:
             "spans": [s.to_dict() for s in self.spans],
         }
 
-    def save(self, output_dir: str = "results"):
+    def save(self, output_dir: str = "results") -> str:
         """保存追踪结果到 JSON 文件。"""
         from ifa.common import _atomic_write_json
 

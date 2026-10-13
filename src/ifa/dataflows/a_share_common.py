@@ -258,7 +258,7 @@ def format_date_for_api(date_str: str) -> str:
     返回：
         str: 格式化后的字符串结果。
     """
-    return pd.Timestamp(date_str).strftime("%Y%m%d")
+    return str(pd.Timestamp(date_str).strftime("%Y%m%d"))
 
 
 @lru_cache(maxsize=1)
@@ -307,7 +307,7 @@ def get_previous_trade_date(date_str: str) -> str:
     eligible = [trade_date for trade_date in get_trade_calendar() if trade_date <= target]
     if not eligible:
         raise ValueError(f"No A-share trading date found on or before {date_str}.")
-    return eligible[-1].strftime("%Y-%m-%d")
+    return str(eligible[-1].strftime("%Y-%m-%d"))
 
 
 def get_date_range(start_date: str, end_date: str) -> list[str]:

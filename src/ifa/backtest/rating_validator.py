@@ -123,6 +123,24 @@ def _classify(rating: str) -> str:
     return "neutral"
 
 
+def _forward_return(record: RatingRecord) -> float:
+    """读取 forward_return_pct 并把 Optional 收窄为 float。
+
+    valid_records 已按 `forward_return_pct is not None` 过滤，这里把该不变量写成显式契约：
+    既让 mypy 能通过，也让契约被破坏时给出可定位的错误而非静默错误统计。
+    """
+    if record.forward_return_pct is None:
+        raise ValueError(f"记录缺少实际收益: {record.fund_code} @ {record.analysis_date}")
+    return record.forward_return_pct
+
+
+def _benchmark_return(record: RatingRecord) -> float:
+    """读取 benchmark_return_pct 并把 Optional 收窄为 float（语义同 _forward_return）。"""
+    if record.benchmark_return_pct is None:
+        raise ValueError(f"记录缺少基准收益: {record.fund_code} @ {record.analysis_date}")
+    return record.benchmark_return_pct
+
+
 def compute_statistics(records: list[RatingRecord], hold_days: int) -> RatingValidationResult:
     """对一批记录计算统计指标（纯计算，无副作用）。
 
@@ -159,20 +177,20 @@ def compute_statistics(records: list[RatingRecord], hold_days: int) -> RatingVal
     result.bearish_n = len(bearish_records)
 
     if bullish_records:
-        hits = sum(1 for r in bullish_records if r.forward_return_pct > 0)
+        hits = sum(1 for r in bullish_records if _forward_return(r) > 0)
         result.bullish_hit_rate = hits / len(bullish_records)
         result.bullish_ci_low, result.bullish_ci_high = wilson_ci(hits, len(bullish_records))
         result.alpha_vs_random = result.bullish_hit_rate - _RANDOM_BENCHMARK
 
     if bearish_records:
-        hits = sum(1 for r in bearish_records if r.forward_return_pct < 0)
+        hits = sum(1 for r in bearish_records if _forward_return(r) < 0)
         result.bearish_hit_rate = hits / len(bearish_records)
         result.bearish_ci_low, result.bearish_ci_high = wilson_ci(hits, len(bearish_records))
 
     # —— 沪深300 基准：同期上涨比例 ——
     bench_valid = [r for r in valid_records if r.benchmark_return_pct is not None]
     if bench_valid:
-        up_count = sum(1 for r in bench_valid if r.benchmark_return_pct > 0)
+        up_count = sum(1 for r in bench_valid if _benchmark_return(r) > 0)
         result.csi300_benchmark = up_count / len(bench_valid)
         if result.bullish_hit_rate is not None:
             result.alpha_vs_csi300 = result.bullish_hit_rate - result.csi300_benchmark
@@ -187,7 +205,7 @@ def compute_statistics(records: list[RatingRecord], hold_days: int) -> RatingVal
     }
     for r in valid_records:
         if r.rating in matrix:
-            direction = "up" if r.forward_return_pct > 0 else "down"
+            direction = "up" if _forward_return(r) > 0 else "down"
             matrix[r.rating][direction] += 1
     result.confusion_matrix = matrix
 

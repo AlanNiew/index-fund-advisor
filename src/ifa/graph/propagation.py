@@ -84,7 +84,7 @@ class Propagator:
 
     def get_graph_args(self, callbacks: list | None = None) -> dict[str, Any]:
         """获取图执行参数。"""
-        config = {"recursion_limit": self.max_recur_limit}
+        config: dict[str, Any] = {"recursion_limit": self.max_recur_limit}
         if callbacks:
             config["callbacks"] = callbacks
         return {

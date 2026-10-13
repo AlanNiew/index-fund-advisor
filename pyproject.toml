@@ -77,6 +77,16 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+# numpy>=2.4 / pandas 的存根使用了 PEP 695（`type X = ...`）语法，mypy 在
+# python_version < 3.12 时会在**解析阶段**直接中止（"errors prevented further checking"），
+# 使整个类型检查门静默失效。这里只对这两个第三方存根关闭 follow（它们退化为 Any），
+# 保留 3.10 作为自身代码的语法/标准库基线——它仍能抓到 ifa 代码里的 3.11+ 专属用法
+# （例如 datetime.UTC，mypy 已借此发现真问题）。
+follow_imports_for_stubs = true
+
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*", "pandas", "pandas.*"]
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

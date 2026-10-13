@@ -69,7 +69,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **`IFA_API_KEY` empty = API auth disabled, all routes open.** Set it before exposing the API.
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.
 - **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately.
-- **CI** (`.github/workflows/ci.yml`) runs **ruff + pytest on a Python 3.10–3.13 matrix**; the mypy step is `continue-on-error` (don't fail a PR solely on mypy).
+- **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.10–3.13 matrix**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing.
 - **Generated outputs** `results/`, `test_results/`, `local_data/`, `release/src/`, `release/dist/`, `.claude/` are gitignored.
 
 ## Read before changing sensitive areas

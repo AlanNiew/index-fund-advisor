@@ -3,6 +3,11 @@
 背景：requirements.lock 里的 pywin32 长期没有平台标记，而它只有 Windows wheel、
 在 PyPI 上既无 Linux 分发也无 sdist；CI 跑在 ubuntu-latest，于是
 pip install -r requirements.lock 必然失败 —— 修好之前每个 commit 的 CI 都是红的。
+
+第二类是反向的：锁文件在 Windows 上生成，只固定了 akshare 在非 Linux 上需要的 mini-racer，
+而 Linux 上 akshare 要的是 akracer 与 py-mini-racer（三个包都往同一个 py_mini_racer/ 目录写
+文件）。ubuntu-latest 于是会在锁之外补装，实际生效的 py_mini_racer 变成 akracer（没有
+StrictMiniRacer 别名）—— tests/test_mini_racer_guard.py 因此成为 CI 上唯一的失败用例。
 """
 
 import re
@@ -71,6 +76,43 @@ class TestLockIsInstallable:
         for line in LOCK_PATH.read_text(encoding="utf-8").splitlines():
             for marker in _LOCAL_PATH_MARKERS:
                 assert marker not in line, f"锁文件里不允许出现本地路径/可编辑条目：{line!r}"
+
+
+def _normalize_marker(marker: str) -> str:
+    """把环境标记压成可比较的形式（去掉空白与引号风格差异）。"""
+    return re.sub(r"\s+", "", marker).replace('"', "'")
+
+
+class TestPlatformConditionalDependencies:
+    """akshare 的 V8 包装器按平台分流，锁文件必须带同样的标记。
+
+    akshare 1.18.64 元数据：mini-racer 仅非 Linux，akracer 与 py-mini-racer 仅 Linux。
+    三者都往同一个顶层目录 py_mini_racer/ 写文件。锁文件是 pip-compile 在 Windows 上生成的，
+    原先只固定了 mini-racer，于是 ubuntu-latest 会在锁之外自行补装另外两个包：可复现性被
+    破坏，且实际生效的 py_mini_racer 变成 akracer（没有 StrictMiniRacer 别名）——
+    曾让 tests/test_mini_racer_guard.py 成为 CI 上唯一的失败用例。
+    """
+
+    def test_racer_pins_carry_the_same_platform_markers_as_akshare(self):
+        from importlib.metadata import requires
+
+        pins = _parse_lock()
+        racer_deps = [dep for dep in (requires("akshare") or []) if "racer" in dep.lower()]
+        assert racer_deps, "akshare 元数据里应当有 racer 依赖，否则本测试失去意义"
+        for dep in racer_deps:
+            requirement, _, marker = dep.partition(";")
+            name = requirement.split(">=")[0].split("==")[0].strip().lower()
+            assert name in pins, f"{name} 不在 requirements.lock 里（akshare 依赖：{dep}）"
+            if not marker.strip():
+                continue
+            locked = pins[name] or ""
+            assert locked, (
+                f"{name} 在锁文件里没有平台标记；akshare 声明的是 {marker.strip()}，"
+                "否则 Linux CI 会在锁之外再装一个同目录的包"
+            )
+            assert _normalize_marker(locked) == _normalize_marker(marker), (
+                f"{name} 的平台标记与 akshare 声明不一致：锁={locked!r}，akshare={marker.strip()!r}"
+            )
 
 
 class TestCiWorkflowWiring:

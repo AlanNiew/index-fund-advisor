@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import types
 
 import pytest
 
@@ -43,10 +44,25 @@ class TestGuardInstallation:
         assert install_mini_racer_guard() is True
         assert py_mini_racer.MiniRacer is before
 
-    def test_strict_alias_is_guarded_too(self) -> None:
+    def test_strict_alias_is_guarded_when_the_build_exposes_it(self) -> None:
+        """Linux 上 akshare 拉的是 akracer，它没有 StrictMiniRacer 别名。"""
         import py_mini_racer
 
-        assert py_mini_racer.StrictMiniRacer is py_mini_racer.MiniRacer
+        alias = getattr(py_mini_racer, "StrictMiniRacer", None)
+        if alias is None:
+            pytest.skip("当前 py_mini_racer 构建（Linux 上的 akracer）未导出 StrictMiniRacer")
+        assert alias is py_mini_racer.MiniRacer
+
+    def test_alias_is_replaced_when_the_build_exposes_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不依赖具体构建：别名存在时必须一起换成受保护类。"""
+        fake = types.ModuleType("py_mini_racer")
+        fake.MiniRacer = _FakeRacer  # type: ignore[attr-defined]
+        fake.StrictMiniRacer = _FakeRacer  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "py_mini_racer", fake)
+
+        assert install_mini_racer_guard() is True
+        assert getattr(fake.MiniRacer, _GUARD_MARKER, False) is True
+        assert fake.StrictMiniRacer is fake.MiniRacer
 
     def test_missing_library_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "py_mini_racer", None)

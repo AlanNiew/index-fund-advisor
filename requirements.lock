@@ -4,6 +4,12 @@
 #
 #    pip-compile --extra=dev --extra=mcp --no-emit-index-url --output-file=requirements.lock pyproject.toml
 #
+# akracer / py-mini-racer / mini-racer 都往同一个顶层目录 py_mini_racer/ 写文件，而 akshare
+# 1.18.64 的元数据按平台分流：mini-racer 仅非 Linux，akracer 与 py-mini-racer 仅 Linux。
+# 锁文件必须带上同样的标记，否则 ubuntu-latest 会在锁之外自行补装另外两个包 —— 既破坏
+# 可复现性，又让实际生效的 py_mini_racer 变成 akracer（它没有 StrictMiniRacer 别名）。
+akracer==0.0.14 ; platform_system == "Linux"
+    # via akshare
 akshare==1.18.64
     # via index-fund-advisor (pyproject.toml)
 altair==6.2.2
@@ -208,7 +214,7 @@ mcp==1.28.1
     # via index-fund-advisor (pyproject.toml)
 mdurl==0.1.2
     # via markdown-it-py
-mini-racer==0.14.1
+mini-racer==0.14.1 ; platform_system != "Linux"
     # via akshare
 mypy==2.2.0
     # via index-fund-advisor (pyproject.toml)
@@ -309,6 +315,8 @@ pygments==2.20.0
     #   rich
 pyjwt[crypto]==2.13.0
     # via mcp
+py-mini-racer==0.6.0 ; platform_system == "Linux"
+    # via akshare
 pytest==9.1.1
     # via
     #   index-fund-advisor (pyproject.toml)

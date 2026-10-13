@@ -30,12 +30,12 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（544 个，覆盖 16 个模块）
+pytest                # 全部测试（546 个，覆盖 16 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
 
-> 依赖锁：CI 用 `pip install -r requirements.lock && pip install -e . --no-deps` 安装（不是 `pip install -e ".[dev]"`）。CI 跑在 `ubuntu-latest` 而开发机是 Windows，所以锁文件里 Windows-only 的包必须带平台标记（`pywin32==312 ; sys_platform == "win32"`），否则安装步骤在每个矩阵项上都失败 —— `tests/test_lock_hygiene.py` 会守住这条与 CI 矩阵/`requires-python` 的一致性。
+> 依赖锁：CI 用 `pip install -r requirements.lock && pip install -e . --no-deps` 安装（不是 `pip install -e ".[dev]"`）。CI 跑在 `ubuntu-latest` 而开发机是 Windows，所以锁文件里 Windows-only 的包必须带平台标记（`pywin32==312 ; sys_platform == "win32"`），否则安装步骤在每个矩阵项上都失败 —— `tests/test_lock_hygiene.py` 会守住这条与 CI 矩阵/`requires-python` 的一致性。反向同样成立：`akshare` 的 V8 包装器按平台分流（`mini-racer` 仅非 Linux，`akracer`/`py-mini-racer` 仅 Linux，三者都往同一个 `py_mini_racer/` 目录写文件），锁文件必须带上相同的 `platform_system` 标记，否则 Linux CI 会在锁之外自行补装、破坏可复现性。
 
 ## 架构
 
@@ -170,5 +170,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：544 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：546 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

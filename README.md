@@ -23,7 +23,7 @@
 
 ## 安装
 
-需要 **Python ≥ 3.10**。
+需要 **Python ≥ 3.12**（`requirements.lock` 钉死的 numpy/pandas 版本不带 3.10/3.11 的 wheel）。
 
 ```bash
 git clone <repo-url>
@@ -477,7 +477,7 @@ pytest -x                                                          # 遇到第�
 | Web | Streamlit + Plotly |
 | API | FastAPI + Uvicorn |
 | MCP | FastMCP（stdio） |
-| Python | ≥ 3.10 |
+| Python | ≥ 3.12 |
 
 ---
 
@@ -508,12 +508,12 @@ index-fund-advisor/
 ├── api/                      # FastAPI 异步任务 + 鉴权
 ├── tests/                    # 485 个测试（14 个模块）
 ├── scripts/                  # 每日分析等脚本
-├── release/                  # PyPI 轻量发行脚手架（assemble.py）
+├── release/                  # 轻量打包脚手架（assemble.py，未发布到 PyPI）
 ├── pyproject.toml
 └── README.md / CLAUDE.md / MCP.md
 ```
 
-> **`release/` 说明**：该目录是 PyPI 轻量发行的构建脚手架，`assemble.py` 从 `src/ifa` 动态拷贝 MCP + 数据层子集。**`release/src/` 和 `release/dist/` 是生成物，已在 `.gitignore` 中忽略，不要手动编辑。**
+> **`release/` 说明**：该目录是「只含 MCP + 数据层」的轻量打包脚手架，`assemble.py` 从 `src/ifa` 动态拷贝子集。**本项目不发布到 PyPI**，该脚手架仅作本地构建参考（详见 [release/README.md](<release/README.md>)）。**`release/src/` 和 `release/dist/` 是生成物，已在 `.gitignore` 中忽略，不要手动编辑。**
 
 ---
 

@@ -1,20 +1,37 @@
-# index-fund-advisor (MCP server)
+# IFA MCP 轻量发行版（本地打包脚手架，未发布到 PyPI）
 
-把中国 A 股**指数基金数据 / 估值**能力通过 [MCP（Model Context Protocol）](https://modelcontextprotocol.io) 暴露给 AI 客户端（Claude Desktop、Claude Code、OpenCode 等），让 AI 在对话里直接查基金、看估值、跑筛选。
+> **本项目不发布到 PyPI。** 本目录只是「只含数据 / 估值工具、不依赖 langchain / langgraph」的**本地打包脚手架**（v0.1.x），
+> 供确实需要极简 MCP 服务的用户自行构建。正常使用请直接安装主项目。
 
-> 这是 IFA 项目的**轻量发行版**（v0.1.x）：只含数据 / 估值工具（8 个），不依赖 langchain / langgraph，安装轻量。AI 深度分析（`analyze_fund`）能力将在后续版本加入。
-
-## 安装
-
-```bash
-pip install index-fund-advisor
-```
-
-或用 `uvx` 直接运行（无需安装）：
+## 推荐用法：直接用主项目的 MCP server
 
 ```bash
-uvx index-fund-advisor
+git clone https://github.com/AlanNiew/index-fund-advisor.git
+cd index-fund-advisor
+
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+pip install -e ".[mcp]"
+ifa-mcp
 ```
+
+需要 **Python ≥ 3.12**。主项目的 MCP server 提供 9 个工具（含 `analyze_fund` 深度分析，需要 LLM API Key），详见 [../MCP.md](../MCP.md)。
+
+## 可选：本地构建轻量包
+
+```bash
+cd release
+python assemble.py        # 从 ../src/ifa 拷贝 mcp/ + data_tools/ + dataflows/ 子集到 release/src/
+python -m build           # 或 pip install .
+```
+
+`release/src/`、`release/dist/` 是生成物，已在 `.gitignore` 中忽略，不要手动编辑。
+
+**已知限制（该脚手架尚未随主项目验证过，`release/src` / `release/dist` 从未生成）**：
+
+- `assemble.py` 刻意排除 `ifa.common` / `ifa.graph` / `ifa.agents`，所以轻量包里的 `analyze_fund` 在**调用时会失败**；轻量包实际只有下表 8 个数据 / 估值工具可用。
+- 它不通过 PyPI 分发，也没有 CI 覆盖；如需 MCP 功能，优先用上面的主项目方式。
 
 ## 接入客户端
 
@@ -52,7 +69,7 @@ claude mcp add ifa -- ifa-mcp
 }
 ```
 
-## 工具（8 个，均不依赖 LLM Key）
+## 工具（8 个数据 / 估值工具，均不依赖 LLM Key）
 
 | 工具 | 说明 |
 | --- | --- |
@@ -84,4 +101,4 @@ claude mcp add ifa -- ifa-mcp
 
 ## License
 
-MIT
+MIT（见 [LICENSE](LICENSE)）

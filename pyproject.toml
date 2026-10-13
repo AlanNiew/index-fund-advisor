@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,22 @@ name = "index-fund-advisor"
 version = "0.1.0"
 description = "IFA: AI-Powered Index Fund Analysis and Portfolio Advisory"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "AlanNiew", email = "728097735@qq.com" },
+]
+keywords = ["index-fund", "a-share", "akshare", "llm", "langgraph", "fund-analysis", "valuation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     # 数据
     "akshare>=1.18.49",
@@ -41,6 +56,12 @@ ifa = "ifa.cli.main:app"
 ifa-web = "ifa.cli.web_entry:main"
 ifa-mcp = "ifa.mcp.server:main"
 
+[project.urls]
+Homepage = "https://github.com/AlanNiew/index-fund-advisor"
+Repository = "https://github.com/AlanNiew/index-fund-advisor"
+Issues = "https://github.com/AlanNiew/index-fund-advisor/issues"
+Documentation = "https://github.com/AlanNiew/index-fund-advisor/blob/main/README.md"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -59,7 +80,7 @@ where = ["src"]
 include = ["ifa*"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
@@ -70,20 +91,13 @@ ignore = ["E501", "F403", "F405", "E402"]
 known-first-party = ["ifa", "api", "web"]
 
 [tool.mypy]
-python_version = "3.10"
+# 基线跟随 requires-python（>=3.12）：mypy 能解析 numpy/pandas 存根的 PEP 695 语法，
+# 同时在解析阶段就会拦住 3.13+ 专属 API（例如 Path.read_text(newline=)，
+# mypy 已借此发现过真问题）。
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
-# numpy>=2.4 / pandas 的存根使用了 PEP 695（`type X = ...`）语法，mypy 在
-# python_version < 3.12 时会在**解析阶段**直接中止（"errors prevented further checking"），
-# 使整个类型检查门静默失效。这里只对这两个第三方存根关闭 follow（它们退化为 Any），
-# 保留 3.10 作为自身代码的语法/标准库基线——它仍能抓到 ifa 代码里的 3.11+ 专属用法
-# （例如 datetime.UTC，mypy 已借此发现真问题）。
-follow_imports_for_stubs = true
-
-[[tool.mypy.overrides]]
-module = ["numpy", "numpy.*", "pandas", "pandas.*"]
-follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

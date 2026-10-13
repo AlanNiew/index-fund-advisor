@@ -60,7 +60,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **Agent report inputs are truncated** via `truncate_report(report, max_chars=3000)` to avoid token overflow.
 - **`SignalProcessor` validates + fuzzy-matches LLM ratings/confidence**, falling back to `HOLD` / `Medium` on garbage. Don't bypass.
 - **Honesty disclaimer is hard-injected by `report_generator.py`** — not left to the LLM to emit.
-- **Ruff**: `target-version py310`, `line-length 120`, ignore `E501 / F403 / F405 / E402`; `isort.known-first-party = ["ifa","api","web"]`.
+- **Ruff**: `target-version py312`, `line-length 120`, ignore `E501 / F403 / F405 / E402`; `isort.known-first-party = ["ifa","api","web"]`.
 
 ## Gotchas
 
@@ -73,7 +73,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.
 - **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately. It is the *only* writer of agent memory; normal `analyze` runs only read.
 - **Agent memory persists to `<memory_dir>/<name>.json`** (`DEFAULT_CONFIG` → `local_data/memory`). Without `memory_dir` in the config, `FinancialSituationMemory` is in-memory only — that's why unit tests pass a bare config and stay side-effect free.
-- **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.10–3.13 matrix**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing.
+- **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.12–3.13 matrix**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing.
 - **Generated outputs** `results/`, `test_results/`, `local_data/`, `release/src/`, `release/dist/`, `.claude/` are gitignored.
 
 ## Read before changing sensitive areas

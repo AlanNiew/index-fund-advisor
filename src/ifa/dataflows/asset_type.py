@@ -8,7 +8,10 @@ from enum import Enum
 from .a_share_common import normalize_ashare_symbol
 
 
-class AssetType(str, Enum):
+# 保留 str + Enum 而非 StrEnum：StrEnum 会改变 str(member) 的结果（"etf" 取代
+# "AssetType.ETF"），可能影响日志/报告里的字符串形态。基线升到 3.12 不夹带行为变更，
+# 故此处显式豁免 UP042。
+class AssetType(str, Enum):  # noqa: UP042
     """资产类型枚举。"""
 
     STOCK = "stock"  # A 股个股

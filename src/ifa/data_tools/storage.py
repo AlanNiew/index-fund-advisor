@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -169,7 +169,7 @@ class LocalArtifactStore:
             "params": self._normalize_value(params),
             "payload_file": payload_path.name,
             "payload_format": payload_format,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "metadata": self._normalize_value(metadata),
         }
         (directory / "manifest.json").write_text(
@@ -252,7 +252,7 @@ class LocalArtifactStore:
         if payload_format == "json":
             return json.loads(payload_path.read_text(encoding="utf-8"))
         # newline="" 关闭通用换行转换，与 _write_payload 的写入方式对称。
-        # 注意：Path.read_text 的 newline 参数是 Python 3.13 才有的，项目支持 3.10+，
+        # 注意：Path.read_text 的 newline 参数是 Python 3.13 才有的，项目支持 3.12+，
         # 因此这里显式用 open()。
         with open(payload_path, encoding="utf-8", newline="") as fh:
             return fh.read()

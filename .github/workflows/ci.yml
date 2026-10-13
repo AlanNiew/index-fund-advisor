@@ -12,8 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # pyproject 声明 requires-python >=3.10,矩阵覆盖全部受支持版本
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        # pyproject 声明 requires-python >=3.12,矩阵覆盖全部受支持版本
+        # (requirements.lock 钉死 numpy==2.5.1/pandas==3.0.3,它们在 3.10/3.11 上无 wheel)
+        python-version: ["3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

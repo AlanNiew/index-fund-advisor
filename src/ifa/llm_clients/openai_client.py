@@ -4,6 +4,8 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
+from ifa.providers import PROVIDER_CONFIG
+
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
 
@@ -62,24 +64,17 @@ def _opencode_session_id() -> str:
     return os.environ.get("OPENCODE_SESSION_ID") or _OPENCODE_SESSION_ID
 
 
-# 各提供方的基础地址与 API Key 环境变量
-_PROVIDER_CONFIG = {
-    "xai": ("https://api.x.ai/v1", "XAI_API_KEY"),
-    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
-    "ollama": ("http://localhost:11434/v1", None),
-    "qwen": ("https://coding.dashscope.aliyuncs.com/v1", "QWEN_API_KEY"),
-    "zhipu": ("https://open.bigmodel.cn/api/coding/paas/v4", "ZHIPUAI_API_KEY"),
-    "deepseek": ("https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
-    "opencode": (_OPENCODE_BASE_URL, _OPENCODE_API_KEY_ENV),
-}
+# 各提供方的基础地址与 API Key 环境变量：单一事实来源在 ifa/providers.py
+# （default_config 也要用它做 backend_url 归一化，而它不能导入 langchain）。
+_PROVIDER_CONFIG = PROVIDER_CONFIG
 
 
 class OpenAIClient(BaseLLMClient):
-    """面向 OpenAI、Ollama、OpenRouter、xAI 与 OpenCode Go 的客户端封装。
+    """面向 OpenAI、Ollama、OpenRouter、xAI、OpenCode Go 及自定义端点的客户端封装。
 
-    原生 OpenAI 模型默认使用 `/v1/responses`，以支持统一的
-    `reasoning_effort` 与工具调用行为；兼容提供方（含 opencode）
-    继续使用标准 Chat Completions 接口。
+    原生 OpenAI 模型默认使用 /v1/responses，以支持统一的 reasoning_effort
+    与工具调用行为；兼容提供方（含 opencode 与 custom）继续使用标准
+    Chat Completions 接口。
     """
 
     def __init__(
@@ -114,18 +109,28 @@ class OpenAIClient(BaseLLMClient):
         self.warn_if_unknown_model()
         llm_kwargs: dict[str, Any] = {"model": self.model}
 
-        # 提供方专属的基础地址与鉴权参数
-        if self.provider in _PROVIDER_CONFIG:
-            base_url, api_key_env = _PROVIDER_CONFIG[self.provider]
+        # 提供方专属的基础地址与鉴权参数。
+        # 显式配置的 base_url（self.base_url）优先于内置端点：企业内网代理、自建网关上
+        # 复用同一提供方协议时可直接覆盖。provider="custom" 没有内置端点，必须显式给。
+        spec = _PROVIDER_CONFIG.get(self.provider)
+        base_url = self.base_url or (spec.base_url if spec else None)
+        if base_url:
             llm_kwargs["base_url"] = base_url
-            if api_key_env:
-                api_key = os.environ.get(api_key_env)
-                if api_key:
-                    llm_kwargs["api_key"] = api_key
-            else:
-                llm_kwargs["api_key"] = "ollama"
-        elif self.base_url:
-            llm_kwargs["base_url"] = self.base_url
+
+        if self.provider == "custom" and not base_url:
+            raise ValueError(
+                "llm_provider='custom' 必须提供 backend_url（自定义端点的 OpenAI 兼容地址，"
+                "形如 https://your-gateway/v1）。设置方式：ifa config backend_url <url>，"
+                "或环境变量 IFA_BACKEND_URL。"
+            )
+
+        if spec is not None and spec.api_key_env:
+            api_key = os.environ.get(spec.api_key_env)
+            if api_key:
+                llm_kwargs["api_key"] = api_key
+        elif spec is not None:
+            # 本地 Ollama 不校验 Key，但底层 SDK 要求非空值
+            llm_kwargs["api_key"] = "ollama"
 
         # 继续透传用户提供的 kwargs
         for key in _PASSTHROUGH_KWARGS:

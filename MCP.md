@@ -38,7 +38,7 @@ pip install -e ".[mcp]"
 - `screen_index_funds.tracking_method`：`全部` / `被动指数型` / `增强指数型`
 - `analyze_fund.mode`：`deep_simple`（快速，~30-60 秒）/ `deep`（含看涨/看跌辩论，~1-3 分钟）
 
-> 数据 / 估值工具走 AkShare 公开数据，**无需任何 Key**；只有 `analyze_fund` 需要在 `.env` 配置有效的 LLM API Key（默认智谱 GLM）。
+> 数据 / 估值工具走 AkShare 公开数据，**无需任何 Key**；只有 `analyze_fund` 需要在 `.env` 配置有效的 LLM API Key（默认提供方为 OpenCode Go，需 `OPENCODE_API_KEY`；可用 `IFA_LLM_PROVIDER` 切换）。
 
 ---
 

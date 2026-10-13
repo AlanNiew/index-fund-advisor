@@ -81,15 +81,21 @@ DEEPSEEK_API_KEY=...
 | `IFA_TASK_MAX_SIZE` | API 任务存储上限 | `1000` |
 | `IFA_RESULTS_DIR` | 分析报告输出目录 | `<项目根>/results` |
 | `IFA_LOCAL_DATA_DIR` | 本地数据/缓存根目录 | `<项目根>/local_data` |
+| `IFA_LLM_PROVIDER` | 覆盖 `llm_provider`（**优先级最高，不改任何文件即可换模型**） | 空 |
+| `IFA_DEEP_LLM` / `IFA_QUICK_LLM` | 覆盖深度/快速模型 | 空 |
+| `IFA_BACKEND_URL` | 覆盖 `backend_url`（`custom` 提供方必填） | 空 |
+| `IFA_CUSTOM_API_KEY` | `llm_provider=custom` 时的 API Key | 空 |
+| `IFA_CONFIG_DIR` | 用户配置文件所在目录 | Windows `%APPDATA%\ifa`；否则 `~/.config/ifa` |
 
 ### 3. 配置项（`src/ifa/default_config.py`）
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
-| `llm_provider` | `opencode` | LLM 提供方，可选：`opencode` / `openai` / `azure` / `anthropic` / `google` / `ollama` / `openrouter` / `qwen` / `zhipu` / `xai` / `deepseek` |
+| `llm_provider` | `opencode` | LLM 提供方，可选：`opencode` / `openai` / `azure` / `anthropic` / `google` / `ollama` / `openrouter` / `qwen` / `zhipu` / `xai` / `deepseek` / **`custom`（任意 OpenAI 兼容端点）** |
 | `deep_think_llm` | `deepseek-v4-pro` | 深度推理（报告生成、关键裁决） |
 | `quick_think_llm` | `deepseek-v4.1-flash` | 快速调用（工具调用、辩论）。**不要用最便宜的 turbo 档**——结构化输出在弱模型上不可靠，会污染整条分析管道 |
-| `backend_url` | `https://opencode.ai/inference/go/v1` | API 基础地址（仅对未内置 base_url 的提供方生效；各提供方默认地址见 `llm_clients/openai_client.py` 的 `_PROVIDER_CONFIG`） |
+| `backend_url` | `https://opencode.ai/inference/go/v1` | API 基础地址。显式设置的值**优先于**内置端点；`custom` 提供方必须提供。切换提供方后残留的别家内置端点会被自动重置（各提供方默认地址见 [src/ifa/providers.py](<src/ifa/providers.py>)） |
+| `custom_api_key` | `None` | 仅 `custom` 使用；通常直接用 `IFA_CUSTOM_API_KEY` |
 | `enable_debate` | `True` | 是否启用辩论（关闭后退化为 `deep_simple`） |
 | `max_debate_rounds` | `2` | 基金辩论轮数 |
 | `max_risk_discuss_rounds` | `2` | 风险辩论轮数 |
@@ -98,15 +104,29 @@ DEEPSEEK_API_KEY=...
 | `max_recur_limit` | `150` | LangGraph 递归上限 |
 | `timeout` | `180` | 单次分析超时（秒） |
 
-**切换提供方示例**：编辑 `src/ifa/default_config.py` 或运行 `ifa config` 后手动写入 `src/ifa/last_config.py`：
+**切换提供方**（三种方式，优先级由低到高）：
 
-```python
-LAST_CONFIG = {
-    'llm_provider': 'anthropic',
-    'deep_think_llm': 'claude-sonnet-4-5',
-    'quick_think_llm': 'claude-sonnet-4-5',
-}
+```bash
+# ① 写用户配置文件（真正落盘，跨目录/跨机器有效）
+ifa config llm_provider deepseek
+ifa config deep_think_llm deepseek-reasoner
+ifa config quick_think_llm deepseek-chat
+ifa config llm_provider           # 查看单项生效值
+ifa config --unset llm_provider   # 删除该项
+ifa config                        # 查看全部配置 + 配置文件路径
+
+# ② 环境变量（优先级最高，适合容器/CI，不改任何文件）
+IFA_LLM_PROVIDER=deepseek IFA_DEEP_LLM=deepseek-reasoner ifa analyze 510300
+
+# ③ 接入任意 OpenAI 兼容端点（自建网关、公司内网、one-api 等）
+ifa config llm_provider custom
+ifa config backend_url https://your-gateway/v1
+ifa config deep_think_llm your-model
+export IFA_CUSTOM_API_KEY=sk-...
 ```
+
+配置文件位置：Windows `%APPDATA%\ifa\config.json`，Linux/macOS `~/.config/ifa/config.json`（可用 `IFA_CONFIG_DIR` 覆盖）。
+路径键（如 `memory_dir`）由项目位置现场推导，不会写入该文件；旧版写在包目录里的 `src/ifa/last_config.py` 仍会被只读兼容。
 
 ---
 
@@ -122,6 +142,7 @@ IFA 提供 **四种入口**：CLI、Web、REST API、MCP Server。
 # 单基金深度分析（含 Bull/Bear 辩论）
 ifa analyze 510300 --date 2024-01-15
 ifa analyze 159919                      # 默认分析当天
+ifa analyze 510300 --mode deep_simple   # 跳过辩论，快得多
 
 # 基金筛选（含辩论裁决）
 ifa screen --query "规模大于10亿的沪深300被动指数基金" --top 10
@@ -445,7 +466,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（485 个测试，覆盖 14 个模块）
+# 测试（516 个测试，覆盖 14 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -506,7 +527,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 485 个测试（14 个模块）
+├── tests/                    # 516 个测试（14 个模块）
 ├── scripts/                  # 每日分析等脚本
 ├── release/                  # 轻量打包脚手架（assemble.py，未发布到 PyPI）
 ├── pyproject.toml

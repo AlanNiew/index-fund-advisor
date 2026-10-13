@@ -21,7 +21,10 @@ ifa portfolio --risk moderate
 ifa search 沪深300                  # no LLM
 ifa info 510300                    # no LLM
 ifa validate --codes 510300,159919 --months-back 12   # rating-vs-return backtest (LLM, slow)
-ifa config
+ifa analyze 510300 --mode deep_simple  # skip the debate rounds (much faster)
+ifa config                            # show effective config + config file path
+ifa config llm_provider deepseek      # persist one key to the user config file
+ifa config --unset llm_provider       # remove it
 ifa-web                           # Streamlit (http://localhost:8501)
 uvicorn api.main:app --port 8000   # API — no registered ifa-api script; call uvicorn directly
 
@@ -47,7 +50,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (36 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
 - **`src/ifa/data_tools/`** — declarative `_TOOL_SPECS` registry (36 tools) + `CachedDataToolExecutor` (SHA1-keyed cache + snapshots, disk-failure → degrade to direct execution). The cache key includes `storage.CACHE_SCHEMA_VERSION` — bump it when a tool's output contract changes, or stale payloads keep shadowing the new implementation. Fund search must go through the `search_funds` tool: `get_fund_list()` returns only the first 30 rows.
 - **`src/ifa/dataflows/`** — AkShare wrappers (retry, asset-type auto-detect) + `clean_dataframe`/`truncate_report`.
-- **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode; Anthropic + Google have dedicated clients. `opencode` talks to the OpenCode Go gateway (`https://opencode.ai/inference/go/v1`) and auto-attaches a custom `User-Agent` plus a process-scoped `x-opencode-session` header (override the session via `OPENCODE_SESSION_ID`).
+- **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode/custom; Anthropic + Google have dedicated clients. The provider list is a single source of truth in `src/ifa/providers.py` (`PROVIDER_CONFIG`), which is dependency-free on purpose so `default_config` stays light. `custom` = any OpenAI-compatible endpoint; it **requires** an explicit `backend_url` and skips model validation. `opencode` talks to the OpenCode Go gateway (`https://opencode.ai/inference/go/v1`) and auto-attaches a custom `User-Agent` plus a process-scoped `x-opencode-session` header (override the session via `OPENCODE_SESSION_ID`).
 - **`src/ifa/backtest/`** — buy-and-hold `run_backtest()` + `rating_validator.py` (rating-vs-actual-return validation).
 - **`src/ifa/observability/`** — `RequestTracer` auto-traces `AdvisorGraph.run()` to `results/traces/`.
 - **Shared init for CLI/Web/API** lives in `src/ifa/common.py`: `build_advisor()`, `build_state()`, `save_report()`, `get_provider_kwargs()`. All three interface layers must use these — don't re-init the graph ad hoc.
@@ -65,7 +68,8 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 ## Gotchas
 
 - **`ifa <6位数字>` auto-routes to `analyze`** via `_FundCodeGroup` in `src/ifa/cli/main.py` — so `ifa 510300` works with no subcommand, but a typo'd subcommand (e.g. `ifa analyz`) still errors normally.
-- **Default LLM provider is OpenCode Go** (`opencode`) → a valid `OPENCODE_API_KEY` in `.env` is required out of the box; requests go to `https://opencode.ai/inference/go/v1`. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai/zhipu/deepseek) selectable in `src/ifa/default_config.py`.
+- **Default LLM provider is OpenCode Go** (`opencode`) → a valid `OPENCODE_API_KEY` in `.env` is required out of the box; requests go to `https://opencode.ai/inference/go/v1`. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai/zhipu/deepseek/custom) selectable via `ifa config llm_provider <name>` or the `IFA_LLM_PROVIDER` env var (env wins).
+- **Config precedence is env > user config file > DEFAULT_CONFIG.** `ifa config` persists to `%APPDATA%\ifa\config.json` (or `~/.config/ifa/config.json`, override with `IFA_CONFIG_DIR`); the legacy in-package `src/ifa/last_config.py` is read-only compatible. Path keys (`_PATH_KEYS`) are never persisted, and a stale `backend_url` pointing at another provider's built-in endpoint is reset automatically.
 - **`quick_think_llm` must not be the cheapest tier** — weak models produce unreliable structured output that pollutes the whole pipeline.
 - **`IFA_API_KEY` empty = API auth disabled, all routes open.** Set it before exposing the API.
 - **`ifa analyze` exits non-zero when no report is produced** — `_run_analysis` raises `typer.Exit(code=1)` and prints the `error` field, so wrapper scripts and cron jobs can detect failure. Keep it that way.

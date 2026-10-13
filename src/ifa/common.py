@@ -36,6 +36,12 @@ def get_provider_kwargs(config: dict[str, Any]) -> dict[str, Any]:
         effort = config.get("anthropic_effort")
         if effort:
             kwargs["effort"] = effort
+    elif provider == "custom":
+        # 自定义端点：不注入任何提供方专属参数（对方未必认 reasoning_effort）。
+        # Key 优先取配置里的 custom_api_key；未设置时由客户端回落到 IFA_CUSTOM_API_KEY。
+        api_key = config.get("custom_api_key")
+        if api_key:
+            kwargs["api_key"] = api_key
 
     timeout = config.get("timeout")
     if timeout is not None:

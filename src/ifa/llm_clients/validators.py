@@ -20,7 +20,9 @@ def validate_model(provider: str, model: str) -> bool:
     """
     provider_lower = provider.lower()
 
-    if provider_lower in ("ollama", "openrouter", "azure"):
+    # 模型清单由用户/服务端决定，本地无从校验的提供方一律放行
+    # （custom 是任意 OpenAI 兼容端点，模型名当然不在内置目录里）。
+    if provider_lower in ("ollama", "openrouter", "azure", "custom"):
         return True
 
     if provider_lower not in VALID_MODELS:

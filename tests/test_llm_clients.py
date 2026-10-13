@@ -117,9 +117,11 @@ class TestModelCatalog:
             assert isinstance(model_id, str)
 
     def test_get_model_options_invalid_provider(self):
-        """不存在的 provider 抛出 KeyError。"""
-        with pytest.raises(KeyError):
-            get_model_options("nonexistent", "quick")
+        """不存在的 provider 返回空列表而不是抛异常。
+
+        custom 这类端点自带模型清单，目录里当然没有它——展示候选的 UI 不该因此崩。
+        """
+        assert get_model_options("nonexistent", "quick") == []
 
     def test_get_known_models_non_empty(self):
         """get_known_models 返回非空字典。"""
@@ -291,3 +293,46 @@ class TestOpenCodeModelCatalog:
 
     def test_validate_model_rejects_foreign_ids(self):
         assert validate_model("opencode", "gpt-999") is False
+
+
+class TestCustomProvider:
+    """自定义提供方：任意 OpenAI 兼容端点（自建网关、公司内网、one-api 等）。
+
+    这是「不支持的模型自己接」的唯一入口，所以端点/Key/模型名三样都必须完全由用户决定，
+    且缺端点时必须明确报错——静默打到 openai.com 会让人排查半天。
+    """
+
+    def test_factory_maps_custom_to_openai_client(self):
+        from ifa.llm_clients.openai_client import OpenAIClient
+
+        client = create_llm_client("custom", "my-model", base_url="https://gateway.internal/v1")
+        assert isinstance(client, OpenAIClient)
+        assert client.provider == "custom"
+
+    def test_uses_configured_endpoint_and_key(self, monkeypatch):
+        monkeypatch.setenv("IFA_CUSTOM_API_KEY", "sk-custom")
+
+        llm = create_llm_client("custom", "my-model", base_url="https://gateway.internal/v1").get_llm()
+
+        assert llm.openai_api_base == "https://gateway.internal/v1"
+        assert llm.openai_api_key.get_secret_value() == "sk-custom"
+
+    def test_kwarg_api_key_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv("IFA_CUSTOM_API_KEY", "sk-from-env")
+
+        llm = create_llm_client(
+            "custom", "my-model", base_url="https://gateway.internal/v1", api_key="sk-from-kwarg"
+        ).get_llm()
+
+        assert llm.openai_api_key.get_secret_value() == "sk-from-kwarg"
+
+    def test_missing_base_url_raises_actionable_error(self):
+        with pytest.raises(ValueError, match="backend_url"):
+            create_llm_client("custom", "my-model").get_llm()
+
+    def test_custom_accepts_any_model_name(self):
+        assert validate_model("custom", "whatever-the-endpoint-offers") is True
+
+    def test_custom_has_no_builtin_model_catalog(self):
+        """端点自带清单，内置目录里没有它是正常的（返回空列表而非 KeyError）。"""
+        assert get_model_options("custom", "quick") == []

@@ -156,7 +156,9 @@ def get_model_options(provider: str, mode: str) -> list[ModelOption]:
         List[ModelOption]: 当前查询结果。
     """
     catalog = _load_custom_catalog() or MODEL_OPTIONS
-    return catalog[provider.lower()][mode]
+    # 未知提供方（如 custom 这类端点自带模型清单的）返回空列表，而不是 KeyError：
+    # 上层 UI/CLI 只负责展示候选，不该因为目录里没有这一项就崩。
+    return list(catalog.get(provider.lower(), {}).get(mode, []))
 
 
 def get_known_models() -> dict[str, list[str]]:

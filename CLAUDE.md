@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（485 个，覆盖 14 个模块）
+pytest                # 全部测试（516 个，覆盖 14 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -84,7 +84,9 @@ CLI / Web / API 三个接口层共用四个函数：
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
   - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
   - **数据源能力边界（易踩）**：ETF 基本信息（`get_fund_basic_info` / `get_etf_fund_info`）必须走东财场内行情表 `fund_etf_fund_daily_em` —— 蛋卷 `fund_individual_basic_info_xq` 只有场外基金库，对 510300 直接 `KeyError: 'data'`；`fund_etf_fund_info_em` 是上游坏接口（14/13 列长度不匹配，默认日期区间下要跑约 2 分钟才失败）。中证成分股（`get_index_constituents*`）按**指数代码**寻址，ETF 代码（510300）与深证指数代码（399006）在该站点返回 404（响应体是 JPEG，pandas 只报 "Excel file format cannot be determined"），故取数失败时抛带可操作说明的 `ValueError`，原始异常留在 `__cause__`
-- **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode），另有 Anthropic/Google 独立客户端
+- **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode/**custom**），另有 Anthropic/Google 独立客户端
+  - 提供方清单是单一事实来源：`src/ifa/providers.py` 的 `PROVIDER_CONFIG`（base_url / api_key_env / 展示名）与 `OPENAI_COMPATIBLE_PROVIDERS`。该模块**零依赖**且位于包顶层，`default_config` 只能从它取提供方信息 —— 若放进 `llm_clients/` 会让 `ifa config` / `search` / `info` 连带拉起 langchain 全栈
+  - `custom` 提供方 = 任意 OpenAI 兼容端点（自建网关/内网 one-api）：必须显式提供 `backend_url`（否则构造 LLM 时抛 `ValueError`），模型名不做目录校验，Key 取 `IFA_CUSTOM_API_KEY` 或配置项 `custom_api_key`
   - `opencode` 走 **OpenCode Go** 聚合端点（`https://opencode.ai/inference/go/v1`，订阅制）。该服务要求客户端自报身份并携带稳定会话 ID，故 opencode 提供方会额外注入 `default_headers`：自定义 `User-Agent` + 进程级 `x-opencode-session`（可用 `OPENCODE_SESSION_ID` 环境变量覆盖；一次 `ifa` 运行 = 一个会话）。缺失时服务端按通用 SDK 客户端处理且无法复用提示缓存。
 - **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
 - **回测引擎** (`src/ifa/backtest/`) — 买入-持有策略回测，`run_backtest()` 输出年化收益、最大回撤、Sharpe、月度收益、净值曲线
@@ -127,11 +129,14 @@ CLI / Web / API 三个接口层共用四个函数：
 
 ### 配置系统
 
-- `src/ifa/default_config.py` — 默认配置 + `build_runtime_config()` 运行时配置构建
-- CLI 通过 `save_last_config()` 持久化到 `src/ifa/last_config.py`
-- 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENCODE/OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK）
+- `src/ifa/default_config.py` — 默认配置 + `build_runtime_config()` 运行时配置构建；提供方清单来自 `src/ifa/providers.py`
+- 优先级：**环境变量 > 用户配置文件 > DEFAULT_CONFIG**（`build_runtime_config()` 依次 deepcopy → `load_last_config()` → `_env_overrides()` → 重算路径键 → 端点归一化 → `validate_config()`）
+- `ifa config <key> <value>` 真正落盘：`set_user_config()` / `unset_user_config()` 原子写用户配置文件（`IFA_CONFIG_DIR` → Windows `%APPDATA%\ifa\config.json`，否则 `~/.config/ifa/config.json`）；`save_last_config()` 写同一文件。可配置项 = `CONFIGURABLE_KEYS`（DEFAULT_CONFIG 中非路径键、非字典键）；旧版 `src/ifa/last_config.py` 仅只读兼容
+- 环境变量覆盖表 `_ENV_OVERRIDES`：`IFA_LLM_PROVIDER` / `IFA_DEEP_LLM` / `IFA_QUICK_LLM` / `IFA_BACKEND_URL` / `IFA_CUSTOM_API_KEY` / `IFA_ANALYSIS_MODE` / `IFA_AZURE_API_VERSION` / `IFA_TIMEOUT` / `IFA_ENABLE_DEBATE`（空白值视为未设置；整型/布尔键经 `_coerce_config_value` 转换，非法值抛 `ValueError`）
+- `backend_url` 归一化：残留的**别家**内置端点（历史漂移：provider=deepseek 却指向智谱）会被重置为所选提供方默认端点，用户自定义地址保留；`custom` 且地址为空时 `validate_config` 报错
+- 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENCODE/OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK/QWEN/XAI/OPENROUTER）
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
-- 记忆落盘目录：`memory_dir`（默认 `local_data/memory`，随 `IFA_LOCAL_DATA_DIR` 变化；属于 `_PATH_KEYS`，不会被写入 `last_config.py`）
+- 记忆落盘目录：`memory_dir`（默认 `local_data/memory`，随 `IFA_LOCAL_DATA_DIR` 变化；属于 `_PATH_KEYS`，不会被写入用户配置文件）
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 2）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
 
 ### 健壮性模式
@@ -161,5 +166,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：485 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：516 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

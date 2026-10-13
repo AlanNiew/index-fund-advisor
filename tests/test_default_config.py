@@ -93,22 +93,24 @@ class TestRuntimePaths:
         assert "memory_dir" in dc._PATH_KEYS
 
     def test_save_last_config_strips_path_keys(self, tmp_path, monkeypatch):
-        """路径键不写入 last_config.py，否则换机器/换目录后会读到过期绝对路径。"""
-        target = tmp_path / "last_config.py"
+        """路径键不写入用户配置文件，否则换机器/换目录后会读到过期绝对路径。"""
+        import json
+
+        target = tmp_path / "config.json"
         monkeypatch.setattr(dc, "LAST_CONFIG_PATH", target)
 
         dc.save_last_config({**dc.DEFAULT_CONFIG, "llm_provider": "openai"})
-        content = target.read_text(encoding="utf-8")
+        stored = json.loads(target.read_text(encoding="utf-8"))
 
-        assert "'llm_provider'" in content
+        assert stored["llm_provider"] == "openai"
         for key in dc._PATH_KEYS:
-            assert f"'{key}'" not in content, f"{key} 不应被持久化"
+            assert key not in stored, f"{key} 不应被持久化"
 
     def test_save_last_config_leaves_no_tmp_file(self, tmp_path, monkeypatch):
-        target = tmp_path / "last_config.py"
+        target = tmp_path / "config.json"
         monkeypatch.setattr(dc, "LAST_CONFIG_PATH", target)
         dc.save_last_config({**dc.DEFAULT_CONFIG, "llm_provider": "openai"})
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["last_config.py"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["config.json"]
 
 
 class TestDefaultProviderWiring:
@@ -139,3 +141,170 @@ class TestDefaultProviderWiring:
 
         provider = dc.DEFAULT_CONFIG["llm_provider"]
         assert dc.DEFAULT_CONFIG["backend_url"] == _PROVIDER_CONFIG[provider][0]
+
+
+class TestEnvOverrides:
+    """环境变量覆盖：env > 用户配置文件 > DEFAULT_CONFIG。
+
+    这是「不动任何文件就换模型」的唯一入口，容器 / CI / 第三方集成全靠它。
+    """
+
+    def test_env_beats_config_file(self, monkeypatch):
+        monkeypatch.setattr(dc, "load_last_config", lambda: {"llm_provider": "openai", "timeout": 60})
+        monkeypatch.setenv("IFA_LLM_PROVIDER", "deepseek")
+        monkeypatch.setenv("IFA_TIMEOUT", "30")
+
+        config = dc.build_runtime_config()
+
+        assert config["llm_provider"] == "deepseek"
+        assert config["timeout"] == 30
+
+    def test_env_overrides_models(self, monkeypatch):
+        monkeypatch.setattr(dc, "load_last_config", lambda: {})
+        monkeypatch.setenv("IFA_DEEP_LLM", "deepseek-chat")
+        monkeypatch.setenv("IFA_QUICK_LLM", "deepseek-chat")
+
+        config = dc.build_runtime_config()
+
+        assert config["deep_think_llm"] == "deepseek-chat"
+        assert config["quick_think_llm"] == "deepseek-chat"
+
+    def test_blank_env_is_ignored(self, monkeypatch):
+        """空串/空白等于「没设」，不能把配置清成空字符串。"""
+        monkeypatch.setattr(dc, "load_last_config", lambda: {})
+        monkeypatch.setenv("IFA_LLM_PROVIDER", "   ")
+
+        assert dc.build_runtime_config()["llm_provider"] == dc.DEFAULT_CONFIG["llm_provider"]
+
+    def test_invalid_timeout_env_raises(self, monkeypatch):
+        monkeypatch.setattr(dc, "load_last_config", lambda: {})
+        monkeypatch.setenv("IFA_TIMEOUT", "abc")
+
+        with pytest.raises(ValueError, match="timeout"):
+            dc.build_runtime_config()
+
+
+class TestUserConfigFile:
+    """用户配置文件（JSON）读写 —— `ifa config` 的落盘层。
+
+    历史缺陷：旧实现只把配置 pformat 成 Python 字面量写进包目录里的 last_config.py，
+    包目录通常不可写（site-packages 只读），于是「设置」形同虚设。
+    """
+
+    def test_set_and_unset_roundtrip(self, tmp_path, monkeypatch):
+        import json
+
+        target = tmp_path / "config.json"
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", target)
+
+        assert dc.set_user_config("llm_provider", "deepseek") == "deepseek"
+        assert json.loads(target.read_text(encoding="utf-8")) == {"llm_provider": "deepseek"}
+        assert dc.load_last_config() == {"llm_provider": "deepseek"}
+
+        assert dc.unset_user_config("llm_provider") is True
+        assert dc.load_last_config() == {}
+        assert not target.exists()
+
+    def test_set_coerces_types(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", tmp_path / "config.json")
+
+        assert dc.set_user_config("timeout", "45") == 45
+        assert dc.set_user_config("enable_debate", "false") is False
+
+        stored = dc.load_last_config()
+        assert stored["timeout"] == 45
+        assert stored["enable_debate"] is False
+
+    def test_unknown_key_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", tmp_path / "config.json")
+
+        with pytest.raises(ValueError, match="未知配置项"):
+            dc.set_user_config("no_such_key", "1")
+
+    def test_path_keys_are_not_configurable(self, tmp_path, monkeypatch):
+        """路径键由项目位置现场推导，写进配置文件换机器就失效。"""
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", tmp_path / "config.json")
+
+        assert "memory_dir" not in dc.CONFIGURABLE_KEYS
+        with pytest.raises(ValueError, match="未知配置项"):
+            dc.set_user_config("memory_dir", "/tmp/x")
+
+    def test_corrupt_config_file_degrades(self, tmp_path, monkeypatch):
+        """损坏的配置文件只能降级为默认值，不能让每个命令都崩。"""
+        target = tmp_path / "config.json"
+        target.write_text("{ this is not json", encoding="utf-8")
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", target)
+
+        assert dc.load_last_config() == {}
+
+    def test_legacy_python_config_still_read(self, tmp_path, monkeypatch):
+        """老用户升级前写下的 last_config.py 必须仍能被读到（只读兼容）。"""
+        legacy = tmp_path / "last_config.py"
+        legacy.write_text("LAST_CONFIG = {'llm_provider': 'zhipu'}\n", encoding="utf-8")
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", tmp_path / "config.json")
+        monkeypatch.setattr(dc, "LEGACY_LAST_CONFIG_PATH", legacy)
+
+        assert dc.load_last_config() == {"llm_provider": "zhipu"}
+
+    def test_runtime_config_uses_user_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", tmp_path / "config.json")
+        monkeypatch.setattr(dc, "LEGACY_LAST_CONFIG_PATH", tmp_path / "nonexistent.py")
+
+        dc.set_user_config("llm_provider", "deepseek")
+        dc.set_user_config("deep_think_llm", "deepseek-chat")
+        dc.set_user_config("quick_think_llm", "deepseek-chat")
+        config = dc.build_runtime_config()
+
+        assert config["llm_provider"] == "deepseek"
+        # 换提供方后端点必须跟着走，而不是留着上一个提供方的地址
+        assert config["backend_url"] == "https://api.deepseek.com/v1"
+
+
+class TestBackendUrlNormalization:
+    """backend_url 不得残留别的提供方的端点（历史漂移：provider=deepseek 却指向智谱）。"""
+
+    def test_stale_other_provider_url_is_replaced(self, monkeypatch):
+        monkeypatch.setattr(
+            dc,
+            "load_last_config",
+            lambda: {"llm_provider": "deepseek", "backend_url": "https://open.bigmodel.cn/api/coding/paas/v4"},
+        )
+
+        assert dc.build_runtime_config()["backend_url"] == "https://api.deepseek.com/v1"
+
+    def test_custom_url_is_preserved(self, monkeypatch):
+        """用户自己的地址不是「别家端点」，必须原样保留。"""
+        monkeypatch.setattr(
+            dc,
+            "load_last_config",
+            lambda: {"llm_provider": "custom", "backend_url": "https://gateway.internal/v1"},
+        )
+
+        assert dc.build_runtime_config()["backend_url"] == "https://gateway.internal/v1"
+
+    def test_default_provider_url_is_preserved(self, monkeypatch):
+        monkeypatch.setattr(dc, "load_last_config", lambda: {})
+
+        assert dc.build_runtime_config()["backend_url"] == dc.DEFAULT_CONFIG["backend_url"]
+
+
+class TestProviderValidation:
+    """提供方白名单 —— 配置了却不生效的选项比报错更糟。"""
+
+    def test_unknown_provider_rejected_with_options(self):
+        with pytest.raises(ValueError, match="不是已知提供方"):
+            dc.validate_config({"timeout": 180, "llm_provider": "no-such-vendor"})
+
+    def test_custom_requires_backend_url(self):
+        with pytest.raises(ValueError, match="backend_url"):
+            dc.validate_config({"timeout": 180, "llm_provider": "custom", "backend_url": ""})
+
+    def test_custom_with_backend_url_accepted(self):
+        dc.validate_config({"timeout": 180, "llm_provider": "custom", "backend_url": "https://x/v1"})
+
+    def test_every_provider_has_label(self):
+        from ifa.providers import PROVIDER_CONFIG, provider_label
+
+        assert PROVIDER_CONFIG
+        for name in PROVIDER_CONFIG:
+            assert provider_label(name), f"{name} 没有展示名"

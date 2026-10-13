@@ -1,3 +1,5 @@
+from ifa.providers import OPENAI_COMPATIBLE_PROVIDERS
+
 from .anthropic_client import AnthropicClient
 from .azure_client import AzureClient
 from .base_client import BaseLLMClient
@@ -14,7 +16,8 @@ def create_llm_client(
     """为指定提供方创建 LLM 客户端。
 
     参数：
-        provider: LLM 提供方，如 openai、azure、anthropic、google、xai、ollama、openrouter、deepseek、opencode。
+        provider: LLM 提供方，如 openai、azure、anthropic、google、xai、ollama、openrouter、
+            deepseek、opencode，或 custom（任意 OpenAI 兼容端点，需同时给 base_url）。
         model: 模型名称或标识。
         base_url: 可选的 API 基础地址。
         **kwargs: 提供方专属的附加参数。
@@ -33,7 +36,7 @@ def create_llm_client(
     """
     provider_lower = provider.lower()
 
-    if provider_lower in ("openai", "ollama", "openrouter", "qwen", "zhipu", "deepseek", "opencode"):
+    if provider_lower in OPENAI_COMPATIBLE_PROVIDERS:
         return OpenAIClient(model, base_url, provider=provider_lower, **kwargs)
 
     if provider_lower == "azure":

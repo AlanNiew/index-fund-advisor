@@ -91,15 +91,29 @@ def analyze(
         "-d",
         help="分析日期 YYYY-MM-DD",
     ),
+    mode: str = typer.Option(
+        "deep",
+        "--mode",
+        "-m",
+        help="分析模式: deep（含多轮辩论，默认）/ deep_simple（无辩论，快得多）",
+    ),
     debug: bool = typer.Option(False, "--debug", help="启用调试模式"),
 ):
     """单只基金深度分析。"""
     from ifa.common import build_state
 
-    console.print(Panel(f"[bold]IFA 单只基金深度分析[/bold]\n基金代码: {fund_code}\n分析日期: {date}"))
-    state = build_state("deep", fund_codes=fund_code, analysis_date=date)
+    mode = mode.strip().lower()
+    if mode not in ("deep", "deep_simple"):
+        # 模式名拼错时直接失败，而不是静默按默认模式跑一遍（用户会以为跑的是他要的模式）。
+        console.print(f"[red]不支持的分析模式: {mode}（可选: deep, deep_simple）[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(
+        Panel(f"[bold]IFA 单只基金深度分析[/bold]\n基金代码: {fund_code}\n分析日期: {date}\n分析模式: {mode}")
+    )
+    state = build_state(mode, fund_codes=fund_code, analysis_date=date)
     build_kwargs: dict[str, Any] = {"callbacks": []} if debug else {}
-    _run_analysis("deep", state, "分析报告", **build_kwargs)
+    _run_analysis(mode, state, "分析报告", **build_kwargs)
 
 
 @app.command()
@@ -169,19 +183,46 @@ def info(
 
 @app.command(name="config")
 def config_cmd(
-    key: str = typer.Argument(None, help="配置项名称"),
-    value: str = typer.Argument(None, help="配置值"),
+    key: str = typer.Argument(None, help="配置项名称，如 llm_provider"),
+    value: str = typer.Argument(None, help="配置值；省略则显示当前生效值"),
+    unset: bool = typer.Option(False, "--unset", help="删除该配置项，恢复默认值"),
 ):
-    """查看或设置配置。"""
-    from ifa.default_config import build_runtime_config
+    """查看或设置配置（写入用户配置文件，无需改源码）。"""
+    from ifa.default_config import LAST_CONFIG_PATH, build_runtime_config, set_user_config, unset_user_config
 
-    if key and value:
-        console.print(f"[yellow]设置 {key} = {value}（需要手动编辑配置文件）[/yellow]")
-        console.print("配置文件位置: ifa/last_config.py")
-    else:
-        cfg = build_runtime_config()
-        for k, v in cfg.items():
-            console.print(f"  {k}: {v}")
+    if key and unset:
+        try:
+            changed = unset_user_config(key)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        if changed:
+            console.print(f"[green]已删除配置项 {key}（回落到默认值）[/green]")
+        else:
+            console.print(f"[yellow]配置项 {key} 未被显式设置过，无需删除[/yellow]")
+        return
+
+    if key and value is not None:
+        try:
+            written = set_user_config(key, value)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        console.print(f"[green]已设置 {key} = {written}[/green]")
+        console.print(f"配置文件: {LAST_CONFIG_PATH}")
+        return
+
+    cfg = build_runtime_config()
+    if key:
+        if key not in cfg:
+            console.print(f"[red]未知配置项: {key}[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"{key}: {cfg[key]}")
+        return
+
+    for k, v in cfg.items():
+        console.print(f"  {k}: {v}")
+    console.print(f"\n配置文件: {LAST_CONFIG_PATH}")
 
 
 @app.command()

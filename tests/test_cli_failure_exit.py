@@ -9,6 +9,7 @@ import pytest
 import typer
 
 import ifa.common as common
+import ifa.default_config as dc
 from ifa.cli.main import _run_analysis
 
 
@@ -104,3 +105,107 @@ class TestSearchCommand:
 
         self._patch_result(monkeypatch, "# Fund Search: 不存在\n# Matches: 0\n\n未找到匹配「不存在」的基金。")
         search(keyword="不存在", limit=1)  # 查无结果不是故障 → 不得抛 typer.Exit
+
+
+class TestAnalyzeMode:
+    """`ifa analyze --mode` 必须真正切换模式，非法模式必须失败。
+
+    历史缺陷：analyze 没有 --mode，四种模式里只有 deep 能从 CLI 走到；
+    deep_simple（无辩论、快得多）实际上只能靠 API/配置触发。
+    """
+
+    def test_invalid_mode_exits_nonzero(self, capsys):
+        from ifa.cli.main import analyze
+
+        with pytest.raises(typer.Exit) as excinfo:
+            analyze(fund_code="510300", date="2024-01-15", mode="deep_medium", debug=False)
+
+        assert excinfo.value.exit_code == 1
+        assert "不支持的分析模式" in capsys.readouterr().out
+
+    def test_mode_is_forwarded_to_advisor_and_state(self, monkeypatch):
+        from ifa.cli.main import analyze
+
+        seen = {}
+
+        class _Advisor:
+            def run(self, mode, state, on_progress=None):
+                seen["mode"] = mode
+                seen["state_mode"] = state.get("mode")
+                return {"final_report": "## 报告", "fund_codes": ["510300"]}
+
+        monkeypatch.setattr(common, "build_advisor", lambda **kwargs: _Advisor())
+        monkeypatch.setattr(common, "save_report", lambda state: "results/x.md")
+
+        analyze(fund_code="510300", date="2024-01-15", mode="deep_simple", debug=False)
+
+        assert seen["mode"] == "deep_simple"
+        assert seen["state_mode"] == "deep_simple"
+
+    def test_default_mode_is_deep(self):
+        """不带 --mode 时默认 deep（含辩论）。
+
+        这里检查声明本身而不是调用函数：直接调用 typer 命令时未传的参数是 OptionInfo
+        对象而非其默认值，只有经 typer 解析后才是字符串。
+        """
+        import inspect
+
+        from ifa.cli.main import analyze
+
+        assert inspect.signature(analyze).parameters["mode"].default.default == "deep"
+
+
+class TestConfigCommand:
+    """`ifa config` 必须真的写用户配置文件。
+
+    历史缺陷：带参数调用只打印一行「配置已更新」黄字，既不落盘也不生效。
+    """
+
+    @staticmethod
+    def _isolate(monkeypatch, tmp_path):
+        monkeypatch.setattr(dc, "LAST_CONFIG_PATH", tmp_path / "config.json")
+        monkeypatch.setattr(dc, "LEGACY_LAST_CONFIG_PATH", tmp_path / "nonexistent.py")
+        return tmp_path / "config.json"
+
+    def test_set_writes_file(self, tmp_path, monkeypatch, capsys):
+        import json
+
+        from ifa.cli.main import config_cmd
+
+        target = self._isolate(monkeypatch, tmp_path)
+        config_cmd(key="llm_provider", value="deepseek", unset=False)
+
+        assert json.loads(target.read_text(encoding="utf-8"))["llm_provider"] == "deepseek"
+        assert "已设置" in capsys.readouterr().out
+
+    def test_unknown_key_exits_nonzero(self, tmp_path, monkeypatch, capsys):
+        from ifa.cli.main import config_cmd
+
+        self._isolate(monkeypatch, tmp_path)
+
+        with pytest.raises(typer.Exit) as excinfo:
+            config_cmd(key="nope", value="1", unset=False)
+
+        assert excinfo.value.exit_code == 1
+        assert "未知配置项" in capsys.readouterr().out
+
+    def test_unset_removes_key_and_file(self, tmp_path, monkeypatch):
+        from ifa.cli.main import config_cmd
+
+        target = self._isolate(monkeypatch, tmp_path)
+        config_cmd(key="llm_provider", value="deepseek", unset=False)
+        assert target.exists()
+
+        config_cmd(key="llm_provider", value=None, unset=True)
+
+        assert not target.exists()
+
+    def test_show_single_key_prints_effective_value(self, tmp_path, monkeypatch, capsys):
+        from ifa.cli.main import config_cmd
+
+        self._isolate(monkeypatch, tmp_path)
+        monkeypatch.setattr(dc, "load_last_config", lambda: {})
+
+        config_cmd(key="llm_provider", value=None, unset=False)
+
+        assert dc.DEFAULT_CONFIG["llm_provider"] in capsys.readouterr().out

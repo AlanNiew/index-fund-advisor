@@ -328,7 +328,9 @@ python-multipart==0.0.32
     # via
     #   mcp
     #   streamlit
-pywin32==312
+# pywin32 只有 Windows wheel（PyPI 上无 Linux 分发、无 sdist），必须带平台标记，
+# 否则 ubuntu-latest 上的 CI 会在 pip install -r requirements.lock 处直接失败
+pywin32==312 ; sys_platform == "win32"
     # via mcp
 pyyaml==6.0.3
     # via

@@ -77,7 +77,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.
 - **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately. It is the *only* writer of agent memory; normal `analyze` runs only read.
 - **Agent memory persists to `<memory_dir>/<name>.json`** (`DEFAULT_CONFIG` → `local_data/memory`). Without `memory_dir` in the config, `FinancialSituationMemory` is in-memory only — that's why unit tests pass a bare config and stay side-effect free.
-- **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.12–3.13 matrix**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing.
+- **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.12–3.13 matrix on `ubuntu-latest`**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing. Because CI is Linux while dev happens on Windows, any Windows-only pin in `requirements.lock` must carry a platform marker (`pywin32==312 ; sys_platform == "win32"`) — without it `pip install -r requirements.lock` fails on every matrix entry. `tests/test_lock_hygiene.py` guards both this and the matrix-vs-`requires-python` agreement.
 - **Generated outputs** `results/`, `test_results/`, `local_data/`, `release/src/`, `release/dist/`, `.claude/` are gitignored.
 
 ## Read before changing sensitive areas

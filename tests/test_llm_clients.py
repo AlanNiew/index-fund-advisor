@@ -1,5 +1,7 @@
-"""LLM 客户端测试 — 工厂函数、模型校验、模型目录、内容规范化。"""
+"""LLM 客户端测试 — 工厂函数、模型校验、模型目录、内容规范化、OpenCode Go 接入。"""
 
+import re
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -171,3 +173,121 @@ class TestNormalizeContent:
         ]
         result = normalize_content(response)
         assert "visible" in result.content
+
+
+# ════════════════════════════════════════════
+#  OpenCode Go 端点接入
+# ════════════════════════════════════════════
+
+
+class TestOpenCodeProvider:
+    """OpenCode Go（opencode）提供方的接入契约。
+
+    该端点对客户端有两条额外要求：自报身份的 User-Agent、以及稳定会话 ID。
+    把它们固定成测试，是因为删掉它们不会报任何错——只会悄悄失去路由与提示缓存优化。
+    """
+
+    def test_factory_returns_openai_client(self):
+        """工厂把 opencode 映射到 OpenAIClient。"""
+        from ifa.llm_clients.openai_client import OpenAIClient
+
+        client = create_llm_client("opencode", "deepseek-v4.1-flash")
+        assert isinstance(client, OpenAIClient)
+        assert client.provider == "opencode"
+
+    def test_uses_opencode_gateway_base_url(self, monkeypatch):
+        """base_url 指向 OpenCode Go 网关，API Key 取自 OPENCODE_API_KEY。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+
+        llm = create_llm_client("opencode", "deepseek-v4.1-flash").get_llm()
+
+        assert llm.openai_api_base == "https://opencode.ai/inference/go/v1"
+        assert llm.model_name == "deepseek-v4.1-flash"
+        assert llm.openai_api_key.get_secret_value() == "sk-test-key"
+
+    def test_sends_self_identifying_user_agent_and_session(self, monkeypatch):
+        """请求必须带上自有 User-Agent 与会话头。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        monkeypatch.delenv("OPENCODE_SESSION_ID", raising=False)
+
+        headers = create_llm_client("opencode", "deepseek-v4-pro").get_llm().default_headers
+
+        assert headers["User-Agent"].startswith("index-fund-advisor/")
+        assert headers["x-opencode-session"]
+
+    def test_user_agent_tracks_package_version(self):
+        """User-Agent 里的版本号必须与 pyproject.toml 一致，否则会无声漂移。"""
+        from ifa.llm_clients.openai_client import _OPENCODE_USER_AGENT
+
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        match = re.search(r'^version = "([^"]+)"', pyproject.read_text(encoding="utf-8"), re.M)
+        assert match is not None
+
+        assert f"index-fund-advisor/{match.group(1)}" == _OPENCODE_USER_AGENT
+
+    def test_session_id_stable_within_process(self, monkeypatch):
+        """一次 ifa 运行内的所有 LLM 调用共享同一会话——这正是该头部的用途。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        monkeypatch.delenv("OPENCODE_SESSION_ID", raising=False)
+
+        first = create_llm_client("opencode", "deepseek-v4-pro").get_llm()
+        second = create_llm_client("opencode", "deepseek-v4.1-flash").get_llm()
+
+        assert first.default_headers["x-opencode-session"] == second.default_headers["x-opencode-session"]
+
+    def test_session_id_env_override(self, monkeypatch):
+        """OPENCODE_SESSION_ID 可覆盖进程默认会话。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "conversation-42")
+
+        headers = create_llm_client("opencode", "deepseek-v4-pro").get_llm().default_headers
+
+        assert headers["x-opencode-session"] == "conversation-42"
+
+    def test_session_id_kwarg_wins_over_env(self, monkeypatch):
+        """显式 kwarg 优先级高于环境变量。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "from-env")
+
+        llm = create_llm_client("opencode", "deepseek-v4-pro", opencode_session_id="from-kwarg").get_llm()
+
+        assert llm.default_headers["x-opencode-session"] == "from-kwarg"
+
+    def test_user_headers_merge_with_required_ones(self, monkeypatch):
+        """用户自定义 header 被保留，但我们要求的会话头不会被顶掉。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        monkeypatch.setenv("OPENCODE_SESSION_ID", "conv-1")
+
+        llm = create_llm_client(
+            "opencode",
+            "deepseek-v4-pro",
+            default_headers={"X-Trace": "abc", "User-Agent": "custom/2.0"},
+        ).get_llm()
+
+        assert llm.default_headers["X-Trace"] == "abc"
+        assert llm.default_headers["User-Agent"] == "custom/2.0"
+        assert llm.default_headers["x-opencode-session"] == "conv-1"
+
+    def test_other_providers_get_no_opencode_headers(self, monkeypatch):
+        """会话头只应出现在 opencode 上，不能泄漏到其他提供方。"""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+
+        assert create_llm_client("deepseek", "deepseek-chat").get_llm().default_headers is None
+
+
+class TestOpenCodeModelCatalog:
+    """OpenCode Go 的模型目录与校验。"""
+
+    def test_catalog_lists_gateway_models(self):
+        quick = [model for _, model in get_model_options("opencode", "quick")]
+        deep = [model for _, model in get_model_options("opencode", "deep")]
+
+        assert "deepseek-v4.1-flash" in quick
+        assert "deepseek-v4-pro" in deep
+
+    def test_validate_model_accepts_gateway_ids(self):
+        assert validate_model("opencode", "deepseek-v4.1-flash") is True
+        assert validate_model("opencode", "deepseek-v4-pro") is True
+
+    def test_validate_model_rejects_foreign_ids(self):
+        assert validate_model("opencode", "gpt-999") is False

@@ -109,3 +109,33 @@ class TestRuntimePaths:
         monkeypatch.setattr(dc, "LAST_CONFIG_PATH", target)
         dc.save_last_config({**dc.DEFAULT_CONFIG, "llm_provider": "openai"})
         assert sorted(p.name for p in tmp_path.iterdir()) == ["last_config.py"]
+
+
+class TestDefaultProviderWiring:
+    """默认提供方与模型目录必须对得上。
+
+    历史上 `backend_url` 长期残留着上一个提供方的地址（指向智谱而 provider 是 deepseek），
+    这类「配置说一套、代码做一套」的漂移只有测试能挡住。
+    """
+
+    def test_default_provider_is_opencode(self):
+        """项目默认走 OpenCode Go 聚合端点。"""
+        assert dc.DEFAULT_CONFIG["llm_provider"] == "opencode"
+
+    def test_default_models_exist_in_catalog(self):
+        """默认模型必须真的在该提供方的模型目录里，否则 CLI 永远选不到它们。"""
+        from ifa.llm_clients.model_catalog import get_known_models
+
+        provider = dc.DEFAULT_CONFIG["llm_provider"]
+        known = get_known_models().get(provider, [])
+        assert known, f"提供方 {provider} 没有模型目录"
+
+        for key in ("deep_think_llm", "quick_think_llm"):
+            assert dc.DEFAULT_CONFIG[key] in known, f"{key}={dc.DEFAULT_CONFIG[key]} 不在 {provider} 的模型目录中"
+
+    def test_backend_url_matches_default_provider(self):
+        """backend_url 不得残留其他提供方的地址（内置提供方以 _PROVIDER_CONFIG 为准）。"""
+        from ifa.llm_clients.openai_client import _PROVIDER_CONFIG
+
+        provider = dc.DEFAULT_CONFIG["llm_provider"]
+        assert dc.DEFAULT_CONFIG["backend_url"] == _PROVIDER_CONFIG[provider][0]

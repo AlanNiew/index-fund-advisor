@@ -60,15 +60,16 @@ cp .env.example .env
 `.env` 支持的 Key（按所用提供方填写其一即可）：
 
 ```ini
+OPENCODE_API_KEY=...          # 默认提供方（OpenCode Go），必填
 OPENAI_API_KEY=sk-...
 AZURE_OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_API_KEY=...
 ZHIPUAI_API_KEY=...
-DEEPSEEK_API_KEY=...          # 默认提供方，必填
+DEEPSEEK_API_KEY=...
 ```
 
-> **默认配置使用 DeepSeek，需要 `DEEPSEEK_API_KEY`。** 切换提供方见下文「配置项」。
+> **默认配置使用 OpenCode Go（`opencode`），需要 `OPENCODE_API_KEY`。** 该端点为订阅制，`ifa` 发请求时会自动附带自定义 `User-Agent` 与进程级 `x-opencode-session` 会话头（服务端据此优化路由与提示缓存；可用 `OPENCODE_SESSION_ID` 覆盖会话 ID）。切换提供方见下文「配置项」。
 
 ### 2. 可选环境变量
 
@@ -85,10 +86,10 @@ DEEPSEEK_API_KEY=...          # 默认提供方，必填
 
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
-| `llm_provider` | `deepseek` | LLM 提供方，可选：`openai` / `azure` / `anthropic` / `google` / `ollama` / `openrouter` / `qwen` / `zhipu` / `xai` / `deepseek` |
-| `deep_think_llm` | `deepseek-reasoner` | 深度推理（报告生成、关键裁决） |
-| `quick_think_llm` | `deepseek-chat` | 快速调用（工具调用、辩论）。**不要用最便宜的 turbo 档**——结构化输出在弱模型上不可靠，会污染整条分析管道 |
-| `backend_url` | `https://open.bigmodel.cn/api/coding/paas/v4` | API 基础地址（仅对未内置 base_url 的提供方生效；各提供方默认地址见 `llm_clients/openai_client.py` 的 `_PROVIDER_CONFIG`） |
+| `llm_provider` | `opencode` | LLM 提供方，可选：`opencode` / `openai` / `azure` / `anthropic` / `google` / `ollama` / `openrouter` / `qwen` / `zhipu` / `xai` / `deepseek` |
+| `deep_think_llm` | `deepseek-v4-pro` | 深度推理（报告生成、关键裁决） |
+| `quick_think_llm` | `deepseek-v4.1-flash` | 快速调用（工具调用、辩论）。**不要用最便宜的 turbo 档**——结构化输出在弱模型上不可靠，会污染整条分析管道 |
+| `backend_url` | `https://opencode.ai/inference/go/v1` | API 基础地址（仅对未内置 base_url 的提供方生效；各提供方默认地址见 `llm_clients/openai_client.py` 的 `_PROVIDER_CONFIG`） |
 | `enable_debate` | `True` | 是否启用辩论（关闭后退化为 `deep_simple`） |
 | `max_debate_rounds` | `2` | 基金辩论轮数 |
 | `max_risk_discuss_rounds` | `2` | 风险辩论轮数 |

@@ -56,12 +56,13 @@ DEFAULT_CONFIG = {
     # 注：quick_think_llm 用于工具调用与结构化输出解析，是数据采集链路的根基。
     # 不要用最便宜的 turbo 档——结构化输出在弱模型上不可靠，会污染整条分析管道。
     # 若确需降级，请显式覆盖此配置并接受工具调用失败率上升。
-    # deepseek 走 OpenAI 兼容协议（OpenAIClient），base_url 见 llm_clients/openai_client.py 的 _PROVIDER_CONFIG；
+    # 默认走 OpenCode Go 聚合端点（订阅制，OpenAI 兼容协议）；需要在 .env 里配置
+    # OPENCODE_API_KEY。base_url 见 llm_clients/openai_client.py 的 _PROVIDER_CONFIG；
     # 下方 backend_url 仅对未内置 base_url 的提供方生效。
-    "llm_provider": "deepseek",
-    "deep_think_llm": "deepseek-reasoner",
-    "quick_think_llm": "deepseek-chat",
-    "backend_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+    "llm_provider": "opencode",
+    "deep_think_llm": "deepseek-v4-pro",
+    "quick_think_llm": "deepseek-v4.1-flash",
+    "backend_url": "https://opencode.ai/inference/go/v1",
     # ── 提供方专属思考参数 ──
     "google_thinking_level": "high",
     "openai_reasoning_effort": "high",

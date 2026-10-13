@@ -129,6 +129,16 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("DeepSeek Chat (V3) - Fast, cost-effective, tool use", "deepseek-chat"),
         ],
     },
+    "opencode": {
+        "quick": [
+            ("DeepSeek V4.1 Flash - Fast, low cost, reliable tool use", "deepseek-v4.1-flash"),
+            ("DeepSeek V4 Flash - Cheapest, high-volume tasks", "deepseek-v4-flash"),
+        ],
+        "deep": [
+            ("DeepSeek V4 Pro - Deepest reasoning, best for analysis", "deepseek-v4-pro"),
+            ("DeepSeek V4.1 Flash - Fast, low cost, reliable tool use", "deepseek-v4.1-flash"),
+        ],
+    },
 }
 
 

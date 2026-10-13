@@ -47,7 +47,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **`src/ifa/agents/`** — ReAct agents + ToolNodes, grouped under `analysts/`, `researchers/`, `managers/`, `risk_mgmt/`, with `tools/` (36 data tools), `prompts/` (separated from agent code), and BM25 `memory.py`.
 - **`src/ifa/data_tools/`** — declarative `_TOOL_SPECS` registry + `CachedDataToolExecutor` (SHA1-keyed cache + snapshots, disk-failure → degrade to direct execution).
 - **`src/ifa/dataflows/`** — AkShare wrappers (retry, asset-type auto-detect) + `clean_dataframe`/`truncate_report`.
-- **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek; Anthropic + Google have dedicated clients.
+- **`src/ifa/llm_clients/`** — `create_llm_client` factory; `OpenAIClient` covers openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode; Anthropic + Google have dedicated clients. `opencode` talks to the OpenCode Go gateway (`https://opencode.ai/inference/go/v1`) and auto-attaches a custom `User-Agent` plus a process-scoped `x-opencode-session` header (override the session via `OPENCODE_SESSION_ID`).
 - **`src/ifa/backtest/`** — buy-and-hold `run_backtest()` + `rating_validator.py` (rating-vs-actual-return validation).
 - **`src/ifa/observability/`** — `RequestTracer` auto-traces `AdvisorGraph.run()` to `results/traces/`.
 - **Shared init for CLI/Web/API** lives in `src/ifa/common.py`: `build_advisor()`, `build_state()`, `save_report()`, `get_provider_kwargs()`. All three interface layers must use these — don't re-init the graph ad hoc.
@@ -65,7 +65,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 ## Gotchas
 
 - **`ifa <6位数字>` auto-routes to `analyze`** via `_FundCodeGroup` in `src/ifa/cli/main.py` — so `ifa 510300` works with no subcommand, but a typo'd subcommand (e.g. `ifa analyz`) still errors normally.
-- **Default LLM provider is DeepSeek** → a valid `DEEPSEEK_API_KEY` in `.env` is required out of the box. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai/zhipu) selectable in `src/ifa/default_config.py`.
+- **Default LLM provider is OpenCode Go** (`opencode`) → a valid `OPENCODE_API_KEY` in `.env` is required out of the box; requests go to `https://opencode.ai/inference/go/v1`. Other providers (openai/azure/anthropic/google/ollama/openrouter/qwen/xai/zhipu/deepseek) selectable in `src/ifa/default_config.py`.
 - **`quick_think_llm` must not be the cheapest tier** — weak models produce unreliable structured output that pollutes the whole pipeline.
 - **`IFA_API_KEY` empty = API auth disabled, all routes open.** Set it before exposing the API.
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.

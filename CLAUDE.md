@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（255 个，覆盖 14 个模块）
+pytest                # 全部测试（405 个，覆盖 14 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -152,5 +152,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：268 个测试覆盖 14 个模块（含 `test_core.py` 41、`test_macro_data.py` 19、`test_advisor_graph.py`、`test_api_and_thread_safety.py` 等）
+- 测试：405 个测试覆盖 14 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

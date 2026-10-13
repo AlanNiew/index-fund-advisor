@@ -1,4 +1,9 @@
-"""金融情景记忆模块测试 — BM25 存储与检索、中文分词、FIFO 淘汰。"""
+"""金融情景记忆模块测试 — BM25 存储与检索、中文分词、FIFO 淘汰、落盘持久化。"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
 
 from ifa.agents.memory import FinancialSituationMemory
 
@@ -180,3 +185,129 @@ class TestFIFOEviction:
         )
         assert mem.documents == ["B", "C"]
         assert mem.recommendations == ["b", "c"]
+
+
+class TestPersistence:
+    """记忆落盘测试 —— 修复「记忆只在内存、进程退出即丢失」。"""
+
+    def test_no_memory_dir_disables_persistence(self):
+        """未提供 memory_dir 时不落盘、不创建文件（保持单元测试无副作用）。"""
+        mem = FinancialSituationMemory("nopersist", {"max_situations": 10})
+        assert mem._path is None
+        mem.add_situations([("情景A", "建议A")])
+        # add_situations 不应因缺少落盘路径而报错，内存仍生效
+        assert mem.documents == ["情景A"]
+
+    def test_persist_and_reload(self, tmp_path):
+        """add_situations 后写盘，新实例可载入并正常检索。"""
+        cfg = {"memory_dir": str(tmp_path)}
+        mem = FinancialSituationMemory("bull_memory", cfg)
+        mem.add_situations([("市场大涨，沪深300涨幅超过3%", "建议持有"), ("市场大跌，恐慌情绪蔓延", "建议分批建仓")])
+
+        assert (tmp_path / "bull_memory.json").exists()
+
+        reloaded = FinancialSituationMemory("bull_memory", cfg)
+        assert reloaded.documents == ["市场大涨，沪深300涨幅超过3%", "市场大跌，恐慌情绪蔓延"]
+        assert reloaded.recommendations == ["建议持有", "建议分批建仓"]
+        # 载入后索引按需重建，检索立即可用
+        results = reloaded.get_memories("市场大幅上涨", n_matches=1)
+        assert len(results) == 1
+        assert "沪深300" in results[0]["matched_situation"]
+
+    def test_reload_applies_fifo_cap(self, tmp_path):
+        """文件来自上限更大的旧配置时，载入即按当前上限淘汰最旧条目。"""
+        cfg = {"memory_dir": str(tmp_path)}
+        writer = FinancialSituationMemory("capped", {**cfg, "max_situations": 10})
+        writer.add_situations([(f"情景{i}", f"建议{i}") for i in range(10)])
+
+        reloaded = FinancialSituationMemory("capped", {**cfg, "max_situations": 3})
+        assert reloaded.documents == ["情景7", "情景8", "情景9"]
+
+    def test_corrupt_file_degrades_to_empty(self, tmp_path):
+        """损坏 JSON 降级为空记忆，不抛异常。"""
+        (tmp_path / "broken.json").write_text("{ 这不是合法 JSON", encoding="utf-8")
+        mem = FinancialSituationMemory("broken", {"memory_dir": str(tmp_path)})
+        assert mem.documents == []
+        assert mem.get_memories("任意查询") == []
+
+    def test_malformed_entries_are_skipped(self, tmp_path):
+        """逐条校验：缺字段/类型错误的条目被跳过，其余正常载入。"""
+        payload = {
+            "version": 1,
+            "entries": [
+                {"situation": "合法情景", "recommendation": "合法建议"},
+                {"situation": "缺推荐"},
+                "不是字典",
+                {"situation": 1, "recommendation": 2},
+            ],
+        }
+        (tmp_path / "partial.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        mem = FinancialSituationMemory("partial", {"memory_dir": str(tmp_path)})
+        assert mem.documents == ["合法情景"]
+        assert mem.recommendations == ["合法建议"]
+
+    def test_non_dict_payload_degrades_to_empty(self, tmp_path):
+        """顶层不是对象（如数组）时同样降级为空。"""
+        (tmp_path / "array.json").write_text("[1, 2, 3]", encoding="utf-8")
+        mem = FinancialSituationMemory("array", {"memory_dir": str(tmp_path)})
+        assert mem.documents == []
+
+    def test_persist_leaves_no_tmp_residue(self, tmp_path):
+        """原子写不留下 .tmp 残留文件。"""
+        mem = FinancialSituationMemory("atomic", {"memory_dir": str(tmp_path)})
+        mem.add_situations([("情景", "建议")])
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["atomic.json"]
+
+    def test_clear_removes_file(self, tmp_path):
+        """clear() 默认删除落盘文件，避免下次启动读回旧记忆。"""
+        cfg = {"memory_dir": str(tmp_path)}
+        mem = FinancialSituationMemory("clearable", cfg)
+        mem.add_situations([("情景", "建议")])
+        assert (tmp_path / "clearable.json").exists()
+
+        mem.clear()
+        assert not (tmp_path / "clearable.json").exists()
+        assert FinancialSituationMemory("clearable", cfg).documents == []
+
+    def test_clear_without_persist_keeps_file(self, tmp_path):
+        """clear(persist=False) 只清内存，保留磁盘文件。"""
+        cfg = {"memory_dir": str(tmp_path)}
+        mem = FinancialSituationMemory("keepfile", cfg)
+        mem.add_situations([("情景", "建议")])
+        mem.clear(persist=False)
+
+        assert mem.documents == []
+        assert (tmp_path / "keepfile.json").exists()
+
+    def test_fifo_eviction_persists(self, tmp_path):
+        """淘汰结果同步落盘，而不是只在内存里一致。"""
+        cfg = {"memory_dir": str(tmp_path), "max_situations": 2}
+        mem = FinancialSituationMemory("evict", cfg)
+        mem.add_situations([("A", "a"), ("B", "b"), ("C", "c")])
+        assert FinancialSituationMemory("evict", cfg).documents == ["B", "C"]
+
+    def test_cross_process_reload(self, tmp_path):
+        """真实的跨会话复用：子进程写入，父进程载入。
+
+        这是本次修复要保证的核心行为——此前记忆只存在于内存，进程退出即蒸发，
+        正常分析流程中 get_memories() 恒为空。
+        """
+        project_root = Path(__file__).resolve().parents[1]
+        script = (
+            "from ifa.agents.memory import FinancialSituationMemory\n"
+            f"m = FinancialSituationMemory('cross', {{'memory_dir': {str(tmp_path)!r}}})\n"
+            "m.add_situations([('跨进程情景', '跨进程建议')])\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        mem = FinancialSituationMemory("cross", {"memory_dir": str(tmp_path)})
+        assert mem.documents == ["跨进程情景"]
+        assert mem.recommendations == ["跨进程建议"]

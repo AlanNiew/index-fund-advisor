@@ -68,7 +68,8 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **`quick_think_llm` must not be the cheapest tier** — weak models produce unreliable structured output that pollutes the whole pipeline.
 - **`IFA_API_KEY` empty = API auth disabled, all routes open.** Set it before exposing the API.
 - **Rating validator supports ETF/index funds only** — public funds hit `get_fund_history_nav`'s `tail(120)` truncation. Enforced by design.
-- **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately.
+- **`ifa validate --update-memory` defaults OFF** — survivorship-bias guard; only enable deliberately. It is the *only* writer of agent memory; normal `analyze` runs only read.
+- **Agent memory persists to `<memory_dir>/<name>.json`** (`DEFAULT_CONFIG` → `local_data/memory`). Without `memory_dir` in the config, `FinancialSituationMemory` is in-memory only — that's why unit tests pass a bare config and stay side-effect free.
 - **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.10–3.13 matrix**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing.
 - **Generated outputs** `results/`, `test_results/`, `local_data/`, `release/src/`, `release/dist/`, `.claude/` are gitignored.
 

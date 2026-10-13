@@ -128,3 +128,41 @@ class TestRunExceptionProtection:
         )
         assert isinstance(result, dict)
         assert "error" in result
+
+
+class TestMemoryPersistenceWiring:
+    """AdvisorGraph 与记忆落盘的接线：config 里有没有 memory_dir 决定是否落盘。"""
+
+    def test_config_without_memory_dir_disables_persistence(self, advisor):
+        """测试夹具的 config 不含 memory_dir → 四个记忆都不落盘，测试保持无副作用。"""
+        for mem in (
+            advisor.bull_memory,
+            advisor.bear_memory,
+            advisor.research_manager_memory,
+            advisor.portfolio_manager_memory,
+        ):
+            assert mem._path is None
+
+    def test_config_memory_dir_is_propagated_to_all_memories(self, tmp_path):
+        """config 带 memory_dir 时，四个记忆各自指向 <dir>/<name>.json。"""
+        from ifa.graph.advisor_graph import AdvisorGraph
+
+        adv = AdvisorGraph(
+            quick_llm=MockLLM(),
+            deep_llm=MockLLM(),
+            config={
+                "enable_debate": True,
+                "max_debate_rounds": 1,
+                "max_risk_discuss_rounds": 1,
+                "max_recur_limit": 50,
+                "results_dir": "test_results",
+                "memory_dir": str(tmp_path),
+            },
+        )
+        for mem in (
+            adv.bull_memory,
+            adv.bear_memory,
+            adv.research_manager_memory,
+            adv.portfolio_manager_memory,
+        ):
+            assert mem._path == tmp_path / f"{mem.name}.json"

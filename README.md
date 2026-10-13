@@ -354,6 +354,9 @@ Agent 可使用 **36 个数据工具**（`src/ifa/agents/tools/`），全部来�
 - 每个 Agent 可携带 `FinancialSituationMemory`（`src/ifa/agents/memory.py`），基于 BM25 检索历史相似情景，中英混合分词（中文按字、英文按词）。
 - 条目上限默认 **1000 条**（`_DEFAULT_MAX_SITUATIONS`），FIFO 淘汰。可在配置中通过 `max_situations` 调整。
 - `Reflector`（`src/ifa/graph/reflection.py`）在决策后基于实际收益/亏损反思并更新各 Agent 记忆。
+- **记忆会落盘**：写入 `local_data/memory/<name>.json`（由配置项 `memory_dir` 决定），下次启动自动载入，
+  因此 `ifa validate --update-memory` 积累的经验能在之后的 `ifa analyze` 中真正被检索到。
+  未配置 `memory_dir` 时仅存在于内存。
 
 > **诚实标注**：反思系统用市场短期收益强化 Agent 记忆，存在幸存者偏差风险——短期涨跌是噪声，把它编码成「经验」可能强化错误模式。这是已知的设计权衡。
 
@@ -439,7 +442,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（255 个测试，覆盖 14 个模块）
+# 测试（268 个测试，覆盖 14 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -500,7 +503,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 255 个测试（14 个模块）
+├── tests/                    # 268 个测试（14 个模块）
 ├── scripts/                  # 每日分析等脚本
 ├── release/                  # PyPI 轻量发行脚手架（assemble.py）
 ├── pyproject.toml

@@ -3,14 +3,12 @@
 
 from __future__ import annotations
 
-import contextlib
-import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
+from ifa.atomic_io import atomic_write_json, atomic_write_text
 from ifa.graph.advisor_graph import AdvisorGraph
 from ifa.llm_clients.factory import create_llm_client
 
@@ -93,37 +91,10 @@ def build_state(mode: str, **kwargs: str) -> dict[str, str]:
 _MODE_LABEL = {"deep": "深度分析", "screen": "筛选对比", "portfolio": "组合配置"}
 
 
-def _atomic_write_text(path: str | os.PathLike, content: str) -> None:
-    """原子写文本:先写 tmp 文件,再 Path.replace 原子改名。
-
-    参考 default_config.save_last_config 的模式。replace 失败则清理 tmp 并降级为直写
-    (非原子但保证能写,避免 tmp 残留或写入完全失败)。
-    """
-    _atomic_write(path, lambda t: t.write_text(content, encoding="utf-8"))
-
-
-def _atomic_write_json(path: str | os.PathLike, obj: dict) -> None:
-    """原子写 JSON。"""
-    _atomic_write(path, lambda t: t.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8"))
-
-
-def _atomic_write(path: str | os.PathLike, write_fn) -> None:
-    """原子写内部实现:tmp 文件 → Path.replace,失败兜底直写。
-
-    write_fn(tmp_path) 负责把内容写到 tmp 文件。tmp 与目标同目录(同文件系统)保证 replace 原子。
-    """
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    try:
-        write_fn(tmp)
-        tmp.replace(target)
-    except Exception:
-        with contextlib.suppress(Exception):
-            tmp.unlink(missing_ok=True)
-        # 兜底:非原子直写。崩溃可能截断,但好过完全不写
-        logger.warning("原子写失败,降级为直写: %s", target)
-        write_fn(target)
+# 兼容既有调用点：advisor_graph._log_state / tracer.save 仍从 ifa.common 导入这两个私有名。
+# 实现已迁至 ifa/atomic_io.py（叶子模块可直接用，无需经由组合根）。
+_atomic_write_text = atomic_write_text
+_atomic_write_json = atomic_write_json
 
 
 def save_report(state: dict) -> str | None:

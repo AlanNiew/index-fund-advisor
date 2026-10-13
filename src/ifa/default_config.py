@@ -39,6 +39,9 @@ DEFAULT_CONFIG = {
     "data_tools_cache_dir": os.path.join(LOCAL_DATA_DIR, "data_tools", "cache"),
     "data_tools_snapshot_dir": os.path.join(LOCAL_DATA_DIR, "data_tools", "snapshots"),
     "agent_output_dir": os.path.join(LOCAL_DATA_DIR, "agents"),
+    # BM25 情景记忆落盘目录（见 agents/memory.py）。此前记忆只存在于内存，
+    # 正常分析流程中 get_memories() 恒为空——落盘后 Reflector 的经验才能真正跨会话复用。
+    "memory_dir": os.path.join(LOCAL_DATA_DIR, "memory"),
     "market_region": "cn_a",
     # ── LLM 配置 ──
     # 注：quick_think_llm 用于工具调用与结构化输出解析，是数据采集链路的根基。
@@ -132,6 +135,7 @@ def build_runtime_config() -> dict:
     runtime_config["data_tools_cache_dir"] = os.path.join(LOCAL_DATA_DIR, "data_tools", "cache")
     runtime_config["data_tools_snapshot_dir"] = os.path.join(LOCAL_DATA_DIR, "data_tools", "snapshots")
     runtime_config["agent_output_dir"] = os.path.join(LOCAL_DATA_DIR, "agents")
+    runtime_config["memory_dir"] = os.path.join(LOCAL_DATA_DIR, "memory")
     validate_config(runtime_config)
     return runtime_config
 
@@ -144,6 +148,7 @@ _PATH_KEYS = {
     "data_tools_cache_dir",
     "data_tools_snapshot_dir",
     "agent_output_dir",
+    "memory_dir",
 }
 
 

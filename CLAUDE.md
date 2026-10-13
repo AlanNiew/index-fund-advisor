@@ -68,7 +68,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - `managers/` — portfolio_advisor、research_manager（研究经理裁决）、portfolio_manager（最终决策）、report_generator（整合辩论裁决生成报告）
   - `risk_mgmt/` — aggressive_debator（积极）、conservative_debator（保守）、neutral_debator（中立），三方风险辩论
   - `tools/` — 四类数据工具：`public_fund_tools`（20）、`macro_tools`（8）、`etf_index_tools`（5）、`constituent_tools`（3）
-  - `memory.py` — 基于 BM25 的金融情景记忆模块，中英混合分词（中文按字/英文按词），FIFO 淘汰（默认上限 1000 条）
+  - `memory.py` — 基于 BM25 的金融情景记忆模块，中英混合分词（中文按字/英文按词），FIFO 淘汰（默认上限 1000 条），支持 JSON 落盘 + 启动载入
   - `prompts/` — Agent prompt 模板，分离自 Agent 实现代码
 - **图编排层** (`src/ifa/graph/`) — 模块化图编排（借鉴 TradingAgents）
   - `advisor_graph.py` — 主编排类 `AdvisorGraph`，负责图构建、运行、日志、反思
@@ -107,6 +107,13 @@ CLI / Web / API 三个接口层共用四个函数：
 - 每个 Agent 可携带 `FinancialSituationMemory` 实例，基于 BM25 检索历史相似情景
 - `_tokenize()` 使用中英混合分词：中文按字拆分（每个汉字独立 token），英文/数字按词拆分
 - `add_situations()` 带 FIFO 淘汰机制（默认上限 1000 条，可配置 `max_situations`）
+- **落盘持久化**：配置提供 `memory_dir` 时记忆写入 `<memory_dir>/<name>.json`，实例化时自动载入。
+  `DEFAULT_CONFIG` 默认指向 `local_data/memory`；不提供 `memory_dir` 则不落盘（单元测试因此保持无副作用）
+  - 写盘走 `src/ifa/atomic_io.py` 的原子写；失败只告警，不阻塞分析
+  - 载入对损坏 / 缺字段的文件降级为空记忆，绝不抛异常；`clear()` 默认同时删除落盘文件
+  - **正常分析流程不会写入记忆**——只有 `ifa validate --update-memory` 会调用
+    `reflect_and_remember()`。落盘保证的是这些经验能被之后的 `ifa analyze` 复用，
+    而非"运行越久记忆越多"
 - `Reflector` 在决策后根据实际收益/亏损反思并更新各 Agent 的记忆（`reflect_and_remember()`）
 - `Reflector.reflect_all()` 按模式条件性反思：deep_simple 跳过，portfolio 额外反思 risk_debate
 
@@ -121,6 +128,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - CLI 通过 `save_last_config()` 持久化到 `src/ifa/last_config.py`
 - 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK）
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
+- 记忆落盘目录：`memory_dir`（默认 `local_data/memory`，随 `IFA_LOCAL_DATA_DIR` 变化；属于 `_PATH_KEYS`，不会被写入 `last_config.py`）
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 2）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
 
 ### 健壮性模式
@@ -129,6 +137,7 @@ CLI / Web / API 三个接口层共用四个函数：
 
 - **LLM 调用统一走 `invoke_llm_safely()` / `invoke_chain_safely()`** — 定义在 `src/ifa/agents/utils.py`，带指数退避重试。所有 Agent 和图模块中的 LLM 调用都必须使用它，禁止裸调用 `llm.invoke()`
 - **`run()` 顶层异常保护** — `AdvisorGraph.run()` 用 try/except 包裹 `graph.invoke()`，失败时仍保存日志并返回含 `error` 字段的状态
+- **原子写统一走 `src/ifa/atomic_io.py`** — 报告 / 日志 / 追踪 / 记忆的落盘都经 `atomic_write*()`（tmp 文件 → `Path.replace`，失败清理 tmp 并降级为直写）。该模块独立于 `common.py`，使 `agents/memory.py` 这类叶子模块无需 import 组合根
 - **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
 - **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
 - **安全字典访问** — 所有 Agent 节点使用 `.get()` + `isinstance` 检查访问嵌套状态；`_safe_get_nested()` 用于日志；`Reflector._safe_get_debate()` 用于反思
@@ -143,5 +152,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：255 个测试覆盖 14 个模块（含 `test_core.py` 41、`test_macro_data.py` 19、`test_advisor_graph.py`、`test_api_and_thread_safety.py` 等）
+- 测试：268 个测试覆盖 14 个模块（含 `test_core.py` 41、`test_macro_data.py` 19、`test_advisor_graph.py`、`test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

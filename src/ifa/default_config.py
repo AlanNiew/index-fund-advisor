@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ifa.atomic_io import atomic_write_json
+from ifa.env_loader import user_config_dir
 from ifa.providers import PROVIDER_CONFIG, canonical_base_urls, default_base_url
 
 # 路径类配置不写入用户配置文件：换机器/换目录后会读到过期绝对路径，
@@ -38,18 +39,6 @@ def _find_project_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-def _user_config_dir() -> str:
-    """返回用户配置目录（可用 IFA_CONFIG_DIR 覆盖）。"""
-    override = os.getenv("IFA_CONFIG_DIR", "").strip()
-    if override:
-        return override
-    if os.name == "nt":
-        base = os.getenv("APPDATA") or os.path.expanduser("~")
-    else:
-        base = os.getenv("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "ifa")
-
-
 PROJECT_DIR = _find_project_dir()
 LOCAL_DATA_DIR = os.getenv(
     "IFA_LOCAL_DATA_DIR",
@@ -59,7 +48,7 @@ LOCAL_DATA_DIR = os.getenv(
 # 用户配置文件（JSON）。放在用户可写目录，而不是已安装包目录：此前配置写在
 # <包目录>/last_config.py，pip 安装的用户既不该、常常也无法改 site-packages，
 # 升级一次就把配置丢掉。现在 ifa config <key> <value> 会真正写这个文件。
-LAST_CONFIG_PATH = Path(_user_config_dir()) / "config.json"
+LAST_CONFIG_PATH = Path(user_config_dir()) / "config.json"
 
 # 旧版配置位置（Python 字面量）。仅作只读兼容：老用户升级后仍能读到原先保存的配置，
 # 下一次 save_last_config() 会写到新的 JSON 位置。

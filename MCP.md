@@ -16,6 +16,10 @@ pip install -e ".[mcp]"
 
 安装后会注册 `ifa-mcp` 命令行入口，同时 `ifa.mcp` 子包可被 `python -m ifa.mcp.server` 直接启动。
 
+全局安装（`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa`）时不需要仓库目录：
+MCP server 与 CLI 一样走 `ifa.env_loader.load_env_files()`，会**同时**读取工作目录向上找到的 `.env` 与用户级 `.env`
+（`IFA_CONFIG_DIR` → `%APPDATA%\ifa\.env`），因此 Key 放用户级 `.env` 即可。
+
 ---
 
 ## 暴露的工具（共 9 个）

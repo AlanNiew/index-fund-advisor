@@ -3,12 +3,13 @@
 
 import os
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-load_dotenv()
+from ifa.env_loader import load_env_files
+
+load_env_files()
 
 _CORS_ORIGINS = [o.strip() for o in os.environ.get("IFA_CORS_ORIGINS", "*").split(",") if o.strip()]
 

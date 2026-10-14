@@ -43,9 +43,9 @@ _SRC_DIR = _PROJECT_ROOT / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from dotenv import load_dotenv
+from ifa.env_loader import load_env_files
 
-load_dotenv()
+load_env_files()
 
 logging.basicConfig(
     level=logging.INFO,

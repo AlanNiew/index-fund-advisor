@@ -5,15 +5,17 @@ import os
 import sys
 
 import streamlit as st
-from dotenv import load_dotenv
+
+from ifa.env_loader import load_env_files
 
 # 确保项目根目录和 src 目录都在 sys.path 中
 _PROJECT_ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 sys.path.insert(0, _PROJECT_ROOT)
 
-# 加载 .env 文件（CLI 入口 cli/main.py 也会加载，但 Streamlit 子进程需要单独加载）
-load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+# 加载 .env 文件（CLI 入口 cli/main.py 也会加载，但 Streamlit 子进程需要单独加载；
+# load_env_files 同时覆盖用户配置目录，便于不在项目目录里启动时也能读到 Key）
+load_env_files()
 
 st.set_page_config(
     page_title="IFA - 指数基金分析",

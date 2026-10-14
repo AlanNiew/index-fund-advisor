@@ -19,6 +19,10 @@ ifa portfolio --risk moderate            # 组合配置建议（含风险辩论�
 ifa search 沪深300                       # 快速搜索（不经过 LLM）
 ifa info 510300                          # 基金基本信息（不经过 LLM）
 ifa config                               # 查看当前配置
+ifa backtest 510300                      # 买入-持有回测（不经过 LLM）
+ifa tools                                # 列出全部数据工具与参数（36 个，由注册表生成）
+ifa tool get_index_valuation -p index_name=沪深300   # 直接调用一个数据工具
+ifa skill                                # 把内置 skill 安装到用户级目录（任意项目可用）
 
 # Web 界面
 ifa-web    # 启动 Streamlit（内部通过 subprocess 调用 streamlit run web/app.py）
@@ -30,7 +34,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（577 个，覆盖 16 个模块）
+pytest                # 全部测试（622 个，覆盖 27 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -90,7 +94,9 @@ CLI / Web / API 三个接口层共用四个函数：
   - 提供方清单是单一事实来源：`src/ifa/providers.py` 的 `PROVIDER_CONFIG`（base_url / api_key_env / 展示名）与 `OPENAI_COMPATIBLE_PROVIDERS`。该模块**零依赖**且位于包顶层，`default_config` 只能从它取提供方信息 —— 若放进 `llm_clients/` 会让 `ifa config` / `search` / `info` 连带拉起 langchain 全栈
   - `custom` 提供方 = 任意 OpenAI 兼容端点（自建网关/内网 one-api）：必须显式提供 `backend_url`（否则构造 LLM 时抛 `ValueError`），模型名不做目录校验，Key 取 `IFA_CUSTOM_API_KEY` 或配置项 `custom_api_key`
   - `opencode` 走 **OpenCode Go** 聚合端点（`https://opencode.ai/inference/go/v1`，订阅制）。该服务要求客户端自报身份并携带稳定会话 ID，故 opencode 提供方会额外注入 `default_headers`：自定义 `User-Agent` + 进程级 `x-opencode-session`（可用 `OPENCODE_SESSION_ID` 环境变量覆盖；一次 `ifa` 运行 = 一个会话）。缺失时服务端按通用 SDK 客户端处理且无法复用提示缓存。思考模式下该网关还要求把历史 assistant 消息的 `reasoning_content` 原样回传（langchain_openai 双向丢弃该字段，故 `NormalizedChatOpenAI` 只对 opencode 打开 `_preserve_reasoning_content`）。
-- **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
+- **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块；`tools_cmd.py` 提供 `tools` / `tool` / `skill` 三个不经过 LLM 的命令）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
+- **内置 skill** (`src/ifa/skills/fund.md`) — 随包分发（`pyproject.toml` 的 `[tool.setuptools.package-data]`），`ifa skill` 装到 `~/.claude/skills/`。文件里的工具表由 `ifa tools --markdown` 在 BEGIN/END 标记之间生成，**不要手写**；`tests/test_skill_doc.py` 校验它覆盖全部工具且不含 `cd` / `python -c`
+- **环境加载** (`src/ifa/env_loader.py`) — `user_config_dir()`（`IFA_CONFIG_DIR` → `%APPDATA%\ifa` → `~/.config/ifa`）与 `load_env_files()`（工作目录向上 6 层 + 用户级 `.env`，`override=False`）。四个入口都用它取代裸 `load_dotenv()`：否则全局安装后从任意目录启动会读不到 Key，报错却是 "Missing credentials"
 - **回测引擎** (`src/ifa/backtest/`) — 买入-持有策略回测，`run_backtest()` 输出年化收益、最大回撤、Sharpe、月度收益、净值曲线
 - **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
 - **组合模型** (`src/ifa/portfolio/`) — `RiskProfile` 数据模型（4 种风险偏好）+ 资产配置策略描述
@@ -136,7 +142,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - `ifa config <key> <value>` 真正落盘：`set_user_config()` / `unset_user_config()` 原子写用户配置文件（`IFA_CONFIG_DIR` → Windows `%APPDATA%\ifa\config.json`，否则 `~/.config/ifa/config.json`）；`save_last_config()` 写同一文件。可配置项 = `CONFIGURABLE_KEYS`（DEFAULT_CONFIG 中非路径键、非字典键）；旧版 `src/ifa/last_config.py` 仅只读兼容
 - 环境变量覆盖表 `_ENV_OVERRIDES`：`IFA_LLM_PROVIDER` / `IFA_DEEP_LLM` / `IFA_QUICK_LLM` / `IFA_BACKEND_URL` / `IFA_CUSTOM_API_KEY` / `IFA_ANALYSIS_MODE` / `IFA_AZURE_API_VERSION` / `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` / `IFA_LLM_MAX_RETRIES` / `IFA_DATA_SOURCE_TIMEOUT` / `IFA_ENABLE_DEBATE`（空白值视为未设置；整型/布尔键经 `_coerce_config_value` 转换，非法值抛 `ValueError`）
 - `backend_url` 归一化：残留的**别家**内置端点（历史漂移：provider=deepseek 却指向智谱）会被重置为所选提供方默认端点，用户自定义地址保留；`custom` 且地址为空时 `validate_config` 报错
-- 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENCODE/OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK/QWEN/XAI/OPENROUTER）
+- 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENCODE/OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK/QWEN/XAI/OPENROUTER）。加载走 `ifa.env_loader.load_env_files()`：**工作目录向上 6 层优先，其次用户级 `.env`**（`IFA_CONFIG_DIR` → `%APPDATA%\ifa\.env` / `~/.config/ifa/.env`），`override=False` 故先加载者生效 —— `uv tool install` 的全局 CLI 与 MCP server 因此在任意 CWD 都能拿到 Key
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
 - 记忆落盘目录：`memory_dir`（默认 `local_data/memory`，随 `IFA_LOCAL_DATA_DIR` 变化；属于 `_PATH_KEYS`，不会被写入用户配置文件）
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 1）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
@@ -171,8 +177,10 @@ CLI / Web / API 三个接口层共用四个函数：
 
 - 包布局：`pyproject.toml` 的 `packages.find` 配置 `where=["src"]`、`include=["ifa*"]`，`src/ifa` 是唯一主包（CLI 入口在 `ifa.cli` 子包内）；`api/`、`web/` 位于项目顶层，由 CLI 入口模块运行时注入 sys.path
 - 入口点：`ifa`（`ifa.cli.main:app`）和 `ifa-web`（`ifa.cli.web_entry:main`）注册在 `[project.scripts]`；API 服务无注册脚本，需直接用 `uvicorn api.main:app` 启动
+- 全局安装：`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa` —— 不克隆仓库、不激活 venv，任意目录可用（Key 放用户级 `.env`），详见 README「全局安装」
+- 数据工具的数量与参数是**生成的**：`ifa tools` / `ifa tools --markdown` 渲染 `_TOOL_SPECS`，skill 文档与 README 的数字都从它核对（历史上漂移过四次：25 → 33 → 35 → 36）
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：577 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：625 个测试覆盖 27 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

@@ -462,3 +462,31 @@ class TestAdvisorGraphBuild:
             },
         )
         assert "error" in result  # MockLLM 缺少 bind_tools，应被捕获
+
+class TestBacktestDataSourceFailure:
+    """取数失败必须报出真实原因，不能被解析成 0 行后误报「数据不足」。"""
+
+    def test_marker_text_raises_instead_of_parsing(self) -> None:
+        from ifa.backtest.engine import _parse_raw_to_dataframe
+        from ifa.dataflows.a_share import DATA_SOURCE_ERROR_MARKER
+
+        raw = "# ETF price data for 510300.SH\n\n" + DATA_SOURCE_ERROR_MARKER + "ConnectionError: boom"
+        with pytest.raises(ValueError, match="ConnectionError: boom"):
+            _parse_raw_to_dataframe(raw)
+
+    def test_empty_text_still_returns_none(self) -> None:
+        from ifa.backtest.engine import _parse_raw_to_dataframe
+
+        assert _parse_raw_to_dataframe("暂无数据。") is None
+
+    def test_run_backtest_reports_fetch_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ifa.backtest import engine
+
+        def _boom(symbol: str, start_date: str, end_date: str) -> None:
+            raise ValueError("ConnectionError: boom")
+
+        monkeypatch.setattr(engine, "_fetch_price_data", _boom)
+        result = engine.run_backtest("510300", "2023-01-01", "2024-01-01")
+        assert "数据获取失败" in result.error
+        assert "ConnectionError: boom" in result.error
+        assert result.trading_days == 0

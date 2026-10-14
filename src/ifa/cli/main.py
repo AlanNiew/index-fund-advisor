@@ -6,10 +6,12 @@ import sys
 from typing import Any
 
 import typer
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from ifa.cli.tools_cmd import register_tool_commands
+from ifa.env_loader import load_env_files
 
 # 仅匹配 6 位纯数字的基金代码（如 510300、161725）。
 # 用途：让 `ifa 161725` 这种简写等价于 `ifa info 161725`。
@@ -21,7 +23,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 sys.path.insert(0, os.path.join(_PROJECT_ROOT, "src"))
 sys.path.insert(0, _PROJECT_ROOT)
 
-load_dotenv()
+load_env_files()
 
 
 class _FundCodeGroup(typer.core.TyperGroup):
@@ -48,6 +50,11 @@ app = typer.Typer(
 )
 
 console = Console()
+
+# 数据工具透传与 skill 安装（@@ifa tool@@ / @@ifa tools@@ / @@ifa skill@@）。
+# 只导入轻量子命令模块；注册表（会连带导入 akshare）在各子命令内部按需导入，
+# 因此 @@ifa analyze@@ 这类命令不会为了一条子命令付 akshare 的导入时间。
+register_tool_commands(app)
 
 
 def _run_analysis(mode: str, state: dict, title: str, **build_kwargs):
@@ -179,6 +186,29 @@ def info(
     console.print(f"查询基金信息: {fund_code}")
     result = run_data_tool("get_fund_basic_info", symbol=fund_code)
     console.print(result)
+
+
+@app.command()
+def backtest(
+    fund_code: str = typer.Argument(help="基金/ETF/指数代码，如 510300"),
+    start: str = typer.Option(None, "--start", help="回测起始日期 YYYY-MM-DD（默认近 3 年）"),
+    end: str = typer.Option(None, "--end", help="回测结束日期 YYYY-MM-DD（默认今天）"),
+    amount: float = typer.Option(100000.0, "--amount", "-a", help="初始投入金额"),
+):
+    """买入-持有回测（不经过 LLM）。"""
+    from datetime import date, timedelta
+
+    from ifa.backtest.engine import format_backtest_report, run_backtest
+
+    end_date = end or date.today().isoformat()
+    start_date = start or (date.today() - timedelta(days=365 * 3)).isoformat()
+    console.print(f"回测 {fund_code}: {start_date} ~ {end_date}")
+    result = run_backtest(fund_code, start_date, end_date, initial_investment=amount)
+    console.print(format_backtest_report(result))
+    if result.error:
+        # 取数失败必须是非零退出码：否则脚本会把「数据源挂了」当成「回测完了」。
+        console.print(f"[red]回测失败：{result.error}[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command(name="config")

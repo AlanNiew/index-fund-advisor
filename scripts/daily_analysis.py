@@ -373,11 +373,11 @@ def main():
     )
     args = parser.parse_args()
 
-    # 加载 .env
+    # 加载 .env（含用户配置目录下的 .env）
     try:
-        from dotenv import load_dotenv
+        from ifa.env_loader import load_env_files
 
-        load_dotenv(_PROJECT_ROOT / ".env")
+        load_env_files()
     except ImportError:
         pass
 

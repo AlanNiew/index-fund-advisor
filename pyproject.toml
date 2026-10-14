@@ -79,6 +79,11 @@ mcp = [
 where = ["src"]
 include = ["ifa*"]
 
+# 内置 skill 随包分发：@@ifa skill install@@ 需要它，且用户级安装（uv tool install）
+# 之后仓库根目录并不在盘上，只能从包内读取。
+[tool.setuptools.package-data]
+ifa = ["skills/*.md"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120

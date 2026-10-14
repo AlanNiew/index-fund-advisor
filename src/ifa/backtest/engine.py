@@ -49,6 +49,14 @@ def _parse_raw_to_dataframe(raw) -> pd.DataFrame | None:
     if isinstance(raw, str) and "暂无数据" in raw:
         return None
     if isinstance(raw, str):
+        from ifa.dataflows.a_share import DATA_SOURCE_ERROR_MARKER
+
+        if DATA_SOURCE_ERROR_MARKER in raw:
+            # 取数失败会被数据层格式化成带标记的文本。若直接交给 pandas，会得到 0 行，
+            # 调用方就会把「数据源挂了」误报成「数据不足（少于 2 个交易日）」。
+            detail = raw.split(DATA_SOURCE_ERROR_MARKER, 1)[1].strip()
+            raise ValueError(detail[:300] or "数据源访问失败")
+
         from io import StringIO
 
         return pd.read_csv(StringIO(raw), comment="#")

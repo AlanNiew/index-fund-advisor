@@ -45,6 +45,18 @@ pip install -r requirements.lock && pip install -e . --no-deps
 `-e` 是 editable install，会同时把 `ifa`、`ifa-web`、`ifa-mcp` 三个入口脚本注册到 PATH。
 `requirements.lock` 由 `pip-compile` 生成（`pip-compile pyproject.toml --extra dev --extra mcp --no-emit-index-url -o requirements.lock`），精确钉死全部传递依赖。CI 按锁文件安装以保证可复现。
 
+### 全局安装（推荐：不克隆仓库也能用）
+
+```bash
+uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa
+ifa skill            # 把内置 skill 安装到用户级目录（所有项目可见）
+```
+
+`uv tool install` 会创建隔离环境并把 `ifa` 放到 PATH，因此**任意工作目录**都能直接调用 ——
+不需要 `cd` 到仓库、也不需要激活 venv。API Key 放用户级 `.env` 即可
+（Windows `%APPDATA%\ifa\.env`，其他平台 `~/.config/ifa/.env`）：CLI 会**同时**读取工作目录
+向上找到的 `.env` 与用户级 `.env`，先加载者生效（`override=False`）。
+
 ---
 
 ## 配置
@@ -85,7 +97,7 @@ DEEPSEEK_API_KEY=...
 | `IFA_DEEP_LLM` / `IFA_QUICK_LLM` | 覆盖深度/快速模型 | 空 |
 | `IFA_BACKEND_URL` | 覆盖 `backend_url`（`custom` 提供方必填） | 空 |
 | `IFA_CUSTOM_API_KEY` | `llm_provider=custom` 时的 API Key | 空 |
-| `IFA_CONFIG_DIR` | 用户配置文件所在目录 | Windows `%APPDATA%\ifa`；否则 `~/.config/ifa` |
+| `IFA_CONFIG_DIR` | 用户配置文件与用户级 `.env` 所在目录 | Windows `%APPDATA%\ifa`；否则 `~/.config/ifa` |
 | `IFA_DATA_SOURCE_TIMEOUT` | 数据源请求（AkShare 内部 `requests`）默认超时秒数 | `30` |
 | `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` | 覆盖 quick / deep 档 LLM 调用超时（秒） | `120` / `180` |
 | `IFA_LLM_MAX_RETRIES` | 覆盖 LLM 重试次数 | `2` |
@@ -163,6 +175,10 @@ ifa portfolio -r conservative           # 金额可选，默认 0
 ifa search 沪深300                       # 关键词模糊匹配基金列表
 ifa search "300" --limit 5
 ifa info 510300                         # 单只基金基本信息
+ifa backtest 510300                     # 买入-持有回测（默认近 3 年、初始 10 万）
+ifa tools                               # 列出全部数据工具与参数（36 个）
+ifa tool get_fund_achievement -p symbol=000834   # 直接调用一个数据工具
+ifa skill                               # 安装内置 skill 到用户级目录
 ifa config                              # 查看当前运行时配置
 ```
 
@@ -175,7 +191,11 @@ ifa config                              # 查看当前运行时配置
 | `portfolio` | — | `--risk / -r`（默认`moderate`）、`--amount / -a`（默认`0`）、`--debug` | 组合配置 |
 | `search <kw>` | 关键词 | `--limit / -n`（默认`20`） | 模糊搜索 |
 | `info <code>` | 基金代码 | — | 基本信息查询 |
-| `config [k] [v]` | — | — | 查看/说明配置（写入需手动编辑 `last_config.py`） |
+| `config [k] [v]` | — | `--unset` | 查看/设置配置（落盘到用户配置文件） |
+| `tools` | — | `--json`、`--markdown` | 列出全部数据工具及参数（由注册表生成，不手写） |
+| `tool <name>` | 工具名 | `--param / -p`（可重复）、`--json`、`--no-cache` | 直接调用一个数据工具，失败时非零退出码 |
+| `skill` | — | `--print`、`--force`、`--dir` | 把内置 skill 安装到用户级目录 |
+| `backtest <code>` | 基金代码 | `--start`、`--end`（默认近 3 年）、`--amount / -a`（默认 10 万） | 买入-持有回测 |
 
 > `risk` 取值：`conservative`（保守）/ `moderate`（稳健）/ `aggressive`（积极）/ `growth`（成长）。
 
@@ -378,6 +398,11 @@ Agent 可使用 **36 个数据工具**（`src/ifa/agents/tools/`），全部来�
 
 此外，CLI `ifa search` / REST `GET /funds/search` / MCP `search_funds` 共用数据工具 `search_funds`：它在**完整**基金列表（约 2.8 万只）上按代码/简称/类型/拼音过滤后再分页，不依赖 `get_fund_list()` 的前 30 行。取数失败时 CLI 以非零退出码结束、REST 返回 502，不会伪装成「查无结果」。
 
+CLI 侧对应 `ifa tools`（列出全部工具与参数）与 `ifa tool <名字> -p key=value`（直接调用，失败非零退出码）：
+不写 Python、不激活 venv 就能取到同一批数据。内置 skill `src/ifa/skills/fund.md` 里的工具表
+由 `ifa tools --markdown` 生成，`tests/test_skill_doc.py` 会校验它与注册表一致（历史上工具数
+漂移过四次：25 → 33 → 35 → 36）。
+
 ### 记忆与反思
 
 - 每个 Agent 可携带 `FinancialSituationMemory`（`src/ifa/agents/memory.py`），基于 BM25 检索历史相似情景，中英混合分词（中文按字、英文按词）。
@@ -471,7 +496,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（577 个测试，覆盖 16 个模块）
+# 测试（625 个测试，覆盖 27 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -528,11 +553,13 @@ index-fund-advisor/
 │   ├── observability/        # per-request tracing
 │   ├── portfolio/            # 风险偏好模型 + 配置策略
 │   ├── mcp/                  # FastMCP server（9 个工具）
-│   ├── cli/                  # Typer CLI 入口（ifa / ifa-web）
+│   ├── cli/                  # Typer CLI 入口（ifa / ifa-web）+ tools_cmd（tool/tools/skill）
+│   ├── skills/               # 内置 skill（fund.md，工具表由 ifa tools --markdown 生成）
+│   ├── env_loader.py         # 用户配置目录 + .env 加载（全局安装后仍能读到 Key）
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 577 个测试（16 个模块）
+├── tests/                    # 625 个测试（27 个模块）
 ├── scripts/                  # 每日分析等脚本
 ├── release/                  # 轻量打包脚手架（assemble.py，未发布到 PyPI）
 ├── pyproject.toml

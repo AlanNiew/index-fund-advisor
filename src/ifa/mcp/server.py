@@ -17,11 +17,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-# 加载 .env，使 analyze_fund 能读到 LLM API Key（数据工具走 AkShare 公开数据无需 Key）。
-load_dotenv()
+from ifa.env_loader import load_env_files
+
+# 加载 .env（含用户配置目录下的 .env），使 analyze_fund 能读到 LLM API Key
+# （数据工具走 AkShare 公开数据无需 Key）。MCP 客户端会在任意工作目录拉起本进程，
+# 只靠 CWD 找 .env 会漏掉用户级配置。
+load_env_files()
 
 mcp = FastMCP("IFA - Index Fund Advisor")
 

@@ -11,7 +11,10 @@ StrictMiniRacer 别名）—— tests/test_mini_racer_guard.py 因此成为 CI �
 """
 
 import re
+import tomllib
 from pathlib import Path
+
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = REPO_ROOT / "requirements.lock"
@@ -133,3 +136,104 @@ class TestCiWorkflowWiring:
         assert "continue-on-error" not in text, "质量门禁不允许 continue-on-error（mypy 曾是软门）"
         for command in ("ruff check .", "mypy src", "pytest -q"):
             assert command in text, f"CI 缺少门禁命令：{command}"
+
+
+def _declared_requirements() -> list[str]:
+    """pyproject.toml 声明的全部依赖（dependencies + 所有 extras）。"""
+    data = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    project = data["project"]
+    declared = list(project.get("dependencies", []))
+    for extra in project.get("optional-dependencies", {}).values():
+        declared.extend(extra)
+    return declared
+
+
+def _declared_extras() -> dict[str, list[str]]:
+    data = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    return dict(data["project"].get("optional-dependencies", {}))
+
+
+def _parse_lock_versions() -> dict[str, str]:
+    """把 requirements.lock 解析成 {包名: 版本}。"""
+    versions: dict[str, str] = {}
+    for line in LOCK_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or line[0].isspace():
+            continue
+        match = _PIN_RE.match(stripped)
+        assert match, f"requirements.lock 里不是合法的 pin 行：{line!r}"
+        versions[match["name"].lower()] = match["version"]
+    return versions
+
+
+def _parse_lock_via() -> dict[str, str]:
+    """{包名: 该 pin 下方 '# via' 注释原文}（兼容 pip-compile 的单行与多行写法）。"""
+    via: dict[str, str] = {}
+    current: str | None = None
+    for line in LOCK_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            current = None
+            continue
+        if stripped.startswith("#"):
+            if current is not None and line.startswith("    #"):
+                via[current] = f"{via.get(current, '')} {stripped.lstrip('#').strip()}".strip()
+            continue
+        if line[0].isspace():
+            continue
+        match = _PIN_RE.match(stripped)
+        if match:
+            current = match["name"].lower()
+            via.setdefault(current, "")
+    return via
+
+
+class TestDeclaredDependenciesStayInTheLock:
+    """pyproject 里声明的依赖必须在锁文件里被标注为「本项目直接依赖」。
+
+    新增依赖却忘了重新生成锁文件时，锁里要么没有这个包、要么 '# via' 注释里没有
+    'index-fund-advisor (pyproject.toml)' —— 前者会在干净环境里装不上，后者说明锁已经过期。
+    """
+
+    def test_every_declared_requirement_is_annotated(self):
+        via = _parse_lock_via()
+        missing: list[str] = []
+        for requirement in _declared_requirements():
+            name = Requirement(requirement).name.lower()
+            if name not in via:
+                missing.append(f"{name}（锁文件里完全没有）")
+            elif "index-fund-advisor (pyproject.toml)" not in via[name]:
+                missing.append(f"{name}（# via 里没有 index-fund-advisor (pyproject.toml)：{via[name]!r}）")
+        assert not missing, (
+            "以下依赖在 pyproject.toml 里声明了，但 requirements.lock 没有对应标注：\n"
+            + "\n".join(f"  - {item}" for item in missing)
+            + "\n请重新生成锁文件："
+            "pip-compile pyproject.toml --extra dev --extra mcp --no-emit-index-url -o requirements.lock"
+        )
+
+    def test_extra_bounds_allow_the_locked_version(self):
+        """extra 的版本上限不能把锁里已经钉死（并已验证）的版本排除掉。"""
+        versions = _parse_lock_versions()
+        problems: list[str] = []
+        for extra, requirements in _declared_extras().items():
+            for requirement in requirements:
+                parsed = Requirement(requirement)
+                locked = versions.get(parsed.name.lower())
+                if locked is None:
+                    continue
+                if not parsed.specifier.contains(locked):
+                    problems.append(f"[{extra}] {requirement} 不允许锁里的 {locked}")
+        assert not problems, "\n".join(problems)
+
+    def test_mcp_extra_stays_on_v1_because_the_server_uses_fastmcp(self):
+        """mcp 2.x 移除了 mcp.server.fastmcp，extra 必须挡在 2.x 之外。"""
+        requirements = [Requirement(item) for item in _declared_extras()["mcp"]]
+        mcp_requirement = next(item for item in requirements if item.name.lower() == "mcp")
+        assert not mcp_requirement.specifier.contains("2.0"), (
+            "mcp 2.x 把 FastMCP 改名 MCPServer（mcp.server.fastmcp 已不存在），"
+            "src/ifa/mcp/server.py 用的是 1.x API；请保持 mcp>=1.0,<2"
+        )
+        locked = _parse_lock_versions()["mcp"]
+        assert mcp_requirement.specifier.contains(locked), (
+            f"锁里的 mcp {locked} 不满足 extra 约束 {mcp_requirement.specifier}"
+        )

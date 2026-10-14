@@ -4,19 +4,24 @@
 
 - 实现代码：[`src/ifa/mcp/server.py`](src/ifa/mcp/server.py)
 - 传输方式：**stdio**（本地子进程，无需单独起服务）
-- 依赖：`mcp`（Python SDK / FastMCP），通过可选额外依赖安装
+- 依赖：`mcp>=1.0,<2`（Python SDK / FastMCP），通过可选额外依赖安装
+  - **为什么钉在 1.x**：mcp 2.x 把 `FastMCP` 改名 `MCPServer` 并移除了 `mcp.server.fastmcp`，
+    本 server 用的是 1.x API。装到 2.x 会直接
+    `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`（IFA 会额外打印一句「请装 mcp<2」）。
 
 ---
 
 ## 安装
 
 ```bash
-pip install -e ".[mcp]"
+pip install -e ".[mcp]"                     # 从源码
+uvx --from "index-fund-advisor[mcp] @ file:///path/to/index_fund_advisor-0.1.0-py3-none-any.whl" ifa-mcp   # 从 wheel（本项目不发 PyPI）
 ```
 
 安装后会注册 `ifa-mcp` 命令行入口，同时 `ifa.mcp` 子包可被 `python -m ifa.mcp.server` 直接启动。
 
-全局安装（`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa`）时不需要仓库目录：
+全局安装（`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git index-fund-advisor`，
+包名写在最后、`--from` 里是仓库地址）时不需要仓库目录：
 MCP server 与 CLI 一样走 `ifa.env_loader.load_env_files()`，会**同时**读取工作目录向上找到的 `.env` 与用户级 `.env`
 （`IFA_CONFIG_DIR` → `%APPDATA%\ifa\.env`），因此 Key 放用户级 `.env` 即可。
 

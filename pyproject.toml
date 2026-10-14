@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     # 数据
     "akshare>=1.18.49",
+    "numpy>=1.26",
     "pandas>=2.3.0",
     "requests>=2.32.4",
     # LLM
@@ -36,8 +37,13 @@ dependencies = [
     "langchain-anthropic>=0.3.15,<2",
     "langchain-google-genai>=2.1.5,<3",
     "langgraph>=0.4.8,<2",
+    "openai>=2.26,<3",
+    "pydantic>=2.0,<3",
     # Agent
     "rank-bm25>=0.2.2",
+    # 配置（ifa.env_loader 直接导入 dotenv，必须直接声明，
+    # 不能依赖别的包顺带装上 —— 曾经漏掉导致 wheel 装出来 ifa 直接起不来）
+    "python-dotenv>=1.0",
     # CLI
     "typer>=0.21.0",
     "rich>=14.0.0",
@@ -72,7 +78,9 @@ dev = [
     "pre-commit>=4.0",
 ]
 mcp = [
-    "mcp>=1.0",
+    # mcp 2.x 移除了 mcp.server.fastmcp（FastMCP 改名 MCPServer），
+    # src/ifa/mcp/server.py 用的是 1.x API；上限防止绕过 requirements.lock 装到 2.x。
+    "mcp>=1.0,<2",
 ]
 
 [tool.setuptools.packages.find]

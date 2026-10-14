@@ -228,12 +228,15 @@ nodeenv==1.10.0
     # via pre-commit
 numpy==2.5.1
     # via
+    #   index-fund-advisor (pyproject.toml)
     #   pandas
     #   pydeck
     #   rank-bm25
     #   streamlit
 openai==2.44.0
-    # via langchain-openai
+    # via
+    #   index-fund-advisor (pyproject.toml)
+    #   langchain-openai
 openpyxl==3.1.5
     # via akshare
 orjson==3.11.9
@@ -295,6 +298,7 @@ pydantic==2.13.4
     # via
     #   anthropic
     #   fastapi
+    #   index-fund-advisor (pyproject.toml)
     #   langchain-anthropic
     #   langchain-core
     #   langchain-google-genai
@@ -331,7 +335,9 @@ python-dateutil==2.9.0.post0
 python-discovery==1.4.3
     # via virtualenv
 python-dotenv==1.2.2
-    # via pydantic-settings
+    # via
+    #   index-fund-advisor (pyproject.toml)
+    #   pydantic-settings
 python-multipart==0.0.32
     # via
     #   mcp

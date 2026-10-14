@@ -48,7 +48,10 @@ pip install -r requirements.lock && pip install -e . --no-deps
 ### 全局安装（推荐：不克隆仓库也能用）
 
 ```bash
-uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa
+# 从 Git 仓库安装：--from 写仓库地址，最后一个参数必须是包名 index-fund-advisor
+uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git index-fund-advisor
+# 或从 GitHub Release 下载的 wheel 安装（本项目不发 PyPI）
+uv tool install --from ./index_fund_advisor-0.1.0-py3-none-any.whl index-fund-advisor
 ifa skill            # 把内置 skill 安装到用户级目录（所有项目可见）
 ```
 
@@ -56,6 +59,11 @@ ifa skill            # 把内置 skill 安装到用户级目录（所有项目�
 不需要 `cd` 到仓库、也不需要激活 venv。API Key 放用户级 `.env` 即可
 （Windows `%APPDATA%\ifa\.env`，其他平台 `~/.config/ifa/.env`）：CLI 会**同时**读取工作目录
 向上找到的 `.env` 与用户级 `.env`，先加载者生效（`override=False`）。
+
+**wheel / 全局安装的能力边界**：`ifa`（CLI）与 `ifa-mcp`（需 `[mcp]` 额外依赖）可用；`ifa-web`（Streamlit）
+与 REST API 需要仓库检出 —— wheel 里没有 `web/`、`api/`，`ifa-web` 会直接提示「需要仓库检出」并以退出码 1 结束。
+发行方式见 [`.github/workflows/release.yml`](.github/workflows/release.yml)：推送 `v*` tag 构建 wheel + sdist
+并在冒烟测试后挂到 GitHub Release，**不发布到 PyPI**。
 
 ---
 
@@ -496,7 +504,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（625 个测试，覆盖 27 个模块）
+# 测试（651 个测试，覆盖 30 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -559,14 +567,14 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 625 个测试（27 个模块）
+├── tests/                    # 651 个测试（30 个模块）
 ├── scripts/                  # 每日分析等脚本
-├── release/                  # 轻量打包脚手架（assemble.py，未发布到 PyPI）
+├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml
 └── README.md / CLAUDE.md / MCP.md
 ```
 
-> **`release/` 说明**：该目录是「只含 MCP + 数据层」的轻量打包脚手架，`assemble.py` 从 `src/ifa` 动态拷贝子集。**本项目不发布到 PyPI**，该脚手架仅作本地构建参考（详见 [release/README.md](<release/README.md>)）。**`release/src/` 和 `release/dist/` 是生成物，已在 `.gitignore` 中忽略，不要手动编辑。**
+> **`release/` 说明**：该目录是「只含 MCP + 数据层」的轻量打包脚手架，`assemble.py` 从 `src/ifa` 动态拷贝子集。**本项目不发布到 PyPI**（正式发行走 GitHub Release，见上）；`assemble.py` 复制前会用 AST 自检「模块顶层 `ifa.*` 导入闭包」，漏文件立刻报错，`tests/test_release_package.py` 独立复算这条闭包。详见 [release/README.md](<release/README.md>)。**`release/src/` 和 `release/dist/` 是生成物，已在 `.gitignore` 中忽略，不要手动编辑。**
 
 ---
 

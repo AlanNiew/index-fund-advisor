@@ -47,7 +47,7 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - `src/ifa` is the **only** main package. `pyproject.toml` declares `packages.find: where=["src"], include=["ifa*"]`.
 - `api/`, `web/`, `scripts/` live at the **project root**, outside the package. They import at runtime thanks to sys.path injection done by the CLI entry modules (works in editable/dev mode). Don't try to relocate them into `src/ifa` without reworking that.
 - CLI lives **inside** the package as `ifa.cli` (entry: `ifa.cli.main:app`).
-- `release/src/` and `release/dist/` are **generated** by `release/assemble.py` and gitignored — never hand-edit.
+- `release/src/` and `release/dist/` are **generated** by `release/assemble.py` and gitignored — never hand-edit. `assemble.py` AST-checks the module-level `ifa.*` import closure before copying and fails loudly when a shared leaf module is missing; `tests/test_release_package.py` recomputes that closure and imports the assembled package in a subprocess.
 
 ## Architecture boundaries (respect when editing)
 
@@ -93,6 +93,9 @@ pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # single test
 - **The data-tool catalog is generated, not hand-written.** `ifa tools` / `ifa tools --markdown` render `_TOOL_SPECS`; the skill doc and README numbers are checked against it (the count drifted 25 → 33 → 35 → 36). If you add a tool, regenerate the BEGIN/END block.
 - **Entry points load `.env` from the cwd *and* the user config dir** (`ifa.env_loader.load_env_files()`, `override=False`). This is what makes `uv tool install`-style global usage work from any directory.
 - **CI** (`.github/workflows/ci.yml`) runs **ruff + mypy + pytest on a Python 3.12–3.13 matrix on `ubuntu-latest`**. mypy is a hard gate (`mypy src` must be clean); run it locally before pushing. Because CI is Linux while dev happens on Windows, any Windows-only pin in `requirements.lock` must carry a platform marker (`pywin32==312 ; sys_platform == "win32"`) — without it `pip install -r requirements.lock` fails on every matrix entry. `tests/test_lock_hygiene.py` guards both this and the matrix-vs-`requires-python` agreement. The reverse also holds: `akshare` splits its V8 wrapper by platform (`mini-racer` on non-Linux, `akracer`/`py-mini-racer` on Linux — all three ship the same `py_mini_racer/` directory), so those pins need matching `platform_system` markers or Linux silently installs packages outside the lock.
+- **Releases are GitHub Releases, not PyPI** — `.github/workflows/release.yml` builds wheel + sdist on `v*` tags, smoke-tests them (CLI, bundled skill, `mcp` extra on 1.x, MCP stdio handshake) and attaches them to the Release. The tag must equal `pyproject.toml`'s version. The wheel ships only the `ifa` package: `ifa` and `ifa-mcp` work, `ifa-web` / the REST API need a checkout.
+- **Direct imports must be declared dependencies** — `python-dotenv` used to arrive transitively (streamlit → pydantic-settings), so everything worked locally while the installed wheel died on `ifa --help` with `ModuleNotFoundError: No module named 'dotenv'`. `tests/test_dependency_declarations.py` now fails whenever a third-party module imported from `src/ifa` is missing from `pyproject.toml` (extras count; `OPTIONAL_IMPORTS` documents the exceptions).
+- **The `mcp` extra is pinned `<2`** — mcp 2.x renamed `FastMCP` to `MCPServer` and removed `mcp.server.fastmcp`; `src/ifa/mcp/server.py` uses the v1 API. `tests/test_lock_hygiene.py` asserts the extra excludes 2.x and that every extra bound admits the locked version.
 - **Generated outputs** `results/`, `test_results/`, `local_data/`, `release/src/`, `release/dist/`, `.claude/` are gitignored.
 
 ## Read before changing sensitive areas

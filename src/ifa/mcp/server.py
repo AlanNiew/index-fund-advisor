@@ -15,9 +15,22 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+# mcp 1.x 的 FastMCP 在 2.x 里改名 MCPServer，导入直接抛 ModuleNotFoundError；
+# 这里把「怎么办」写清楚，否则用户只看到一句 No module named 'mcp.server.fastmcp'。
+_MCP_MISSING_HINT = "未安装 mcp。请执行：pip install 'index-fund-advisor[mcp]'"
+_MCP_V2_HINT = (
+    "检测到 mcp 2.x：FastMCP 已改名 MCPServer。IFA 使用 mcp 1.x 的 API，"
+    "请执行：pip install 'mcp<2'（或重装 ifa 的 mcp extra）"
+)
+
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError as exc:
+    _hint = _MCP_V2_HINT if importlib.util.find_spec("mcp") is not None else _MCP_MISSING_HINT
+    raise ImportError(f"IFA MCP server 无法导入 FastMCP —— {_hint}。原始错误：{exc}") from exc
 
 from ifa.env_loader import load_env_files
 
@@ -173,7 +186,7 @@ async def analyze_fund(
 ) -> dict:
     """对单只基金做 AI 深度分析（调用 IFA 多 agent 工作流）。
 
-    需要在 ``.env`` 配置有效的 LLM API Key（默认走智谱 GLM）。
+    需要在 ``.env`` 配置有效的 LLM API Key（默认走 OpenCode Go，即 OPENCODE_API_KEY）。
     耗时：deep_simple 约 30-60 秒；deep（含看涨 / 看跌辩论）约 1-3 分钟。
 
     参数：

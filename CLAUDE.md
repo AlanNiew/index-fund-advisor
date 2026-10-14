@@ -34,12 +34,12 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（622 个，覆盖 27 个模块）
+pytest                # 全部测试（651 个，覆盖 30 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
 
-> 依赖锁：CI 用 `pip install -r requirements.lock && pip install -e . --no-deps` 安装（不是 `pip install -e ".[dev]"`）。CI 跑在 `ubuntu-latest` 而开发机是 Windows，所以锁文件里 Windows-only 的包必须带平台标记（`pywin32==312 ; sys_platform == "win32"`），否则安装步骤在每个矩阵项上都失败 —— `tests/test_lock_hygiene.py` 会守住这条与 CI 矩阵/`requires-python` 的一致性。反向同样成立：`akshare` 的 V8 包装器按平台分流（`mini-racer` 仅非 Linux，`akracer`/`py-mini-racer` 仅 Linux，三者都往同一个 `py_mini_racer/` 目录写文件），锁文件必须带上相同的 `platform_system` 标记，否则 Linux CI 会在锁之外自行补装、破坏可复现性。
+> 依赖锁：CI 用 `pip install -r requirements.lock && pip install -e . --no-deps` 安装（不是 `pip install -e ".[dev]"`）。CI 跑在 `ubuntu-latest` 而开发机是 Windows，所以锁文件里 Windows-only 的包必须带平台标记（`pywin32==312 ; sys_platform == "win32"`），否则安装步骤在每个矩阵项上都失败 —— `tests/test_lock_hygiene.py` 会守住这条与 CI 矩阵/`requires-python` 的一致性。反向同样成立：`akshare` 的 V8 包装器按平台分流（`mini-racer` 仅非 Linux，`akracer`/`py-mini-racer` 仅 Linux，三者都往同一个 `py_mini_racer/` 目录写文件），锁文件必须带上相同的 `platform_system` 标记，否则 Linux CI 会在锁之外自行补装、破坏可复现性。另有三条一致性由测试守住：① pyproject 里声明的每个依赖都必须在锁文件里被标注 `# via index-fund-advisor (pyproject.toml)`（新增依赖却忘了重新生成锁文件会立刻失败）；② extra 的版本上限不能排除锁里已钉死的版本 —— `mcp>=1.0,<2` 正是因此存在（mcp 2.x 移除了 `mcp.server.fastmcp`，本 server 用 1.x API）；③ `src/ifa` 直接导入的任何第三方模块都必须**直接声明**，不能靠别的包顺带装上（`python-dotenv` 曾经只由 streamlit → pydantic-settings 带入，wheel 装进干净环境后 `ifa --help` 直接 `ModuleNotFoundError: No module named 'dotenv'`）。见 `tests/test_lock_hygiene.py` 与 `tests/test_dependency_declarations.py`。
 
 ## 架构
 
@@ -148,6 +148,13 @@ CLI / Web / API 三个接口层共用四个函数：
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 1）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
 - 延迟预算：`timeout`（quick 档 LLM 超时，默认 120 秒）、`deep_timeout`（deep 档——报告生成/裁决——默认 180 秒）、`llm_max_retries`（重试次数，默认 2，即最多 3 次尝试）。依据：2026-10 实测 510300 的 deep 运行 wall 30.4 分钟、**98.5% 花在等 LLM**，其中多个请求拖到 180 秒超时后重试；但合法成功调用最长也到过 119 秒，所以不能一刀切收紧到 60–90 秒
 
+### 发行（GitHub Release）
+
+- `.github/workflows/release.yml`：推送 `v*` tag → 构建 wheel + sdist → 在干净 venv 里冒烟（`ifa --help`、`ifa tools --json`、随包 skill、`mcp` extra 落在 1.x、**MCP stdio initialize 握手**）→ 挂到 GitHub Release；`workflow_dispatch` 只上传 artifact。**不发 PyPI**。
+- tag 必须等于 `pyproject.toml` 的 `version`（workflow 里强制校验）。
+- `release/assemble.py` 是另一套「只含 MCP + 数据层」的轻量包脚手架：它用 AST 只取模块顶层 `ifa.*` 导入算闭包，复制前自检，漏文件立刻报错（历史上漏过 `env_loader` / `providers` / `atomic_io`，轻量包连 `import ifa.default_config` 都过不去）。`tests/test_release_package.py` 独立复算这条闭包，并真的组装一次、用「看不到仓库 src」的解释器 import 一遍。
+- wheel 只含 `ifa` 包：`ifa` / `ifa-mcp` 可用，`ifa-web` 与 REST API 需要仓库检出（`ifa.cli.web_entry` 会给出可操作提示并以退出码 1 结束）。
+
 ### 健壮性模式
 
 项目已建立的错误处理约定，修改代码时应遵循：
@@ -177,10 +184,10 @@ CLI / Web / API 三个接口层共用四个函数：
 
 - 包布局：`pyproject.toml` 的 `packages.find` 配置 `where=["src"]`、`include=["ifa*"]`，`src/ifa` 是唯一主包（CLI 入口在 `ifa.cli` 子包内）；`api/`、`web/` 位于项目顶层，由 CLI 入口模块运行时注入 sys.path
 - 入口点：`ifa`（`ifa.cli.main:app`）和 `ifa-web`（`ifa.cli.web_entry:main`）注册在 `[project.scripts]`；API 服务无注册脚本，需直接用 `uvicorn api.main:app` 启动
-- 全局安装：`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa` —— 不克隆仓库、不激活 venv，任意目录可用（Key 放用户级 `.env`），详见 README「全局安装」
+- 全局安装：`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git index-fund-advisor`（`--from` 写仓库地址，**最后一个参数必须是包名**，写成 `ifa` 会被 uv 拒绝）—— 不克隆仓库、不激活 venv，任意目录可用（Key 放用户级 `.env`），详见 README「全局安装」
 - 数据工具的数量与参数是**生成的**：`ifa tools` / `ifa tools --markdown` 渲染 `_TOOL_SPECS`，skill 文档与 README 的数字都从它核对（历史上漂移过四次：25 → 33 → 35 → 36）
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：625 个测试覆盖 27 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：651 个测试覆盖 30 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

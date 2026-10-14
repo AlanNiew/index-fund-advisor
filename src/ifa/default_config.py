@@ -73,8 +73,21 @@ _KNOWN_DATA_VENDORS = {"akshare"}
 
 # 辩论轮数默认值。AdvisorGraph 在 config 缺键时回退到同一常量——此前那里硬编码 1
 # 而这里写 2，配置不完整时辩论轮数会静默减半，与文档描述不符。
-DEFAULT_MAX_DEBATE_ROUNDS = 2
+#
+# 2026-10 实测（510300 deep 模式，wall 30.4 分钟）：辩论段独占 86% 的耗时，因为每个
+# 辩手每轮都要重读整段历史并做一次完整 LLM 往返。故默认降为 1 轮——看涨/看跌各发言
+# 一次后即交研究经理裁决；`ifa config max_debate_rounds 2` 可恢复旧行为。
+# 风险辩论保持 2 轮（portfolio 模式的三方辩论尚未做过同类实测）。
+DEFAULT_MAX_DEBATE_ROUNDS = 1
 DEFAULT_MAX_RISK_DISCUSS_ROUNDS = 2
+
+# LLM 请求超时（秒）与重试次数（总尝试次数 = 重试次数 + 1）。
+# 超时是最大的时间黑洞：挂死的请求会一直读到超时，而每个调用点还各自重试。
+# quick 档（工具循环/分析师/辩论）调用多、失败代价小，收紧到 120 秒；
+# deep 档（报告生成/裁决）产出最终报告，不值得为省时间截断，单独保留 180 秒。
+DEFAULT_LLM_TIMEOUT = 120
+DEFAULT_DEEP_TIMEOUT = 180
+DEFAULT_LLM_MAX_RETRIES = 2
 
 DEFAULT_CONFIG = {
     "project_dir": PROJECT_DIR,
@@ -122,7 +135,9 @@ DEFAULT_CONFIG = {
     "max_risk_discuss_rounds": DEFAULT_MAX_RISK_DISCUSS_ROUNDS,
     # ── 图执行 ──
     "max_recur_limit": 150,
-    "timeout": 180,
+    "timeout": DEFAULT_LLM_TIMEOUT,
+    "deep_timeout": DEFAULT_DEEP_TIMEOUT,
+    "llm_max_retries": DEFAULT_LLM_MAX_RETRIES,
     # ── 数据供应商配置 ──
     "data_vendors": {
         "etf_index_apis": "akshare",
@@ -150,10 +165,20 @@ _ENV_OVERRIDES: tuple[tuple[str, str], ...] = (
     ("IFA_ANALYSIS_MODE", "analysis_mode"),
     ("IFA_AZURE_API_VERSION", "azure_api_version"),
     ("IFA_TIMEOUT", "timeout"),
+    ("IFA_DEEP_TIMEOUT", "deep_timeout"),
+    ("IFA_LLM_MAX_RETRIES", "llm_max_retries"),
     ("IFA_ENABLE_DEBATE", "enable_debate"),
 )
 
-_INT_KEYS = {"timeout", "max_debate_rounds", "max_risk_discuss_rounds", "max_recur_limit", "ohlcv_cache_ttl_seconds"}
+_INT_KEYS = {
+    "timeout",
+    "deep_timeout",
+    "llm_max_retries",
+    "max_debate_rounds",
+    "max_risk_discuss_rounds",
+    "max_recur_limit",
+    "ohlcv_cache_ttl_seconds",
+}
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 _BOOL_FALSE = {"0", "false", "no", "off"}
 
@@ -236,9 +261,14 @@ def validate_config(config: dict) -> None:
     """校验配置字典的合法性。"""
     errors = []
 
-    timeout = config.get("timeout")
-    if timeout is not None and (not isinstance(timeout, (int, float)) or timeout <= 0):
-        errors.append(f"timeout 必须 > 0，当前值: {timeout}")
+    for timeout_key in ("timeout", "deep_timeout"):
+        timeout = config.get(timeout_key)
+        if timeout is not None and (not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0):
+            errors.append(f"{timeout_key} 必须 > 0，当前值: {timeout}")
+
+    max_retries = config.get("llm_max_retries")
+    if max_retries is not None and (not isinstance(max_retries, int) or isinstance(max_retries, bool) or max_retries < 0):
+        errors.append(f"llm_max_retries 必须 >= 0 的整数，当前值: {max_retries}")
 
     provider = config.get("llm_provider")
     if not provider or not str(provider).strip():

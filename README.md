@@ -87,6 +87,8 @@ DEEPSEEK_API_KEY=...
 | `IFA_CUSTOM_API_KEY` | `llm_provider=custom` 时的 API Key | 空 |
 | `IFA_CONFIG_DIR` | 用户配置文件所在目录 | Windows `%APPDATA%\ifa`；否则 `~/.config/ifa` |
 | `IFA_DATA_SOURCE_TIMEOUT` | 数据源请求（AkShare 内部 `requests`）默认超时秒数 | `30` |
+| `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` | 覆盖 quick / deep 档 LLM 调用超时（秒） | `120` / `180` |
+| `IFA_LLM_MAX_RETRIES` | 覆盖 LLM 重试次数 | `2` |
 
 ### 3. 配置项（`src/ifa/default_config.py`）
 
@@ -98,12 +100,14 @@ DEEPSEEK_API_KEY=...
 | `backend_url` | `https://opencode.ai/inference/go/v1` | API 基础地址。显式设置的值**优先于**内置端点；`custom` 提供方必须提供。切换提供方后残留的别家内置端点会被自动重置（各提供方默认地址见 [src/ifa/providers.py](<src/ifa/providers.py>)） |
 | `custom_api_key` | `None` | 仅 `custom` 使用；通常直接用 `IFA_CUSTOM_API_KEY` |
 | `enable_debate` | `True` | 是否启用辩论（关闭后退化为 `deep_simple`） |
-| `max_debate_rounds` | `2` | 基金辩论轮数 |
+| `max_debate_rounds` | `1` | 基金辩论轮数（2 轮会让运行时间显著变长：实测 30.4 分钟的 deep 运行里辩论段独占 86%） |
 | `max_risk_discuss_rounds` | `2` | 风险辩论轮数 |
 | `internal_language` | `English` | Agent 内部推理语言（保持英文以确保推理质量） |
 | `final_output_language` | `Chinese` | 最终报告语言 |
 | `max_recur_limit` | `150` | LangGraph 递归上限 |
-| `timeout` | `180` | 单次分析超时（秒） |
+| `timeout` | `120` | quick 档（工具调用、分析师、辩论）的 LLM 调用超时（秒） |
+| `deep_timeout` | `180` | deep 档（报告生成、关键裁决）的 LLM 调用超时（秒）。deep 档产出最终报告，单独放宽 |
+| `llm_max_retries` | `2` | LLM 调用重试次数（总尝试 = 重试次数 + 1）。实测挂死请求要读到超时才返回，重试是最大的时间黑洞 |
 
 **切换提供方**（三种方式，优先级由低到高）：
 
@@ -289,7 +293,7 @@ claude mcp add ifa -- ifa-mcp
 
 ```
 START → Fund Analyst → [ETF/指数基金?] → Index Analyst →
-        Bull ↔ Bear 辩论（2 轮） → Research Manager 裁决 →
+        Bull ↔ Bear 辩论（1 轮） → Research Manager 裁决 →
         Report Generator → END
 ```
 
@@ -467,7 +471,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（555 个测试，覆盖 16 个模块）
+# 测试（577 个测试，覆盖 16 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -528,7 +532,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 555 个测试（16 个模块）
+├── tests/                    # 577 个测试（16 个模块）
 ├── scripts/                  # 每日分析等脚本
 ├── release/                  # 轻量打包脚手架（assemble.py，未发布到 PyPI）
 ├── pyproject.toml

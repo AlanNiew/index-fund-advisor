@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（555 个，覆盖 16 个模块）
+pytest                # 全部测试（577 个，覆盖 16 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -45,7 +45,7 @@ pytest -x             # 遇到第一个失败即停止
 
 1. **deep**（含辩论）— `Fund Analyst → Index Analyst? → Bull/Bear 辩论循环 → Research Manager → Report Generator`
    - Index Analyst 仅在资产类型为 ETF/指数基金时执行（条件边 `should_skip_index_analyst`）
-   - Bull/Bear 研究员进行多轮对抗辩论（默认 2 轮），Research Manager 裁决
+   - Bull/Bear 研究员进行对抗辩论（默认 1 轮，`max_debate_rounds`），Research Manager 裁决
 2. **deep_simple**（无辩论）— `Fund Analyst → Index Analyst? → Report Generator`
    - 向后兼容模式，通过 `enable_debate: false` 或指定 `deep_simple` 启用
 3. **screen**（含辩论）— `Fund Screener → Fund Analyst → Bull/Bear 辩论循环 → Research Manager → Report Generator`
@@ -105,7 +105,7 @@ CLI / Web / API 三个接口层共用四个函数：
 
 ### 辩论机制
 
-- **基金辩论**（deep/screen 模式）：Bull/Bear 交替发言，默认 2 轮（`max_debate_rounds`），终止条件 `count >= 2 * max_debate_rounds`，Research Manager 裁决
+- **基金辩论**（deep/screen 模式）：Bull/Bear 交替发言，默认 **1 轮**（`max_debate_rounds`；2 轮是 30.4 分钟实测里辩论段独占 86% 的主因），终止条件 `count >= 2 * max_debate_rounds`，Research Manager 裁决
 - **风险辩论**（portfolio 模式）：Aggressive → Conservative → Neutral 轮流发言，默认 2 轮（`max_risk_discuss_rounds`），终止条件 `count >= 3 * max_risk_discuss_rounds`，Portfolio Manager 裁决
 - 裁决结果通过 `_extract_debate_judgment()` 传递给 Report Generator
 
@@ -134,12 +134,13 @@ CLI / Web / API 三个接口层共用四个函数：
 - `src/ifa/default_config.py` — 默认配置 + `build_runtime_config()` 运行时配置构建；提供方清单来自 `src/ifa/providers.py`
 - 优先级：**环境变量 > 用户配置文件 > DEFAULT_CONFIG**（`build_runtime_config()` 依次 deepcopy → `load_last_config()` → `_env_overrides()` → 重算路径键 → 端点归一化 → `validate_config()`）
 - `ifa config <key> <value>` 真正落盘：`set_user_config()` / `unset_user_config()` 原子写用户配置文件（`IFA_CONFIG_DIR` → Windows `%APPDATA%\ifa\config.json`，否则 `~/.config/ifa/config.json`）；`save_last_config()` 写同一文件。可配置项 = `CONFIGURABLE_KEYS`（DEFAULT_CONFIG 中非路径键、非字典键）；旧版 `src/ifa/last_config.py` 仅只读兼容
-- 环境变量覆盖表 `_ENV_OVERRIDES`：`IFA_LLM_PROVIDER` / `IFA_DEEP_LLM` / `IFA_QUICK_LLM` / `IFA_BACKEND_URL` / `IFA_CUSTOM_API_KEY` / `IFA_ANALYSIS_MODE` / `IFA_AZURE_API_VERSION` / `IFA_TIMEOUT` / `IFA_ENABLE_DEBATE`（空白值视为未设置；整型/布尔键经 `_coerce_config_value` 转换，非法值抛 `ValueError`）
+- 环境变量覆盖表 `_ENV_OVERRIDES`：`IFA_LLM_PROVIDER` / `IFA_DEEP_LLM` / `IFA_QUICK_LLM` / `IFA_BACKEND_URL` / `IFA_CUSTOM_API_KEY` / `IFA_ANALYSIS_MODE` / `IFA_AZURE_API_VERSION` / `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` / `IFA_LLM_MAX_RETRIES` / `IFA_DATA_SOURCE_TIMEOUT` / `IFA_ENABLE_DEBATE`（空白值视为未设置；整型/布尔键经 `_coerce_config_value` 转换，非法值抛 `ValueError`）
 - `backend_url` 归一化：残留的**别家**内置端点（历史漂移：provider=deepseek 却指向智谱）会被重置为所选提供方默认端点，用户自定义地址保留；`custom` 且地址为空时 `validate_config` 报错
 - 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENCODE/OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK/QWEN/XAI/OPENROUTER）
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
 - 记忆落盘目录：`memory_dir`（默认 `local_data/memory`，随 `IFA_LOCAL_DATA_DIR` 变化；属于 `_PATH_KEYS`，不会被写入用户配置文件）
-- 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 2）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
+- 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 1）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
+- 延迟预算：`timeout`（quick 档 LLM 超时，默认 120 秒）、`deep_timeout`（deep 档——报告生成/裁决——默认 180 秒）、`llm_max_retries`（重试次数，默认 2，即最多 3 次尝试）。依据：2026-10 实测 510300 的 deep 运行 wall 30.4 分钟、**98.5% 花在等 LLM**，其中多个请求拖到 180 秒超时后重试；但合法成功调用最长也到过 119 秒，所以不能一刀切收紧到 60–90 秒
 
 ### 健壮性模式
 
@@ -157,6 +158,8 @@ CLI / Web / API 三个接口层共用四个函数：
 - **`py_mini_racer` 构造必须串行化** — akshare 多个接口（估值 `stock_index_pe_lg`、交易日历 `tool_trade_date_hist_sina`、同花顺/巨潮系）在内部 new `MiniRacer()`。LangGraph 的 ToolNode 并行执行工具，两个线程同时构造会触发 V8 断言 `[FATAL:partition_address_space.cc(243)] Check failed: !IsConfigurablePoolInitialized().`，**直接 abort 整个进程**（退出码 0x80000003，try/except 无法捕获）。`src/ifa/dataflows/__init__.py` 在导入时安装 `_mini_racer_guard`：用 RLock 串行化构造，并遍历 `sys.modules` 替换所有已持有旧 `MiniRacer` 引用的模块属性。不要移除该 import，也不要自行构造 `MiniRacer`
 - **数据源请求必须能超时退出** — AkShare 大量接口直接 `requests.get(url)` 不传 timeout（如 `index_stock_cons_csindex`），上游建连后不再返回字节时整条分析链会无限期挂住（实测 `oss-ch.csindex.com.cn` 挂死 14 分钟：进程存活、CPU≈0、日志停滞、try/except 永不触发）。`src/ifa/dataflows/__init__.py` 导入时安装 `_network_guard`：包装 `requests.sessions.Session.request`，只在调用方未传 timeout（或显式传 None）时补上 `IFA_DATA_SOURCE_TIMEOUT`（默认 30 秒）。**不要改回 `socket.setdefaulttimeout`** —— requests 会把 `timeout=None` 包成 `Timeout(connect=None, read=None)` 并显式 `sock.settimeout(None)`，把 socket 默认值覆盖掉（该实测结论已由 `tests/test_network_guard.py` 固化）。超时的请求仍被 `is_retryable_akshare_error` 视为可重试，单个工具最坏耗时约为 `retries × 超时`
 - **思考模式的 `reasoning_content` 必须回传（只对 opencode 打开）** — OpenCode Go 在思考模式下会以 400 拒绝「历史 assistant 消息缺少 `reasoning_content`」的请求（原文 `The reasoning_content in the thinking mode must be passed back to the API`），而 `langchain_openai` 的 `_convert_message_to_dict` / `_convert_dict_to_message` 在两个方向上都丢弃该字段。`NormalizedChatOpenAI` 覆写 `_create_chat_result`（把响应里的 reasoning_content 存进 `additional_kwargs`）与 `_get_request_payload`（请求时按索引回填），开关由 `OpenAIClient.get_llm()` 仅在 `provider == "opencode"` 时打开。**不要全局打开**：DeepSeek 官方 API 的规则相反，回传会 400。该故障是**间歇性**的（是否进思考模式由上游按请求决定），不要用「复跑一次成功」判定已修好
+- **超时与重试必须分档，且默认值要能被配置覆盖** — quick 档 120 秒 / deep 档 180 秒（`src/ifa/common.py` 的 `build_advisor()` 给 deep 客户端单独注入 `deep_timeout`），`llm_max_retries` 默认 2。所有默认值集中在 `src/ifa/default_config.py` 的 `DEFAULT_LLM_TIMEOUT` / `DEFAULT_DEEP_TIMEOUT` / `DEFAULT_LLM_MAX_RETRIES`，不要在各处硬编码；`invoke_llm_safely()` 的 `retries` 默认 `None` 表示「读配置」，显式传参仍然优先（`_resolve_retries()`）
+- **辩论历史必须截断（保留最新发言）** — 每个辩手每轮都要重读整段 history，实测上下文涨到 41414 字符、辩论段独占运行时间的 86%。`truncate_debate_history()`（`src/ifa/agents/utils.py`，上限 `DEBATE_HISTORY_MAX_CHARS = 3000`）从**头部**丢弃并加「[... 较早的辩论发言已省略 ...]」，与 `truncate_report()`（保留头部）方向相反。只在**每轮重读历史**的节点（`researchers/researcher.py`、`risk_mgmt/debator.py`）调用；**state 里必须保留全文**，裁决（Research Manager）与最终报告需要完整记录。风险辩论节点的 `portfolio_advice` / `fund_analysis` 也走 `truncate_report()`（此前是全文直传）
 - **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
 - **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
 - **安全字典访问** — 所有 Agent 节点使用 `.get()` + `isinstance` 检查访问嵌套状态；`_safe_get_nested()` 用于日志；`Reflector._safe_get_debate()` 用于反思
@@ -171,5 +174,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：555 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：577 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

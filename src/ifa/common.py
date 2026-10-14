@@ -66,11 +66,16 @@ def build_advisor(config: dict[str, Any] | None = None, **extra_kwargs: Any) -> 
         base_url=config.get("backend_url"),
         **provider_kwargs,
     )
+    # deep 档单独一档超时：报告生成与裁决产出最终报告，quick 档的默认超时对它们偏紧。
+    deep_kwargs = dict(provider_kwargs)
+    deep_timeout = config.get("deep_timeout")
+    if deep_timeout is not None:
+        deep_kwargs["timeout"] = deep_timeout
     deep_llm = create_llm_client(
         provider=config["llm_provider"],
         model=config["deep_think_llm"],
         base_url=config.get("backend_url"),
-        **provider_kwargs,
+        **deep_kwargs,
     )
 
     return AdvisorGraph(

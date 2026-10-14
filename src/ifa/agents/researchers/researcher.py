@@ -6,6 +6,7 @@ from __future__ import annotations
 from ifa.agents.utils import (
     get_final_language_instruction,
     invoke_llm_safely,
+    truncate_debate_history,
 )
 from ifa.dataflows.data_cleaning import truncate_report
 
@@ -32,6 +33,10 @@ def create_researcher(role: str, prompt_template: str, history_key: str, label: 
             own_history = fund_debate_state.get(history_key, "")
             current_response = fund_debate_state.get("current_response", "")
 
+            # 只截断**进入 prompt 的副本**：state 里保留全文，供裁决与最终报告使用。
+            history_for_prompt = truncate_debate_history(history)
+            current_response_for_prompt = truncate_debate_history(current_response)
+
             fund_codes = state.get("fund_codes", "")
             fund_analysis = truncate_report(state.get("fund_analysis_report", ""))
             index_analysis = truncate_report(state.get("index_analysis_report", ""))
@@ -55,8 +60,8 @@ def create_researcher(role: str, prompt_template: str, history_key: str, label: 
                 fund_codes=fund_codes,
                 fund_analysis=fund_analysis,
                 index_analysis=index_analysis,
-                history=history,
-                current_response=current_response,
+                history=history_for_prompt,
+                current_response=current_response_for_prompt,
                 past_memory_str=past_memory_str,
                 language_instruction=language_instruction,
             )

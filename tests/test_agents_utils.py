@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 
 from ifa.agents.utils import (
+    DEBATE_HISTORY_MAX_CHARS,
     AgentLLMError,
     _build_language_instruction,
     build_instrument_context,
@@ -13,6 +14,7 @@ from ifa.agents.utils import (
     get_internal_language_instruction,
     invoke_chain_safely,
     invoke_llm_safely,
+    truncate_debate_history,
 )
 
 # ════════════════════════════════════════════
@@ -226,3 +228,62 @@ class TestAgentDefensiveAccess:
         state = {}
         result = node(state)
         assert "risk_debate_state" in result
+
+
+# ════════════════════════════════════════════
+#  truncate_debate_history
+# ════════════════════════════════════════════
+
+
+class TestTruncateDebateHistory:
+    """辩论历史截断：保留最新发言，丢弃较早内容（与 truncate_report 相反）。"""
+
+    def test_short_text_untouched(self):
+        assert truncate_debate_history("Bull: 看多") == "Bull: 看多"
+
+    def test_empty_text_untouched(self):
+        assert truncate_debate_history("") == ""
+
+    def test_long_text_keeps_the_tail(self):
+        text = "HEAD" + "甲" * (DEBATE_HISTORY_MAX_CHARS * 3) + "TAIL"
+        result = truncate_debate_history(text)
+        assert result.endswith("TAIL")
+        assert "HEAD" not in result
+        assert result.startswith("[... 较早的辩论发言已省略 ...]")
+        assert len(result) <= DEBATE_HISTORY_MAX_CHARS + 40
+
+    def test_custom_budget(self):
+        assert truncate_debate_history("abcdef", max_chars=3).endswith("def")
+
+
+# ════════════════════════════════════════════
+#  重试次数默认值
+# ════════════════════════════════════════════
+
+
+class TestRetryDefaults:
+    """重试次数默认值来自配置 llm_max_retries；显式参数优先。"""
+
+    def test_config_value_is_used(self, monkeypatch):
+        monkeypatch.setattr("ifa.dataflows.config.get_config", lambda: {"llm_max_retries": 1})
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = ConnectionError("network down")
+        with patch("ifa.agents.utils.time.sleep"), pytest.raises(AgentLLMError):
+            invoke_llm_safely(mock_llm, "prompt")
+        assert mock_llm.invoke.call_count == 2  # 1 initial + 1 retry
+
+    def test_explicit_argument_wins(self, monkeypatch):
+        monkeypatch.setattr("ifa.dataflows.config.get_config", lambda: {"llm_max_retries": 5})
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = ConnectionError("network down")
+        with patch("ifa.agents.utils.time.sleep"), pytest.raises(AgentLLMError):
+            invoke_llm_safely(mock_llm, "prompt", retries=0)
+        assert mock_llm.invoke.call_count == 1
+
+    def test_chain_helper_uses_the_same_budget(self, monkeypatch):
+        monkeypatch.setattr("ifa.dataflows.config.get_config", lambda: {"llm_max_retries": 0})
+        mock_chain = MagicMock()
+        mock_chain.invoke.side_effect = RuntimeError("boom")
+        with patch("ifa.agents.utils.time.sleep"), pytest.raises(AgentLLMError):
+            invoke_chain_safely(mock_chain, {"input": "x"})
+        assert mock_chain.invoke.call_count == 1

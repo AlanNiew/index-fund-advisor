@@ -5,11 +5,12 @@ import os
 import tempfile
 import threading
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from ifa.common import (
     _atomic_write_json,
     _atomic_write_text,
+    build_advisor,
     build_state,
     get_provider_kwargs,
     save_report,
@@ -242,3 +243,54 @@ class TestAtomicWrite:
             assert not path.with_suffix(".txt.tmp").exists()
             # 恢复(避免影响后续测试)
             Path.replace = original_replace
+
+
+# ════════════════════════════════════════════
+#  build_advisor 超时分档
+# ════════════════════════════════════════════
+
+
+class TestBuildAdvisorTimeoutTiers:
+    """quick 与 deep 两个客户端拿到不同的超时（deep 档单独放宽）。"""
+
+    def _capture(self, config):
+        calls: list[dict] = []
+
+        class _FakeClient:
+            def __init__(self, **kwargs):
+                calls.append(kwargs)
+
+            def get_llm(self):
+                return MagicMock()
+
+        with (
+            patch("ifa.common.create_llm_client", side_effect=lambda **kw: _FakeClient(**kw)),
+            patch("ifa.common.AdvisorGraph") as graph_cls,
+        ):
+            build_advisor(config)
+        return calls, graph_cls
+
+    def test_deep_tier_gets_its_own_timeout(self):
+        calls, graph_cls = self._capture(
+            {
+                "llm_provider": "opencode",
+                "quick_think_llm": "deepseek-v4.1-flash",
+                "deep_think_llm": "deepseek-v4.1-flash",
+                "backend_url": "https://opencode.ai/inference/go/v1",
+                "timeout": 120,
+                "deep_timeout": 180,
+            }
+        )
+        assert [call["timeout"] for call in calls] == [120, 180]
+        assert graph_cls.call_args.kwargs["config"]["deep_timeout"] == 180
+
+    def test_missing_deep_timeout_falls_back_to_the_quick_one(self):
+        calls, _ = self._capture(
+            {
+                "llm_provider": "opencode",
+                "quick_think_llm": "q",
+                "deep_think_llm": "d",
+                "timeout": 90,
+            }
+        )
+        assert [call["timeout"] for call in calls] == [90, 90]

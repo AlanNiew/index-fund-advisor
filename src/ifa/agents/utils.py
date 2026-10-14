@@ -15,8 +15,44 @@ class AgentLLMError(Exception):
     """Agent 调用 LLM 时重试耗尽后抛出的异常。"""
 
 
-def invoke_llm_safely(llm, prompt, retries: int = 3, base_delay: float = 1.0):
-    """带指数退避重试的 LLM 安全调用。"""
+#: 辩论历史进入 prompt 时的字符上限。
+#: 辩论上下文逐轮增长，而每个辩手每轮都要重读整段历史——2026-10 实测 510300 的 deep
+#: 运行 wall 30.4 分钟，辩论段独占 86%，上下文大小是主要成本。截断时保留**末尾**
+#: （最新发言）：越新的反驳越决定下一轮该怎么接。
+DEBATE_HISTORY_MAX_CHARS = 3000
+
+
+def truncate_debate_history(text: str, max_chars: int = DEBATE_HISTORY_MAX_CHARS) -> str:
+    """截断过长的辩论历史，保留最新发言。
+
+    与 truncate_report 的方向相反：报告开头是结论（保留头部），辩论则越靠后的发言越
+    重要（从头部丢弃）。只用于构造 prompt，state 里的全文不受影响。
+    """
+    if not text or len(text) <= max_chars:
+        return text
+    return "[... 较早的辩论发言已省略 ...]\n\n" + text[-max_chars:]
+
+
+def _resolve_retries(retries: int | None) -> int:
+    """确定重试次数：显式参数优先，否则读运行时配置 llm_max_retries。"""
+    if retries is not None:
+        return max(0, int(retries))
+
+    from ifa.dataflows.config import get_config
+    from ifa.default_config import DEFAULT_LLM_MAX_RETRIES
+
+    configured = get_config().get("llm_max_retries")
+    if isinstance(configured, int) and not isinstance(configured, bool) and configured >= 0:
+        return configured
+    return DEFAULT_LLM_MAX_RETRIES
+
+
+def invoke_llm_safely(llm, prompt, retries: int | None = None, base_delay: float = 1.0):
+    """带指数退避重试的 LLM 安全调用。
+
+    retries: 重试次数（总尝试次数 = retries + 1）；None 时读配置 llm_max_retries。
+    """
+    retries = _resolve_retries(retries)
     last_exc = None
     for attempt in range(retries + 1):
         try:
@@ -39,8 +75,12 @@ def invoke_llm_safely(llm, prompt, retries: int = 3, base_delay: float = 1.0):
     raise AgentLLMError(f"LLM 调用失败，已重试 {retries} 次: {last_exc}") from last_exc
 
 
-def invoke_chain_safely(chain, input_data, retries: int = 3, base_delay: float = 1.0):
-    """带指数退避重试的 LangChain 链安全调用。"""
+def invoke_chain_safely(chain, input_data, retries: int | None = None, base_delay: float = 1.0):
+    """带指数退避重试的 LangChain 链安全调用。
+
+    retries: 重试次数（总尝试次数 = retries + 1）；None 时读配置 llm_max_retries。
+    """
+    retries = _resolve_retries(retries)
     last_exc = None
     for attempt in range(retries + 1):
         try:

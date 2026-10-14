@@ -1,8 +1,9 @@
-"""默认配置与校验测试 —— 供应商白名单、路径键、辩论轮数默认值。
+"""默认配置与校验测试 —— 供应商白名单、路径键、辩论轮数默认值、延迟预算。
 
 这些是「配置层说一套、代码做一套」最容易发生的地方：
   - tushare 曾在白名单里但没有实现，配置它会被静默忽略；
-  - AdvisorGraph 的辩论轮数兜底值曾是 1，而 DEFAULT_CONFIG 是 2。
+  - AdvisorGraph 的辩论轮数兜底值曾与 DEFAULT_CONFIG 不一致（前者 1、后者 2）；
+  - 超时/重试这类延迟预算必须有单一事实来源，且默认值要能对应上实测证据。
 """
 
 import pytest
@@ -60,8 +61,8 @@ class TestDebateRoundDefaults:
         assert dc.DEFAULT_CONFIG["max_risk_discuss_rounds"] == dc.DEFAULT_MAX_RISK_DISCUSS_ROUNDS
 
     def test_documented_defaults(self):
-        """CLAUDE.md 声明默认 2 轮，这里固定住。"""
-        assert dc.DEFAULT_MAX_DEBATE_ROUNDS == 2
+        """默认 1 轮：2026-10 实测辩论段独占 30.4 分钟运行的 86%。"""
+        assert dc.DEFAULT_MAX_DEBATE_ROUNDS == 1
         assert dc.DEFAULT_MAX_RISK_DISCUSS_ROUNDS == 2
 
     def test_advisor_graph_fallback_matches(self):
@@ -308,3 +309,41 @@ class TestProviderValidation:
         assert PROVIDER_CONFIG
         for name in PROVIDER_CONFIG:
             assert provider_label(name), f"{name} 没有展示名"
+
+
+class TestLatencyBudget:
+    """超时/重试的默认值与分档：quick 档收紧、deep 档单独放宽。"""
+
+    def test_timeout_tiers(self):
+        assert dc.DEFAULT_CONFIG["timeout"] == dc.DEFAULT_LLM_TIMEOUT == 120
+        assert dc.DEFAULT_CONFIG["deep_timeout"] == dc.DEFAULT_DEEP_TIMEOUT == 180
+        assert dc.DEFAULT_LLM_TIMEOUT < dc.DEFAULT_DEEP_TIMEOUT
+
+    def test_retry_default(self):
+        assert dc.DEFAULT_CONFIG["llm_max_retries"] == dc.DEFAULT_LLM_MAX_RETRIES == 2
+
+    def test_new_keys_are_configurable(self):
+        """新增的延迟预算键必须真能被 ifa config / 环境变量覆盖，否则只是摆设。"""
+        for key in ("deep_timeout", "llm_max_retries"):
+            assert key in dc.CONFIGURABLE_KEYS
+        assert dc._coerce_config_value("llm_max_retries", "4") == 4
+        assert ("IFA_DEEP_TIMEOUT", "deep_timeout") in dc._ENV_OVERRIDES
+        assert ("IFA_LLM_MAX_RETRIES", "llm_max_retries") in dc._ENV_OVERRIDES
+
+    def test_rejects_bad_latency_values(self):
+        with pytest.raises(ValueError, match="deep_timeout"):
+            dc.validate_config({"llm_provider": "deepseek", "deep_timeout": 0})
+        with pytest.raises(ValueError, match="llm_max_retries"):
+            dc.validate_config({"llm_provider": "deepseek", "llm_max_retries": -1})
+
+    def test_env_overrides_latency_budget(self, monkeypatch):
+        monkeypatch.setattr(dc, "load_last_config", lambda: {})
+        monkeypatch.setenv("IFA_TIMEOUT", "45")
+        monkeypatch.setenv("IFA_DEEP_TIMEOUT", "300")
+        monkeypatch.setenv("IFA_LLM_MAX_RETRIES", "1")
+
+        config = dc.build_runtime_config()
+
+        assert config["timeout"] == 45
+        assert config["deep_timeout"] == 300
+        assert config["llm_max_retries"] == 1

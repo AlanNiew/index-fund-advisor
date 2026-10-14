@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ifa.llm_clients.base_client import normalize_content
 from ifa.llm_clients.factory import create_llm_client
@@ -293,6 +294,125 @@ class TestOpenCodeModelCatalog:
 
     def test_validate_model_rejects_foreign_ids(self):
         assert validate_model("opencode", "gpt-999") is False
+
+
+class TestOpenCodeReasoningContent:
+    """OpenCode Go 思考模式的 reasoning_content 回传契约。
+
+    网关在思考模式下会以 400 拒绝「历史 assistant 消息缺少 reasoning_content」的请求
+    （报错原文：The `reasoning_content` in the thinking mode must be passed back to the API），
+    而 langchain_openai 默认在两个方向上都丢弃该字段，所以这条链路必须被测试钉住。
+    """
+
+    @staticmethod
+    def _llm(provider: str = "opencode", model: str = "deepseek-v4-pro"):
+        return create_llm_client(provider, model).get_llm()
+
+    @staticmethod
+    def _response(reasoning: str = "先算估值再给结论") -> dict:
+        return {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "deepseek-v4-pro",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "结论", "reasoning_content": reasoning},
+                }
+            ],
+        }
+
+    @staticmethod
+    def _assistant_with_reasoning() -> AIMessage:
+        return AIMessage(
+            content="",
+            additional_kwargs={"reasoning_content": "沪深300估值偏低"},
+            tool_calls=[
+                {"name": "get_fund_nav", "args": {"fund_code": "510300"}, "id": "call_1", "type": "tool_call"}
+            ],
+        )
+
+    def test_opencode_enables_reasoning_preservation(self, monkeypatch):
+        """opencode 必须打开该开关，否则思考模式下的请求会被网关拒绝。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+
+        assert self._llm()._preserve_reasoning_content is True
+
+    def test_other_providers_keep_it_off(self, monkeypatch):
+        """DeepSeek 官方 API 的规则相反（回传 reasoning_content 会 400），不能全局打开。"""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-key")
+
+        assert self._llm("deepseek", "deepseek-chat")._preserve_reasoning_content is False
+
+    def test_reasoning_content_is_sent_back(self, monkeypatch):
+        """历史 assistant 消息里的 reasoning_content 必须出现在请求体中。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+
+        payload = self._llm()._get_request_payload(
+            [
+                HumanMessage(content="分析 510300"),
+                self._assistant_with_reasoning(),
+                ToolMessage(content="净值 3.5", tool_call_id="call_1"),
+            ]
+        )
+
+        assert payload["messages"][1]["reasoning_content"] == "沪深300估值偏低"
+        assert payload["messages"][2]["role"] == "tool"
+
+    def test_messages_without_reasoning_stay_clean(self, monkeypatch):
+        """没有 reasoning_content 的消息不能被塞入空字段。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+
+        payload = self._llm()._get_request_payload([HumanMessage(content="hi"), AIMessage(content="直接回答")])
+
+        assert "reasoning_content" not in payload["messages"][1]
+
+    def test_reasoning_content_is_not_sent_by_other_providers(self, monkeypatch):
+        """开关关闭时不得泄漏该字段（否则 DeepSeek 官方接口会报错）。"""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-key")
+
+        payload = self._llm("deepseek", "deepseek-chat")._get_request_payload(
+            [HumanMessage(content="hi"), self._assistant_with_reasoning()]
+        )
+
+        assert "reasoning_content" not in payload["messages"][1]
+
+    def test_response_reasoning_content_is_captured_from_dict(self, monkeypatch):
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+
+        result = self._llm()._create_chat_result(self._response())
+
+        assert result.generations[0].message.additional_kwargs["reasoning_content"] == "先算估值再给结论"
+
+    def test_response_reasoning_content_is_captured_from_sdk_object(self, monkeypatch):
+        """真实路径走的是 OpenAI SDK 的 pydantic 对象（reasoning_content 落在 model_extra）。"""
+        from openai.types.chat import ChatCompletion
+
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        response = ChatCompletion.model_validate(self._response("模型原始思考"))
+
+        result = self._llm()._create_chat_result(response)
+
+        assert result.generations[0].message.additional_kwargs["reasoning_content"] == "模型原始思考"
+
+    def test_capture_is_skipped_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-key")
+
+        result = self._llm("deepseek", "deepseek-chat")._create_chat_result(self._response())
+
+        assert "reasoning_content" not in result.generations[0].message.additional_kwargs
+
+    def test_capture_tolerates_response_without_reasoning(self, monkeypatch):
+        """上游没给 reasoning_content 时不能抛错（例如非思考模式的回答）。"""
+        monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
+        response = self._response()
+        del response["choices"][0]["message"]["reasoning_content"]
+
+        result = self._llm()._create_chat_result(response)
+
+        assert "reasoning_content" not in result.generations[0].message.additional_kwargs
 
 
 class TestCustomProvider:

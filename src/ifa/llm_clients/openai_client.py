@@ -1,13 +1,18 @@
+import logging
 import os
 import uuid
 from typing import Any
 
+from langchain_core.outputs import ChatResult
 from langchain_openai import ChatOpenAI
+from pydantic import PrivateAttr
 
 from ifa.providers import PROVIDER_CONFIG
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+
+logger = logging.getLogger(__name__)
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -30,6 +35,86 @@ class NormalizedChatOpenAI(ChatOpenAI):
             Any: 规范化后的模型响应。
         """
         return normalize_content(super().invoke(input, config, **kwargs))
+
+    # OpenCode Go 在思考模式下要求把历史 assistant 消息的 reasoning_content 原样回传，
+    # 而 langchain_openai 在两个方向上都会丢弃该字段（_convert_message_to_dict 不输出、
+    # _convert_dict_to_message 不提取）——只能在这里显式保留。默认关闭：
+    # DeepSeek 官方 API 的规则相反（回传 reasoning_content 会 400），绝不能全局打开。
+    _preserve_reasoning_content: bool = PrivateAttr(default=False)
+
+    def _create_chat_result(self, response: Any, generation_info: dict | None = None) -> ChatResult:
+        """
+        构建调用结果，并保留网关返回的 reasoning_content。
+
+        参数：
+            response: 原始响应（dict 或 SDK 对象）。
+            generation_info: 附加生成信息。
+
+        返回：
+            ChatResult: 标准化后的调用结果。
+        """
+        result = super()._create_chat_result(response, generation_info)
+        if not self._preserve_reasoning_content:
+            return result
+        try:
+            choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices", None)
+            for choice, generations in zip(choices or [], result.generations, strict=False):
+                reasoning = _extract_reasoning_content(choice)
+                if not reasoning:
+                    continue
+                # generations 一般是单条 ChatGeneration，n>1 时才会是列表
+                for generation in generations if isinstance(generations, list) else [generations]:
+                    message = getattr(generation, "message", None)
+                    if message is not None:
+                        message.additional_kwargs.setdefault("reasoning_content", reasoning)
+        except Exception:  # 保护层：提取失败不得影响正常返回
+            logger.debug("提取 reasoning_content 失败", exc_info=True)
+        return result
+
+    def _get_request_payload(self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any) -> dict:
+        """
+        构造请求体，并按需回传历史 assistant 消息的 reasoning_content。
+
+        参数：
+            input_: 本次调用的输入。
+            stop: 停止词。
+            kwargs: 其余透传参数。
+
+        返回：
+            dict: 请求体。
+        """
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        if not self._preserve_reasoning_content:
+            return payload
+        try:
+            messages = self._convert_input(input_).to_messages()
+            converted = payload.get("messages")
+            if not isinstance(converted, list) or len(converted) != len(messages):
+                return payload
+            for message, out in zip(messages, converted, strict=False):
+                if not isinstance(out, dict) or out.get("role") != "assistant":
+                    continue
+                reasoning = getattr(message, "additional_kwargs", {}).get("reasoning_content")
+                if isinstance(reasoning, str) and reasoning:
+                    out["reasoning_content"] = reasoning
+        except Exception:  # 保护层：回传失败不得影响正常请求
+            logger.debug("回传 reasoning_content 失败", exc_info=True)
+        return payload
+
+
+def _extract_reasoning_content(choice: Any) -> str | None:
+    """从一条 choice 中取出 reasoning_content（兼容 dict 与 SDK 对象两种形态）。"""
+    message = choice.get("message") if isinstance(choice, dict) else getattr(choice, "message", None)
+    if isinstance(message, dict):
+        value = message.get("reasoning_content")
+    elif message is None:
+        value = None
+    else:
+        value = getattr(message, "reasoning_content", None)
+        if not value:
+            extra = getattr(message, "model_extra", None)
+            value = extra.get("reasoning_content") if isinstance(extra, dict) else None
+    return value if isinstance(value, str) and value else None
 
 
 # 将用户配置中的 kwargs 透传给 ChatOpenAI
@@ -153,7 +238,15 @@ class OpenAIClient(BaseLLMClient):
             headers["x-opencode-session"] = self.kwargs.get("opencode_session_id") or _opencode_session_id()
             llm_kwargs["default_headers"] = headers
 
-        return NormalizedChatOpenAI(**llm_kwargs)
+        llm = NormalizedChatOpenAI(**llm_kwargs)
+
+        # OpenCode Go 在思考模式下要求回传历史 assistant 消息的 reasoning_content，
+        # 缺失时上游会以 400 拒绝整个请求（间歇出现：是否进思考模式由上游按请求决定）。
+        # 只对 opencode 打开——DeepSeek 官方 API 的规则相反。
+        if self.provider == "opencode":
+            llm._preserve_reasoning_content = True
+
+        return llm
 
     def validate_model(self) -> bool:
         """

@@ -467,7 +467,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（546 个测试，覆盖 16 个模块）
+# 测试（555 个测试，覆盖 16 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -528,7 +528,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 546 个测试（16 个模块）
+├── tests/                    # 555 个测试（16 个模块）
 ├── scripts/                  # 每日分析等脚本
 ├── release/                  # 轻量打包脚手架（assemble.py，未发布到 PyPI）
 ├── pyproject.toml

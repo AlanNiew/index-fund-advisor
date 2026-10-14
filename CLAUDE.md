@@ -30,7 +30,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（546 个，覆盖 16 个模块）
+pytest                # 全部测试（555 个，覆盖 16 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -89,7 +89,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode/**custom**），另有 Anthropic/Google 独立客户端
   - 提供方清单是单一事实来源：`src/ifa/providers.py` 的 `PROVIDER_CONFIG`（base_url / api_key_env / 展示名）与 `OPENAI_COMPATIBLE_PROVIDERS`。该模块**零依赖**且位于包顶层，`default_config` 只能从它取提供方信息 —— 若放进 `llm_clients/` 会让 `ifa config` / `search` / `info` 连带拉起 langchain 全栈
   - `custom` 提供方 = 任意 OpenAI 兼容端点（自建网关/内网 one-api）：必须显式提供 `backend_url`（否则构造 LLM 时抛 `ValueError`），模型名不做目录校验，Key 取 `IFA_CUSTOM_API_KEY` 或配置项 `custom_api_key`
-  - `opencode` 走 **OpenCode Go** 聚合端点（`https://opencode.ai/inference/go/v1`，订阅制）。该服务要求客户端自报身份并携带稳定会话 ID，故 opencode 提供方会额外注入 `default_headers`：自定义 `User-Agent` + 进程级 `x-opencode-session`（可用 `OPENCODE_SESSION_ID` 环境变量覆盖；一次 `ifa` 运行 = 一个会话）。缺失时服务端按通用 SDK 客户端处理且无法复用提示缓存。
+  - `opencode` 走 **OpenCode Go** 聚合端点（`https://opencode.ai/inference/go/v1`，订阅制）。该服务要求客户端自报身份并携带稳定会话 ID，故 opencode 提供方会额外注入 `default_headers`：自定义 `User-Agent` + 进程级 `x-opencode-session`（可用 `OPENCODE_SESSION_ID` 环境变量覆盖；一次 `ifa` 运行 = 一个会话）。缺失时服务端按通用 SDK 客户端处理且无法复用提示缓存。思考模式下该网关还要求把历史 assistant 消息的 `reasoning_content` 原样回传（langchain_openai 双向丢弃该字段，故 `NormalizedChatOpenAI` 只对 opencode 打开 `_preserve_reasoning_content`）。
 - **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
 - **回测引擎** (`src/ifa/backtest/`) — 买入-持有策略回测，`run_backtest()` 输出年化收益、最大回撤、Sharpe、月度收益、净值曲线
 - **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
@@ -156,6 +156,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **数据源能力边界要变成可操作报错** — 上游把「不支持」表现为误导性报错时（如用 ETF 代码取中证成分股 → pandas "Excel file format cannot be determined"），不要原样透出：换成说明约束与正确用法的信息，同时把底层异常保留在 `__cause__` 与文本里（见 `_constituents_source_hint`）。反向要求同样成立——不要把网络抖动误诊成用法错误
 - **`py_mini_racer` 构造必须串行化** — akshare 多个接口（估值 `stock_index_pe_lg`、交易日历 `tool_trade_date_hist_sina`、同花顺/巨潮系）在内部 new `MiniRacer()`。LangGraph 的 ToolNode 并行执行工具，两个线程同时构造会触发 V8 断言 `[FATAL:partition_address_space.cc(243)] Check failed: !IsConfigurablePoolInitialized().`，**直接 abort 整个进程**（退出码 0x80000003，try/except 无法捕获）。`src/ifa/dataflows/__init__.py` 在导入时安装 `_mini_racer_guard`：用 RLock 串行化构造，并遍历 `sys.modules` 替换所有已持有旧 `MiniRacer` 引用的模块属性。不要移除该 import，也不要自行构造 `MiniRacer`
 - **数据源请求必须能超时退出** — AkShare 大量接口直接 `requests.get(url)` 不传 timeout（如 `index_stock_cons_csindex`），上游建连后不再返回字节时整条分析链会无限期挂住（实测 `oss-ch.csindex.com.cn` 挂死 14 分钟：进程存活、CPU≈0、日志停滞、try/except 永不触发）。`src/ifa/dataflows/__init__.py` 导入时安装 `_network_guard`：包装 `requests.sessions.Session.request`，只在调用方未传 timeout（或显式传 None）时补上 `IFA_DATA_SOURCE_TIMEOUT`（默认 30 秒）。**不要改回 `socket.setdefaulttimeout`** —— requests 会把 `timeout=None` 包成 `Timeout(connect=None, read=None)` 并显式 `sock.settimeout(None)`，把 socket 默认值覆盖掉（该实测结论已由 `tests/test_network_guard.py` 固化）。超时的请求仍被 `is_retryable_akshare_error` 视为可重试，单个工具最坏耗时约为 `retries × 超时`
+- **思考模式的 `reasoning_content` 必须回传（只对 opencode 打开）** — OpenCode Go 在思考模式下会以 400 拒绝「历史 assistant 消息缺少 `reasoning_content`」的请求（原文 `The reasoning_content in the thinking mode must be passed back to the API`），而 `langchain_openai` 的 `_convert_message_to_dict` / `_convert_dict_to_message` 在两个方向上都丢弃该字段。`NormalizedChatOpenAI` 覆写 `_create_chat_result`（把响应里的 reasoning_content 存进 `additional_kwargs`）与 `_get_request_payload`（请求时按索引回填），开关由 `OpenAIClient.get_llm()` 仅在 `provider == "opencode"` 时打开。**不要全局打开**：DeepSeek 官方 API 的规则相反，回传会 400。该故障是**间歇性**的（是否进思考模式由上游按请求决定），不要用「复跑一次成功」判定已修好
 - **缓存操作异常隔离** — `CachedDataToolExecutor` 的缓存读写和快照保存均有 try/except，磁盘故障时降级为直接执行
 - **vendor fallback 链** — `route_to_vendor()` 对每个供应商用 try/except，失败时自动尝试下一个
 - **安全字典访问** — 所有 Agent 节点使用 `.get()` + `isinstance` 检查访问嵌套状态；`_safe_get_nested()` 用于日志；`Reflector._safe_get_debate()` 用于反思
@@ -170,5 +171,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：546 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：555 个测试覆盖 16 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

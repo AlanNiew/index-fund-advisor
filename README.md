@@ -509,7 +509,7 @@ python scripts/run_rating_validation.py --months-back 6 --hold-days 90
 
 ## 每日邮件报告（cron 定时）
 
-`scripts/daily_analysis.py` 批量分析一组基金，并可把**报告全文 + `.md` 附件**发到邮箱。它是按无人值守的定时任务写的：非交易日直接跳过、失败非零退出、配置缺项报错而不是静默不发。
+`scripts/daily_analysis.py` 批量分析一组基金，并把**纯文本摘要正文 + 完整报告的 `.md` 附件**发到邮箱（邮件客户端不渲染 Markdown，所以正文是表格化摘要，全文只作附件）。它是按无人值守的定时任务写的：非交易日直接跳过、失败非零退出、配置缺项报错而不是静默不发。
 
 ```bash
 python scripts/daily_analysis.py --email                                  # 分析默认基金列表并发信
@@ -523,12 +523,12 @@ python scripts/daily_analysis.py --date 2026-10-13 --force --email        # 指�
 | `--date` | 今天 | 分析日期（`YYYY-MM-DD`） |
 | `--mode` | `deep` | `deep`（含辩论）或 `deep_simple`（不辩论，快得多） |
 | `--force` | 关 | 跳过交易日检查，非交易日也跑 |
-| `--email` | 关 | 跑完把汇总 + 报告全文 + `.md` 附件发到配置的邮箱 |
+| `--email` | 关 | 跑完把摘要正文（核心参数表 + 指数估值表）+ 完整报告 `.md` 附件发到配置的邮箱 |
 
 - **退出码**：任一基金分析失败、或邮件发送失败 → `1`；否则 `0`（含「非交易日跳过」）。
 - **非交易日**：不加 `--force` 时直接跳过分析**且不发邮件**，退出码 `0`。
 - **配置**：`ifa config smtp_host smtp.qq.com` 等写进用户配置文件，或直接用上表的 `IFA_SMTP_*` / `IFA_EMAIL_TO` 环境变量（服务器上推荐环境变量，密码不落盘）。
-- **发信行为**：正文为 `text/plain`（与落盘 Markdown 逐字一致），同一份报告再作为 `.md` 附件；正文超过 12 万字符只截断正文并显式标注，完整内容始终在附件里；报告顶部含程序硬注入的【智识诚实声明】。
+- **发信行为**：正文为 `text/plain` 摘要 —— 「核心参数」表（基金代码/基金名称/净值(日期)/日涨跌/评级/置信度/耗时/状态）+「指数估值」表（跟踪指数/数据日期/PE(TTM)/PB/ROE/股息率/ERP，只覆盖乐咕乐股支持的那 12 个指数，且股息率是「上证A股」全市场参考值而非指数自身值）+ 失败明细；**报告全文不进正文**，而是作为 `.md` 附件（含程序硬注入的【智识诚实声明】）。正文超过 12 万字符只截断正文并显式标注，完整内容始终在附件里。
 - **服务器 cron**（工作日 15:30，收盘口径）：
 
 ```cron
@@ -547,7 +547,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（684 个测试，覆盖 32 个模块）
+# 测试（702 个测试，覆盖 33 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -612,7 +612,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 684 个测试（32 个模块）
+├── tests/                    # 702 个测试（33 个模块）
 ├── scripts/                  # 每日分析脚本（含 --email 定时邮件报告）
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml

@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+
 import akshare as ak
 import pandas as pd
 
@@ -13,9 +17,11 @@ from .a_share import (
     _format_table,
     _round_numeric_frame,
 )
-from .a_share_common import safe_display_symbol, safe_plain_code
+from .a_share_common import find_column, safe_display_symbol, safe_plain_code
 from .a_share_index_fund import _fetch_etf_daily_row
 from .asset_type import AssetType, detect_asset_type
+
+logger = logging.getLogger(__name__)
 
 # ── 1. 全部基金列表 ─────────────────────────────────────────────
 
@@ -723,3 +729,201 @@ def get_lof_spot_data() -> str:
         return "未获取到 LOF 实时行情数据。"
 
     return _format_table(df, "# LOF Spot Data", rows=50)
+
+
+# ── 21. 基金每日净值快照（脚本/程序化消费）──────────────────────
+#
+# 为什么单独开一个「非文本」入口：数据工具层的每个工具都要把结果转成给 LLM 看的 CSV
+# 文本，而每日邮件摘要需要的是结构化的 {代码: {净值/日期/涨跌幅}}。这里返回 dict，
+# 仿 a_share_macro.fetch_valuation_metrics 的先例。
+#
+# 三张上游表各请求一次，与基金数量无关；任一表失败只让对应字段缺失，不抛异常：
+#   - fund_open_fund_daily_em → 全部场外基金（含 QDII）最近已公布的单位净值
+#   - fund_info_index_em      → 场外指数基金的单位净值 + 日期 + 日增长率
+#   - fund_etf_fund_daily_em  → 场内 ETF 的单位净值 + 市价 + 日增长率
+
+#: 上游把缺失值写成 '-' / '--' / '---' / 'nan' 等多种形态，统一判为缺失。
+_MISSING_VALUE_TOKENS = frozenset({"", "-", "--", "---", "nan", "none", "null"})
+
+
+def _is_missing(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip().lower() in _MISSING_VALUE_TOKENS
+
+
+def _to_float(value: object) -> float | None:
+    """把上游的净值/涨跌幅转成 float；缺失或非数字返回 None。"""
+    if _is_missing(value):
+        return None
+    try:
+        return float(str(value).strip().replace("%", "").replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _nav_columns(df: pd.DataFrame) -> list[str]:
+    """按表内顺序返回「<日期>-单位净值」列（当天在前、上一交易日在后）。"""
+    return [str(column) for column in df.columns if str(column).endswith("-单位净值")]
+
+
+def _nav_from_row(row: pd.Series, columns: Sequence[str]) -> tuple[float | None, str | None]:
+    """取第一个有值的单位净值列，并返回它对应的日期（日期写在列名里）。"""
+    for column in columns:
+        value = _to_float(row.get(column))
+        if value is not None:
+            return value, str(column).rsplit("-", 1)[0]
+    return None, None
+
+
+def _rows_for_codes(df: pd.DataFrame, wanted: set[str]) -> dict[str, pd.Series]:
+    """从整表里挑出目标代码的行（先向量化过滤再逐行取，避免遍历上万行）。"""
+    code_col = find_column(df, "基金代码", "代码")
+    if not code_col:
+        return {}
+    normalized = df[code_col].astype(str).str.strip().str.zfill(6)
+    hit = df[normalized.isin(wanted)]
+    rows: dict[str, pd.Series] = {}
+    for _, row in hit.iterrows():
+        rows.setdefault(str(row.get(code_col)).strip().zfill(6), row)
+    return rows
+
+
+def _fill_from_open_fund_daily(snapshots: dict[str, dict]) -> None:
+    """全部场外基金（含 QDII）的最近单位净值 —— 该表没有净值日期列，日期写在列名里。"""
+    try:
+        df = _call_akshare_api(ak.fund_open_fund_daily_em)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取开放式基金每日净值失败，摘要将缺少场外净值: %s", exc)
+        return
+    if df is None or df.empty:
+        return
+
+    rows = _rows_for_codes(df, set(snapshots))
+    name_col = find_column(df, "基金简称", "基金名称")
+    nav_cols = _nav_columns(df)
+    change_col = find_column(df, "日增长率")
+    for code, row in rows.items():
+        data = snapshots[code]
+        if name_col and not data["name"] and not _is_missing(row.get(name_col)):
+            data["name"] = str(row.get(name_col)).strip()
+        if data["nav"] is None:
+            data["nav"], data["nav_date"] = _nav_from_row(row, nav_cols)
+        if data["change_pct"] is None and change_col:
+            data["change_pct"] = _to_float(row.get(change_col))
+
+
+def _fill_from_index_fund_table(snapshots: dict[str, dict]) -> None:
+    """场外指数基金：这张表带净值日期与日增长率，比每日净值表更适合做摘要。"""
+    try:
+        df = _call_akshare_api(ak.fund_info_index_em, symbol="全部", indicator="被动指数型")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取指数基金列表失败，摘要将缺少场外指数基金的日涨跌: %s", exc)
+        return
+    if df is None or df.empty:
+        return
+
+    rows = _rows_for_codes(df, set(snapshots))
+    name_col = find_column(df, "基金名称", "基金简称")
+    nav_col = find_column(df, "单位净值")
+    date_col = find_column(df, "日期")
+    change_col = find_column(df, "日增长率")
+    for code, row in rows.items():
+        data = snapshots[code]
+        if name_col and not data["name"] and not _is_missing(row.get(name_col)):
+            data["name"] = str(row.get(name_col)).strip()
+        nav = _to_float(row.get(nav_col)) if nav_col else None
+        if nav is not None:
+            data["nav"] = nav
+            if date_col and not _is_missing(row.get(date_col)):
+                data["nav_date"] = str(row.get(date_col)).strip()[:10]
+        change = _to_float(row.get(change_col)) if change_col else None
+        if change is not None:
+            data["change_pct"] = change
+
+
+def _fetch_etf_price_change(code: str) -> float | None:
+    """ETF 收盘后从场内日线补当日涨跌幅（每日行情表的「增长率」要更晚才有值）。"""
+    end = datetime.now()
+    start = end - timedelta(days=15)
+    try:
+        df = _call_akshare_api(
+            ak.fund_etf_hist_em,
+            symbol=code,
+            period="daily",
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            adjust="",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取 ETF %s 日线失败，日涨跌留空: %s", code, exc)
+        return None
+    if df is None or df.empty:
+        return None
+    change_col = find_column(df, "涨跌幅")
+    return _to_float(df.iloc[-1].get(change_col)) if change_col else None
+
+
+def _fill_from_etf_table(snapshots: dict[str, dict]) -> None:
+    """场内 ETF：每日行情表给出单位净值/市价，但收盘前的「增长率」是 '---'。"""
+    try:
+        df = _call_akshare_api(ak.fund_etf_fund_daily_em)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取场内 ETF 行情失败，摘要将缺少 ETF 净值: %s", exc)
+        return
+    if df is None or df.empty:
+        return
+
+    rows = _rows_for_codes(df, set(snapshots))
+    name_col = find_column(df, "基金简称", "基金名称")
+    price_col = find_column(df, "市价")
+    nav_cols = _nav_columns(df)
+    change_col = find_column(df, "增长率", "日增长率")
+    for code, row in rows.items():
+        data = snapshots[code]
+        if name_col and not data["name"] and not _is_missing(row.get(name_col)):
+            data["name"] = str(row.get(name_col)).strip()
+        if data["nav"] is None:
+            data["nav"], data["nav_date"] = _nav_from_row(row, nav_cols)
+        if data["change_pct"] is None and change_col:
+            data["change_pct"] = _to_float(row.get(change_col))
+        if price_col:
+            data["price"] = _to_float(row.get(price_col))
+        if data["change_pct"] is None:
+            data["change_pct"] = _fetch_etf_price_change(code)
+
+
+def fetch_fund_daily_snapshots(codes: Sequence[str]) -> dict[str, dict]:
+    """
+    获取一批基金的每日净值快照（名称/单位净值/净值日期/日涨跌幅/市价）。
+
+    面向脚本与程序化消费（每日邮件摘要），返回结构化数据而不是给 LLM 的 CSV 文本。
+    上游表里的「当天」净值收盘后才有值，因此拿到的是最近已公布交易日的数据，并在
+    nav_date 里如实标注 —— 摘要里不能把昨天的净值写成今天的。
+
+    参数：
+        codes: 基金代码序列（6 位，可混含场内 ETF 与场外基金）。
+
+    返回：
+        dict[str, dict]: {代码: {"name", "nav", "nav_date", "change_pct", "price"}}；
+        上游查不到的代码不会出现在结果里，缺失字段为 None。
+    """
+    wanted = [safe_plain_code(code) for code in codes if str(code).strip()]
+    snapshots: dict[str, dict] = {
+        code: {"name": None, "nav": None, "nav_date": None, "change_pct": None, "price": None}
+        for code in wanted
+        if code
+    }
+    if not snapshots:
+        return {}
+
+    _fill_from_open_fund_daily(snapshots)
+    _fill_from_index_fund_table(snapshots)
+    _fill_from_etf_table(snapshots)
+
+    return {code: data for code, data in snapshots.items() if data["name"] or data["nav"] is not None}

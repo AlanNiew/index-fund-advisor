@@ -3,13 +3,16 @@
 对指定基金列表逐一执行 deep 模式深度分析，保存 Markdown 报告，
 并在控制台打印评级汇总表格。非交易日自动跳过。
 
+--email 发出的正文是**盘后摘要**（基金名称/净值(日期)/日涨跌/评级 + 指数估值），
+完整报告作为 .md 附件送达 —— 邮件客户端不渲染 Markdown，正文塞全文只会看到表格线。
+
 用法:
     python scripts/daily_analysis.py                 # 分析今天（仅交易日）
     python scripts/daily_analysis.py --force         # 强制运行（不检查交易日）
     python scripts/daily_analysis.py --date 2025-04-25  # 指定日期
     python scripts/daily_analysis.py --codes 161725,110020  # 指定基金
     python scripts/daily_analysis.py --mode deep_simple     # 无辩论（快得多）
-    python scripts/daily_analysis.py --email         # 跑完把报告发到邮箱
+    python scripts/daily_analysis.py --email         # 跑完把摘要发到邮箱（.md 报告作附件）
 
 退出码（供 cron / systemd 判断是否告警）:
     0  正常（含「非交易日跳过」—— 休市不是故障，不该触发告警）
@@ -49,14 +52,51 @@ logger = logging.getLogger(__name__)
 # 默认分析的基金列表
 DEFAULT_FUND_CODES = ["161725", "110020", "000834", "017641", "012761"]
 
-# 基金代码 → 底层跟踪指数（仅支持指数基金/ETF，主动基金跳过估值展示）
+# 基金代码 → 跟踪指数（**可选覆盖**）：只有当基金名称里看不出跟踪指数时才需要登记。
+# 注意：乐咕乐股只提供下面 SUPPORTED_INDEX_NAMES 里这 12 个指数的 PE/PB，其它指数
+# （如中证白酒、纳斯达克100、标普500）即使登记了也只会显示 '-'，不会编造数字。
 FUND_INDEX_MAP = {
-    "161725": "沪深300",
+    "161725": "中证白酒",  # 乐咕乐股未覆盖 → 估值显示 '-'
     "110020": "沪深300",
-    "000834": "中证500",
-    "017641": "沪深300",
-    "012761": "中证1000",
+    "000834": "纳斯达克100",  # 乐咕乐股未覆盖
+    "017641": "标普500",  # 乐咕乐股未覆盖
+    "012761": "上证红利",
 }
+
+# 乐咕乐股支持的指数名（来源：akshare stock_index_pe_lg / stock_index_pb_lg 的 symbol_map）。
+# 自动识别只在名单内匹配，免得认出一个根本取不到估值数据的指数。
+SUPPORTED_INDEX_NAMES = (
+    "上证50",
+    "沪深300",
+    "上证380",
+    "创业板50",
+    "中证500",
+    "上证180",
+    "深证红利",
+    "深证100",
+    "中证1000",
+    "上证红利",
+    "中证100",
+    "中证800",
+)
+
+# 按名称长度降序匹配，避免「中证1000」被更短的「中证100」抢先命中
+_INDEX_NAMES_BY_LENGTH = tuple(sorted(SUPPORTED_INDEX_NAMES, key=len, reverse=True))
+
+
+def detect_index_from_name(fund_name: str) -> str | None:
+    """从基金名称识别跟踪指数（如「华泰柏瑞上证红利ETF联接A」→ 上证红利）。
+
+    只认 SUPPORTED_INDEX_NAMES 里的指数：认不出来宁可显示 '-'，也不猜一个取不到数据、
+    或者根本不对的指数 —— 估值张冠李戴比没有估值更糟。
+    """
+    text = (fund_name or "").strip()
+    if not text:
+        return None
+    for name in _INDEX_NAMES_BY_LENGTH:
+        if name in text:
+            return name
+    return None
 
 
 def check_trading_day(date_str: str) -> bool:
@@ -70,44 +110,48 @@ def check_trading_day(date_str: str) -> bool:
         return False
 
 
-def get_fund_name(fund_code: str) -> str:
-    """尝试获取基金名称，失败时返回代码。"""
+def fetch_fund_snapshots(fund_codes: list[str]) -> dict[str, dict]:
+    """获取基金净值快照（名称/净值/净值日期/日涨跌幅），供邮件摘要使用。
+
+    取数失败只记 warning 并返回空 dict —— 摘要少两列，不该让整封邮件发不出去。
+    """
     try:
-        from ifa.agents.tools.public_fund_tools import get_fund_basic_info
+        from ifa.dataflows.a_share_public_fund import fetch_fund_daily_snapshots
 
-        result = get_fund_basic_info.invoke({"fund_code": fund_code})
-        if isinstance(result, str) and result.strip():
-            # 取第一行中可能的名称
-            for line in result.strip().split("\n"):
-                if fund_code in line and "|" in line:
-                    parts = [p.strip() for p in line.split("|")]
-                    for p in parts:
-                        if p and p != fund_code and not p.replace(".", "").replace("%", "").replace("-", "").isdigit():
-                            return p[:20]
-        return fund_code
-    except Exception:
-        return fund_code
+        return fetch_fund_daily_snapshots(fund_codes)
+    except Exception as e:
+        logger.warning("基金净值快照获取失败，邮件摘要将缺少净值/涨跌列: %s", e)
+        return {}
 
 
-def fetch_valuations(fund_codes: list[str]) -> dict[str, dict]:
-    """获取基金列表涉及的指数估值指标，返回 {fund_code: metrics_dict}。"""
+def resolve_index_name(fund_code: str, fund_name: str | None = None) -> str | None:
+    """确定基金跟踪的指数：先看 FUND_INDEX_MAP 覆盖，再从基金名称自动识别。"""
+    override = FUND_INDEX_MAP.get(fund_code.strip())
+    if override:
+        return override
+    return detect_index_from_name(fund_name or "")
+
+
+def fetch_valuations(fund_codes: list[str], fund_snapshots: dict[str, dict] | None = None) -> dict[str, dict]:
+    """获取基金列表涉及的指数估值指标，返回 {fund_code: {"index_name", **metrics}}。"""
     from ifa.dataflows.a_share_macro import fetch_valuation_metrics
 
-    # 提示未登记跟踪指数的基金（主动基金等），估值列将以 '-' 展示
-    unmapped = [c.strip() for c in fund_codes if not FUND_INDEX_MAP.get(c.strip())]
-    if unmapped:
-        logger.info("以下基金未登记跟踪指数，跳过估值展示: %s", ", ".join(unmapped))
+    snapshots = fund_snapshots or {}
 
-    # 收集涉及的指数（去重）
-    index_names = set()
-    for code in fund_codes:
-        idx = FUND_INDEX_MAP.get(code.strip())
-        if idx:
-            index_names.add(idx)
+    # 逐只确定跟踪指数；认不出来的（主动基金等）估值列显示 '-'
+    index_by_code: dict[str, str | None] = {}
+    for raw_code in fund_codes:
+        code = raw_code.strip()
+        snapshot = snapshots.get(code) or {}
+        index_by_code[code] = resolve_index_name(code, snapshot.get("name"))
+
+    unmapped = [code for code, name in index_by_code.items() if not name]
+    if unmapped:
+        logger.info("以下基金无法确定跟踪指数，估值列显示 '-': %s", ", ".join(unmapped))
 
     # 按指数拉取（同一指数只请求一次）
     index_metrics: dict[str, dict] = {}
-    for name in sorted(index_names):
+    for name in sorted({value for value in index_by_code.values() if value}):
         try:
             logger.info("获取 %s 估值数据...", name)
             index_metrics[name] = fetch_valuation_metrics(name)
@@ -115,11 +159,12 @@ def fetch_valuations(fund_codes: list[str]) -> dict[str, dict]:
             logger.warning("获取 %s 估值数据失败: %s", name, e)
             index_metrics[name] = {"index_name": name}
 
-    # 映射回基金维度
+    # 映射回基金维度（复制一份，避免多只基金共享同一指数时互相污染）
     fund_metrics: dict[str, dict] = {}
-    for code in fund_codes:
-        idx = FUND_INDEX_MAP.get(code.strip())
-        fund_metrics[code.strip()] = index_metrics.get(idx, {}) if idx else {}
+    for code, index_name in index_by_code.items():
+        metrics = dict(index_metrics.get(index_name, {})) if index_name else {}
+        metrics.setdefault("index_name", index_name)
+        fund_metrics[code] = metrics
 
     return fund_metrics
 
@@ -147,14 +192,14 @@ def _fmt_erp(value, markup: bool = True) -> str:
 
 def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict]):
     """分析前输出详细估值概览表。"""
-    # 收集不重复的指数数据（按 fund_codes 顺序去重）
+    # 收集不重复的指数数据（按 fund_codes 顺序去重；指数名以 fetch_valuations 的结果为准）
     seen: set[str] = set()
     indices: list[tuple[str, dict]] = []
     for code in fund_codes:
-        idx = FUND_INDEX_MAP.get(code.strip())
+        m = fund_metrics.get(code.strip(), {})
+        idx = str(m.get("index_name") or "").strip()
         if idx and idx not in seen:
             seen.add(idx)
-            m = fund_metrics.get(code.strip(), {})
             indices.append((idx, m))
 
     if not indices:
@@ -217,7 +262,7 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
 
 
 def analyze_single_fund(advisor, fund_code: str, analysis_date: str, mode: str = "deep") -> dict:
-    """分析单只基金，返回结果字典（含 report 全文，供邮件正文使用）。"""
+    """分析单只基金，返回结果字典（含 report 全文，落盘为邮件附件）。"""
     from ifa.common import build_state, save_report
 
     logger.info("开始分析基金 %s（模式 %s）...", fund_code, mode)
@@ -367,6 +412,7 @@ def send_report_email(
     analysis_date: str,
     mode: str,
     fund_metrics: dict[str, dict] | None = None,
+    fund_snapshots: dict[str, dict] | None = None,
 ) -> None:
     """把本次结果组装成一封邮件发出去。
 
@@ -392,6 +438,7 @@ def send_report_email(
         analysis_date=analysis_date,
         results=results,
         fund_metrics=fund_metrics,
+        fund_snapshots=fund_snapshots,
         mode=mode,
     )
     attached = send_email(subject, body, config=config, attachments=attachments)
@@ -435,7 +482,7 @@ def main() -> int:
     parser.add_argument(
         "--email",
         action="store_true",
-        help="分析完成后发送邮件（报告全文进正文，.md 报告作附件）",
+        help="分析完成后发送邮件（正文为摘要，.md 报告作附件）",
     )
     args = parser.parse_args()
 
@@ -463,10 +510,13 @@ def main() -> int:
     logger.info("待分析基金: %s", ", ".join(fund_codes))
     logger.info("分析模式: %s", args.mode)
 
+    # 净值/涨跌快照（邮件摘要用；失败只影响摘要两列，不影响分析）
+    fund_snapshots = fetch_fund_snapshots(fund_codes)
+
     # 获取估值指标（分析前，用于概览和汇总表）
     fund_metrics: dict[str, dict] = {}
     try:
-        fund_metrics = fetch_valuations(fund_codes)
+        fund_metrics = fetch_valuations(fund_codes, fund_snapshots)
         print_valuation_overview(fund_codes, fund_metrics)
     except Exception as e:
         logger.warning("估值数据获取失败（不影响后续分析）: %s", e)
@@ -495,7 +545,7 @@ def main() -> int:
 
     if args.email:
         try:
-            send_report_email(results, analysis_date, args.mode, fund_metrics)
+            send_report_email(results, analysis_date, args.mode, fund_metrics, fund_snapshots)
         except Exception as e:
             logger.error("邮件发送失败: %s", e)
             exit_code = 1

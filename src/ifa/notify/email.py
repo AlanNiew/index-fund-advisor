@@ -8,12 +8,14 @@
 - **配了就必须生效**：SMTP 配置缺项时抛 :class:`EmailConfigError` 并列出缺了哪几项，
   而不是静默跳过发信 —— 「tushare 配了却被静默回退到 akshare」是同一种病。
 - **密码优先走环境变量** `IFA_SMTP_PASSWORD`，避免明文落进 `config.json`。
-- **正文与附件同源**：正文放报告全文，同一份报告再作为 `.md` 附件带上；附件文件缺失
-  只记 warning，不影响正文送达。
+- **正文是摘要，不是全文**：邮件客户端不渲染 Markdown，把报告全文塞进正文只会看到
+  一堆井号和表格线。正文因此改成纯文本摘要（核心参数 + 指数估值 + 失败明细），
+  完整报告仍作为 `.md` 附件送达；附件才是唯一权威版本。
+- **附件缺失不影响正文**：附件文件读不到只记 warning，不中断发信。
 
-为什么正文用 `text/plain` 而不是 HTML：报告本身就是 Markdown，转 HTML 要么引入
-`markdown` 依赖、要么手写一套转义；而 `text/plain` 能让收件人看到与落盘文件逐字一致
-的内容（需要排版时打开附件即可）。
+为什么正文用 `text/plain` 而不是 HTML：摘要表靠等宽字体对齐（`_render_table` 按显示
+宽度补空格，CJK 全角算 2 列）；HTML 要么引入 `markdown` 依赖、要么手写一套转义，
+而收件人需要的正是「打开就能读、不依赖客户端渲染」的内容。
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import math
 import re
 import smtplib
 import ssl
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -206,43 +209,112 @@ def _format_erp(value: Any) -> str:
     return f"+{number:.2f}%" if number >= 0 else f"{number:.2f}%"
 
 
-def _summary_table(
-    results: Sequence[Mapping[str, Any]],
-    fund_metrics: Mapping[str, Mapping[str, Any]],
-) -> str:
-    """纯文本汇总表（不带 Rich 标记 —— 邮件里没人解析 markup）。"""
-    show_metrics = any(fund_metrics.get(str(result.get("fund_code", ""))) for result in results)
-    headers = ["基金代码", "评级", "置信度"]
-    if show_metrics:
-        headers += ["PE(TTM)", "股息率", "ERP"]
-    headers += ["耗时", "状态"]
+def _display_width(text: str) -> int:
+    """估算等宽字体下的显示宽度（CJK 全角字符占 2 列）。"""
+    return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
 
+
+def _pad(text: str, width: int) -> str:
+    return text + " " * max(0, width - _display_width(text))
+
+
+def _render_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    """纯文本表格（不带 Rich 标记 —— 邮件里没人解析 markup）。"""
+    widths = [_display_width(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], _display_width(cell))
+
+    lines = ["  ".join(_pad(header, widths[index]) for index, header in enumerate(headers))]
+    lines.append("  ".join("-" * width for width in widths))
+    lines.extend("  ".join(_pad(cell, widths[index]) for index, cell in enumerate(row)) for row in rows)
+    return "\n".join(lines)
+
+
+def _short_date(value: Any) -> str:
+    """2026-10-13 → 10-13（年份已经写在标题里）。"""
+    text = str(value or "").strip()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[5:10]
+    return text or "-"
+
+
+def _format_nav(value: Any, nav_date: Any) -> str:
+    """基金净值保留 4 位小数，并带上净值日期 —— 净值是哪天的必须写清楚。"""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "-"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    date_text = _short_date(nav_date)
+    return f"{number:.4f}（{date_text}）" if date_text != "-" else f"{number:.4f}"
+
+
+def _format_change(value: Any) -> str:
+    """日涨跌幅带符号；缺失显示 '-'。"""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "-"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    return f"{number:+.2f}%"
+
+
+def _fund_info_table(
+    results: Sequence[Mapping[str, Any]],
+    fund_snapshots: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """核心参数表：名称 / 净值(日期) / 日涨跌 + 评级 / 置信度 / 耗时 / 状态。"""
+    headers = ["基金代码", "基金名称", "净值(日期)", "日涨跌", "评级", "置信度", "耗时", "状态"]
     rows: list[list[str]] = []
     for result in results:
-        metrics = fund_metrics.get(str(result.get("fund_code", ""))) or {}
-        row = [
-            str(result.get("fund_code", "")),
-            str(result.get("rating", "N/A")),
-            str(result.get("confidence", "N/A")),
-        ]
-        if show_metrics:
-            row += [
+        code = str(result.get("fund_code", ""))
+        snapshot = fund_snapshots.get(code) or {}
+        rows.append(
+            [
+                code,
+                str(snapshot.get("name") or "-"),
+                _format_nav(snapshot.get("nav"), snapshot.get("nav_date")),
+                _format_change(snapshot.get("change_pct")),
+                str(result.get("rating", "N/A")),
+                str(result.get("confidence", "N/A")),
+                f"{float(result.get('elapsed') or 0):.1f}s",
+                "失败" if result.get("error") else "成功",
+            ]
+        )
+    return _render_table(headers, rows)
+
+
+def _valuation_table(
+    results: Sequence[Mapping[str, Any]],
+    fund_metrics: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    """指数估值表：只列能确定跟踪指数的基金 —— 认不出指数就不猜，免得张冠李戴。"""
+    rows: list[list[str]] = []
+    for result in results:
+        code = str(result.get("fund_code", ""))
+        metrics = fund_metrics.get(code) or {}
+        index_name = str(metrics.get("index_name") or "").strip()
+        if not index_name:
+            continue
+        rows.append(
+            [
+                code,
+                index_name,
+                str(metrics.get("date") or "-"),
                 _format_number(metrics.get("pe_ttm")),
+                _format_number(metrics.get("pb")),
+                _format_number(metrics.get("roe"), "%"),
                 _format_number(metrics.get("dividend_yield"), "%"),
                 _format_erp(metrics.get("erp")),
             ]
-        row += [f"{float(result.get('elapsed') or 0):.1f}s", "失败" if result.get("error") else "成功"]
-        rows.append(row)
-
-    widths = [len(header) for header in headers]
-    for row in rows:
-        widths = [max(width, len(cell)) for width, cell in zip(widths, row, strict=True)]
-
-    lines = ["  ".join(header.ljust(widths[i]) for i, header in enumerate(headers))]
-    lines.append("  ".join("-" * width for width in widths))
-    for row in rows:
-        lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
-    return "\n".join(lines)
+        )
+    if not rows:
+        return None
+    headers = ["基金代码", "跟踪指数", "数据日期", "PE(TTM)", "PB", "ROE", "股息率", "ERP"]
+    return _render_table(headers, rows)
 
 
 def build_daily_report_email(
@@ -250,6 +322,7 @@ def build_daily_report_email(
     analysis_date: str,
     results: Sequence[Mapping[str, Any]],
     fund_metrics: Mapping[str, Mapping[str, Any]] | None = None,
+    fund_snapshots: Mapping[str, Mapping[str, Any]] | None = None,
     mode: str = "deep",
     generated_at: str | None = None,
 ) -> tuple[str, str, list[Path]]:
@@ -257,10 +330,15 @@ def build_daily_report_email(
 
     results 的每一项形如
     `{"fund_code", "rating", "confidence", "elapsed", "error", "report_path", "report"}`，
-    与 `scripts/daily_analysis.py` 的结果字典一致；`report` 为报告全文（进正文），
-    `report_path` 为落盘 .md 路径（进附件）。
+    与 `scripts/daily_analysis.py` 的结果字典一致。正文只放摘要：报告全文不再进正文
+    （Markdown 在邮件客户端不渲染），只由 `report_path` 指定的 `.md` 文件作为附件送达。
+
+    fund_snapshots 形如 `{fund_code: {"name", "nav", "nav_date", "change_pct"}}`；
+    fund_metrics 形如 `{fund_code: {"index_name", "date", "pe_ttm", "pb", "roe",
+    "dividend_yield", "erp"}}`。两者缺失时正文相应退化为「-」或整节省略。
     """
     metrics = fund_metrics or {}
+    snapshots = fund_snapshots or {}
     generated_at = generated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     success = sum(1 for result in results if not result.get("error"))
     total_seconds = sum(float(result.get("elapsed") or 0) for result in results)
@@ -272,39 +350,31 @@ def build_daily_report_email(
         f"分析模式: {mode}    生成时间: {generated_at}",
         f"基金数量: {len(results)}    成功: {success}    失败: {len(results) - success}    总耗时: {total_seconds:.1f}s",
         "",
-        "== 评级汇总 ==",
-        _summary_table(results, metrics),
-        "",
-        "== 报告全文 ==",
+        "== 核心参数 ==",
+        _fund_info_table(results, snapshots),
     ]
 
-    attachments: list[Path] = []
-    for result in results:
-        code = str(result.get("fund_code", ""))
-        report_path = result.get("report_path")
-        if report_path:
-            attachments.append(Path(str(report_path)))
-
-        parts.append("")
-        parts.append(f"---------- {code} ----------")
-        report_text = str(result.get("report") or "").strip()
-        if report_text:
-            parts.append(report_text)
-        elif result.get("error"):
-            parts.append(f"[分析失败] {result['error']}")
-        else:
-            parts.append("[本次未产出报告]")
+    valuation = _valuation_table(results, metrics)
+    if valuation:
+        parts += [
+            "",
+            "== 指数估值 ==",
+            valuation,
+            "注: 股息率为全市场（上证A股）参考值，非该指数自身股息率；'-' 表示该指数暂无数据。",
+        ]
 
     failures = [result for result in results if result.get("error")]
     if failures:
-        parts.append("")
-        parts.append("== 失败明细 ==")
+        parts += ["", "== 失败明细 =="]
         parts.extend(f"- {result.get('fund_code')}: {result.get('error')}" for result in failures)
+
+    attachments = [Path(str(result["report_path"])) for result in results if result.get("report_path")]
 
     parts += [
         "",
         "--",
-        f"本邮件由 IFA 自动生成（模式: {mode}）。报告正文含硬注入的【智识诚实声明】，请一并阅读。",
+        f"本邮件由 IFA 自动生成（模式: {mode}）。正文为盘后摘要，完整报告（含【智识诚实声明】"
+        "与全部数据）见 .md 附件；评级与置信度由多 Agent 辩论生成，不构成投资建议。",
     ]
 
     return subject, "\n".join(parts), attachments

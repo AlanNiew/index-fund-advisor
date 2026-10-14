@@ -14,6 +14,7 @@ from ifa.notify.email import (
     EmailConfig,
     EmailConfigError,
     EmailSendError,
+    _display_width,
     build_daily_report_email,
     parse_recipients,
     send_email,
@@ -174,7 +175,25 @@ class TestBuildDailyReportEmail:
         subject, body, attachments = build_daily_report_email(
             analysis_date="2026-10-13",
             results=results,
-            fund_metrics={"510300": {"pe_ttm": 12.3, "dividend_yield": 2.5, "erp": -1.2}},
+            fund_metrics={
+                "510300": {
+                    "index_name": "沪深300",
+                    "date": "2026-10-13",
+                    "pe_ttm": 12.3,
+                    "pb": 1.42,
+                    "roe": 11.37,
+                    "dividend_yield": 2.5,
+                    "erp": -1.2,
+                }
+            },
+            fund_snapshots={
+                "510300": {
+                    "name": "沪深300ETF华泰",
+                    "nav": 4.3479,
+                    "nav_date": "2026-10-13",
+                    "change_pct": -0.42,
+                }
+            },
             mode="deep",
             generated_at="2026-10-13 15:42:00",
         )
@@ -182,13 +201,36 @@ class TestBuildDailyReportEmail:
         assert "分析模式: deep" in body
         assert "生成时间: 2026-10-13 15:42:00" in body
         assert "总耗时: 12.3s" in body
-        assert "== 评级汇总 ==" in body
+        assert "== 核心参数 ==" in body
+        assert "沪深300ETF华泰" in body
+        assert "4.3479（10-13）" in body
+        assert "-0.42%" in body
+        assert "== 指数估值 ==" in body
         assert "PE(TTM)" in body
         assert "ERP" in body
-        assert "== 报告全文 ==" in body
-        assert "---------- 510300 ----------" in body
-        assert "【智识诚实声明】" in body
         assert "本邮件由 IFA 自动生成" in body
+        assert attachments == [report_file]
+
+    def test_report_text_is_not_inlined_into_body(self, tmp_path):
+        """正文是摘要：报告全文只走附件，Markdown 不再塞进邮件正文。"""
+        long_report = "# 报告\n\n正文很长" * 200
+        report_file = tmp_path / "510300_2026-10-13_deep_abcd1234.md"
+        report_file.write_text(long_report, encoding="utf-8")
+        results = [
+            {
+                "fund_code": "510300",
+                "rating": "BUY",
+                "confidence": "High",
+                "report_path": str(report_file),
+                "report": long_report,
+                "elapsed": 1.0,
+                "error": "",
+            }
+        ]
+        _subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        assert "# 报告" not in body
+        assert "正文很长" not in body
+        assert len(body) < 1000
         assert attachments == [report_file]
 
     def test_metrics_columns_absent_without_valuations(self):
@@ -205,7 +247,22 @@ class TestBuildDailyReportEmail:
         ]
         _subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
         assert "PE(TTM)" not in body
+        assert "== 指数估值 ==" not in body
+        # 没有快照时核心参数表仍然在，只是名称/净值/日涨跌显示 '-'
+        assert "== 核心参数 ==" in body
+        assert "510300" in body
         assert attachments == []
+
+    def test_index_row_skipped_when_index_unknown(self):
+        """认不出跟踪指数的基金不进估值表 —— 不猜指数，免得张冠李戴。"""
+        results = [{"fund_code": "000001", "rating": "HOLD", "confidence": "Low", "elapsed": 1.0, "error": ""}]
+        _subject, body, _attachments = build_daily_report_email(
+            analysis_date="2026-10-13",
+            results=results,
+            fund_metrics={"000001": {"index_name": None, "pe_ttm": 9.9}},
+        )
+        assert "== 指数估值 ==" not in body
+        assert "9.90" not in body
 
     def test_failed_fund_reports_error_and_no_attachment(self):
         results = [
@@ -221,10 +278,20 @@ class TestBuildDailyReportEmail:
         ]
         subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
         assert "成功 0" in subject
-        assert "[分析失败] 数据源超时" in body
         assert "== 失败明细 ==" in body
         assert "159919: 数据源超时" in body
         assert attachments == []
+
+    def test_cjk_cells_are_aligned_by_display_width(self):
+        """CJK 全角算 2 列，否则等宽字体下表格会错位。"""
+        results = [{"fund_code": "510300", "rating": "BUY", "confidence": "High", "elapsed": 1.0, "error": ""}]
+        snapshots = {"510300": {"name": "沪深300ETF华泰", "nav": 4.3479, "nav_date": "2026-10-13", "change_pct": 0.42}}
+        _subject, body, _attachments = build_daily_report_email(
+            analysis_date="2026-10-13", results=results, fund_snapshots=snapshots
+        )
+        table_lines = [line for line in body.splitlines() if "510300" in line or line.startswith("基金代码")]
+        assert _display_width("沪深300") == 7
+        assert len({_display_width(line) for line in table_lines}) == 1
 
 
 def _sent_body(message) -> str:

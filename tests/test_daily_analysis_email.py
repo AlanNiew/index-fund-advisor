@@ -44,10 +44,16 @@ def _stub_result(fund_code: str, error: str = "") -> dict:
 
 def _patch_main(monkeypatch, module, *, trading_day=True, results=None, email_error=None):
     """把 main() 的外部依赖全部替换掉，返回记录调用的容器。"""
-    calls: dict = {"email": [], "analyze": []}
+    calls: dict = {"email": [], "analyze": [], "snapshots": []}
 
     monkeypatch.setattr(module, "check_trading_day", lambda date_str: trading_day)
-    monkeypatch.setattr(module, "fetch_valuations", lambda codes: {})
+    monkeypatch.setattr(module, "fetch_valuations", lambda codes, fund_snapshots=None: {})
+
+    def fake_snapshots(codes):
+        calls["snapshots"].append(list(codes))
+        return {"510300": {"name": "沪深300ETF华泰", "nav": 4.3479, "nav_date": "2026-10-13", "change_pct": 0.42}}
+
+    monkeypatch.setattr(module, "fetch_fund_snapshots", fake_snapshots)
     monkeypatch.setattr(module, "print_valuation_overview", lambda codes, metrics: None)
     monkeypatch.setattr(module, "print_summary", lambda res, date_str, metrics=None: None)
     monkeypatch.setattr("ifa.common.build_advisor", lambda *args, **kwargs: object())
@@ -58,8 +64,16 @@ def _patch_main(monkeypatch, module, *, trading_day=True, results=None, email_er
 
     monkeypatch.setattr(module, "analyze_single_fund", results or fake_analyze)
 
-    def fake_send(res, analysis_date, mode, fund_metrics=None):
-        calls["email"].append({"results": res, "date": analysis_date, "mode": mode, "metrics": fund_metrics})
+    def fake_send(res, analysis_date, mode, fund_metrics=None, fund_snapshots=None):
+        calls["email"].append(
+            {
+                "results": res,
+                "date": analysis_date,
+                "mode": mode,
+                "metrics": fund_metrics,
+                "snapshots": fund_snapshots,
+            }
+        )
         if email_error is not None:
             raise email_error
 
@@ -99,6 +113,9 @@ def test_trading_day_sends_email_with_selected_mode(monkeypatch, script):
     assert sent["date"] == "2026-10-13"
     assert sent["mode"] == "deep_simple"
     assert [item["fund_code"] for item in sent["results"]] == ["510300", "159919"]
+    # 净值快照在分析前取一次，并原样透传给邮件摘要
+    assert calls["snapshots"] == [["510300", "159919"]]
+    assert sent["snapshots"]["510300"]["nav"] == 4.3479
 
 
 def test_without_email_flag_nothing_is_sent(monkeypatch, script):
@@ -166,6 +183,64 @@ def test_analyze_single_fund_passes_mode_to_build_state_and_run(monkeypatch, scr
     assert result["error"] == ""
 
 
+class TestIndexResolution:
+    def test_detect_index_matches_longest_name_first(self, script):
+        # 「中证1000」必须先于「中证100」命中，否则 1000 会被误判成 100
+        assert script.detect_index_from_name("华夏中证1000ETF联接A") == "中证1000"
+        assert script.detect_index_from_name("华泰柏瑞上证红利ETF联接A") == "上证红利"
+        assert script.detect_index_from_name("易方达沪深300ETF联接A") == "沪深300"
+
+    def test_detect_index_returns_none_for_unsupported_or_empty(self, script):
+        assert script.detect_index_from_name("招商中证白酒指数(LOF)A") is None
+        assert script.detect_index_from_name("摩根标普500指数(QDII)人民币A") is None
+        assert script.detect_index_from_name("大成纳斯达克100ETF联接(QDII)A") is None
+        assert script.detect_index_from_name("") is None
+
+    def test_override_wins_over_name_detection(self, script):
+        assert script.resolve_index_name("161725", "华泰柏瑞上证红利ETF联接A") == "中证白酒"
+        assert script.resolve_index_name("012761", None) == "上证红利"
+        assert script.resolve_index_name("000001", "华夏成长混合") is None
+
+
+class TestFetchValuations:
+    def test_requests_each_index_once_and_copies_metrics_per_fund(self, monkeypatch, script):
+        seen: list[str] = []
+
+        def fake_metrics(index_name):
+            seen.append(index_name)
+            return {"index_name": index_name, "date": "2026-10-13", "pe_ttm": 12.0}
+
+        monkeypatch.setattr("ifa.dataflows.a_share_macro.fetch_valuation_metrics", fake_metrics)
+        snapshots = {"110020": {"name": "易方达沪深300ETF联接A"}, "510300": {"name": "沪深300ETF华泰"}}
+
+        metrics = script.fetch_valuations(["110020", "510300"], snapshots)
+
+        assert seen == ["沪深300"]
+        assert metrics["110020"]["index_name"] == "沪深300"
+        assert metrics["510300"]["pe_ttm"] == 12.0
+        # 每只基金拿到的是副本：改一只不能影响共享同一指数的另一只
+        metrics["110020"]["pe_ttm"] = 99.0
+        assert metrics["510300"]["pe_ttm"] == 12.0
+
+    def test_unresolved_fund_gets_empty_metrics_without_request(self, monkeypatch, script):
+        monkeypatch.setattr(
+            "ifa.dataflows.a_share_macro.fetch_valuation_metrics",
+            lambda index_name: pytest.fail("认不出跟踪指数时不该请求估值"),
+        )
+
+        metrics = script.fetch_valuations(["000001"], {"000001": {"name": "华夏成长混合"}})
+
+        assert metrics["000001"] == {"index_name": None}
+
+    def test_snapshot_failure_degrades_to_empty_dict(self, monkeypatch, script):
+        def boom(codes):
+            raise RuntimeError("网络挂了")
+
+        monkeypatch.setattr("ifa.dataflows.a_share_public_fund.fetch_fund_daily_snapshots", boom)
+
+        assert script.fetch_fund_snapshots(["510300"]) == {}
+
+
 def test_send_report_email_requires_configuration(monkeypatch, script):
     from ifa.notify.email import EmailConfigError
 
@@ -228,4 +303,7 @@ def test_send_report_email_wires_body_and_attachment(monkeypatch, script, tmp_pa
     assert [part.get_filename() for part in message.iter_attachments()] == [report_file.name]
     body_part = message.get_body(preferencelist=("plain",))
     assert body_part is not None
-    assert "【智识诚实声明】" in body_part.get_content()
+    sent_body = body_part.get_content()
+    assert "【智识诚实声明】" in sent_body
+    # 正文是摘要，报告全文只作附件
+    assert "# 报告" not in sent_body

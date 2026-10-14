@@ -93,7 +93,7 @@ DEEPSEEK_API_KEY=...
 | 配置项 | 默认 | 说明 |
 |--------|------|------|
 | `llm_provider` | `opencode` | LLM 提供方，可选：`opencode` / `openai` / `azure` / `anthropic` / `google` / `ollama` / `openrouter` / `qwen` / `zhipu` / `xai` / `deepseek` / **`custom`（任意 OpenAI 兼容端点）** |
-| `deep_think_llm` | `deepseek-v4-pro` | 深度推理（报告生成、关键裁决） |
+| `deep_think_llm` | `deepseek-v4.1-flash` | 深度推理（报告生成、关键裁决）。两档统一用 V4.1 Flash，不再使用 V4 Pro |
 | `quick_think_llm` | `deepseek-v4.1-flash` | 快速调用（工具调用、辩论）。**不要用最便宜的 turbo 档**——结构化输出在弱模型上不可靠，会污染整条分析管道 |
 | `backend_url` | `https://opencode.ai/inference/go/v1` | API 基础地址。显式设置的值**优先于**内置端点；`custom` 提供方必须提供。切换提供方后残留的别家内置端点会被自动重置（各提供方默认地址见 [src/ifa/providers.py](<src/ifa/providers.py>)） |
 | `custom_api_key` | `None` | 仅 `custom` 使用；通常直接用 `IFA_CUSTOM_API_KEY` |

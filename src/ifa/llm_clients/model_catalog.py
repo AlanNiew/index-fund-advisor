@@ -135,7 +135,6 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("DeepSeek V4 Flash - Cheapest, high-volume tasks", "deepseek-v4-flash"),
         ],
         "deep": [
-            ("DeepSeek V4 Pro - Deepest reasoning, best for analysis", "deepseek-v4-pro"),
             ("DeepSeek V4.1 Flash - Fast, low cost, reliable tool use", "deepseek-v4.1-flash"),
         ],
     },

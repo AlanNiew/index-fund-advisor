@@ -98,7 +98,7 @@ DEFAULT_CONFIG = {
     # 换提供方的三个入口（优先级从高到低）：环境变量（IFA_LLM_PROVIDER 等）、
     # ifa config llm_provider <name> 写入的用户配置文件、此处默认值。
     "llm_provider": "opencode",
-    "deep_think_llm": "deepseek-v4-pro",
+    "deep_think_llm": "deepseek-v4.1-flash",
     "quick_think_llm": "deepseek-v4.1-flash",
     "backend_url": "https://opencode.ai/inference/go/v1",
     # 自定义提供方（llm_provider="custom"）的凭据：端点复用上面的 backend_url，

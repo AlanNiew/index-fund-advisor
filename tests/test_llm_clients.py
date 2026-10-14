@@ -213,7 +213,7 @@ class TestOpenCodeProvider:
         monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
         monkeypatch.delenv("OPENCODE_SESSION_ID", raising=False)
 
-        headers = create_llm_client("opencode", "deepseek-v4-pro").get_llm().default_headers
+        headers = create_llm_client("opencode", "deepseek-v4.1-flash").get_llm().default_headers
 
         assert headers["User-Agent"].startswith("index-fund-advisor/")
         assert headers["x-opencode-session"]
@@ -233,8 +233,8 @@ class TestOpenCodeProvider:
         monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
         monkeypatch.delenv("OPENCODE_SESSION_ID", raising=False)
 
-        first = create_llm_client("opencode", "deepseek-v4-pro").get_llm()
-        second = create_llm_client("opencode", "deepseek-v4.1-flash").get_llm()
+        first = create_llm_client("opencode", "deepseek-v4.1-flash").get_llm()
+        second = create_llm_client("opencode", "deepseek-v4-flash").get_llm()
 
         assert first.default_headers["x-opencode-session"] == second.default_headers["x-opencode-session"]
 
@@ -243,7 +243,7 @@ class TestOpenCodeProvider:
         monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
         monkeypatch.setenv("OPENCODE_SESSION_ID", "conversation-42")
 
-        headers = create_llm_client("opencode", "deepseek-v4-pro").get_llm().default_headers
+        headers = create_llm_client("opencode", "deepseek-v4.1-flash").get_llm().default_headers
 
         assert headers["x-opencode-session"] == "conversation-42"
 
@@ -252,7 +252,7 @@ class TestOpenCodeProvider:
         monkeypatch.setenv("OPENCODE_API_KEY", "sk-test-key")
         monkeypatch.setenv("OPENCODE_SESSION_ID", "from-env")
 
-        llm = create_llm_client("opencode", "deepseek-v4-pro", opencode_session_id="from-kwarg").get_llm()
+        llm = create_llm_client("opencode", "deepseek-v4.1-flash", opencode_session_id="from-kwarg").get_llm()
 
         assert llm.default_headers["x-opencode-session"] == "from-kwarg"
 
@@ -263,7 +263,7 @@ class TestOpenCodeProvider:
 
         llm = create_llm_client(
             "opencode",
-            "deepseek-v4-pro",
+            "deepseek-v4.1-flash",
             default_headers={"X-Trace": "abc", "User-Agent": "custom/2.0"},
         ).get_llm()
 
@@ -286,11 +286,17 @@ class TestOpenCodeModelCatalog:
         deep = [model for _, model in get_model_options("opencode", "deep")]
 
         assert "deepseek-v4.1-flash" in quick
-        assert "deepseek-v4-pro" in deep
+        assert "deepseek-v4.1-flash" in deep
 
     def test_validate_model_accepts_gateway_ids(self):
         assert validate_model("opencode", "deepseek-v4.1-flash") is True
-        assert validate_model("opencode", "deepseek-v4-pro") is True
+
+    def test_v4_pro_is_no_longer_offered(self):
+        """两档统一用 V4.1 Flash：V4 Pro 已从目录移除，配置它会被校验器拒绝。"""
+        models = [model for tier in ("quick", "deep") for _, model in get_model_options("opencode", tier)]
+
+        assert "deepseek-v4-pro" not in models
+        assert validate_model("opencode", "deepseek-v4-pro") is False
 
     def test_validate_model_rejects_foreign_ids(self):
         assert validate_model("opencode", "gpt-999") is False
@@ -305,7 +311,7 @@ class TestOpenCodeReasoningContent:
     """
 
     @staticmethod
-    def _llm(provider: str = "opencode", model: str = "deepseek-v4-pro"):
+    def _llm(provider: str = "opencode", model: str = "deepseek-v4.1-flash"):
         return create_llm_client(provider, model).get_llm()
 
     @staticmethod
@@ -314,7 +320,7 @@ class TestOpenCodeReasoningContent:
             "id": "chatcmpl-1",
             "object": "chat.completion",
             "created": 0,
-            "model": "deepseek-v4-pro",
+            "model": "deepseek-v4.1-flash",
             "choices": [
                 {
                     "index": 0,

@@ -29,6 +29,7 @@ ifa backtest 510300                    # buy-and-hold backtest, no LLM
 ifa tools                              # list all 36 data tools + params (generated)
 ifa tool get_index_valuation -p index_name=沪深300   # call one data tool directly
 ifa skill                              # install the bundled skill to ~/.claude/skills
+python scripts/daily_analysis.py --email   # daily batch + email report (cron); --mode deep_simple skips debate
 # Global install, no clone needed: uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git ifa
 ifa-web                           # Streamlit (http://localhost:8501)
 uvicorn api.main:app --port 8000   # API — no registered ifa-api script; call uvicorn directly

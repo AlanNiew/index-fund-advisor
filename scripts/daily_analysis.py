@@ -8,10 +8,21 @@
     python scripts/daily_analysis.py --force         # 强制运行（不检查交易日）
     python scripts/daily_analysis.py --date 2025-04-25  # 指定日期
     python scripts/daily_analysis.py --codes 161725,110020  # 指定基金
+    python scripts/daily_analysis.py --mode deep_simple     # 无辩论（快得多）
+    python scripts/daily_analysis.py --email         # 跑完把报告发到邮箱
+
+退出码（供 cron / systemd 判断是否告警）:
+    0  正常（含「非交易日跳过」—— 休市不是故障，不该触发告警）
+    1  有基金分析失败，或邮件发送失败
 
 定时任务配置（Windows 任务计划程序）:
     每个工作日 15:30 运行:
-    schtasks /create /tn "IFA每日基金分析" /tr "python D:\\path\\to\\scripts\\daily_analysis.py" /sc weekly /d MON,TUE,WED,THU,FRI /st 15:30
+    schtasks /create /tn "IFA每日基金分析" /tr "python D:\\path\\to\\scripts\\daily_analysis.py --email" /sc weekly /d MON,TUE,WED,THU,FRI /st 15:30
+
+定时任务配置（Linux crontab，15:30 收盘后跑，跑完即发）:
+    30 15 * * 1-5 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/daily_analysis.py --email >> local_data/daily_analysis.log 2>&1
+
+邮件配置见 README「每日邮件报告」一节；SMTP 密码建议放 IFA_SMTP_PASSWORD 环境变量。
 """
 
 import argparse
@@ -205,20 +216,20 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
         print(f"{'=' * 90}\n")
 
 
-def analyze_single_fund(advisor, fund_code: str, analysis_date: str) -> dict:
-    """分析单只基金，返回结果字典。"""
+def analyze_single_fund(advisor, fund_code: str, analysis_date: str, mode: str = "deep") -> dict:
+    """分析单只基金，返回结果字典（含 report 全文，供邮件正文使用）。"""
     from ifa.common import build_state, save_report
 
-    logger.info("开始分析基金 %s ...", fund_code)
+    logger.info("开始分析基金 %s（模式 %s）...", fund_code, mode)
     start_time = time.time()
 
     state = build_state(
-        mode="deep",
+        mode=mode,
         fund_codes=fund_code,
         analysis_date=analysis_date,
     )
 
-    final_state = advisor.run(mode="deep", state=state)
+    final_state = advisor.run(mode=mode, state=state)
     elapsed = time.time() - start_time
 
     # 提取报告
@@ -243,6 +254,7 @@ def analyze_single_fund(advisor, fund_code: str, analysis_date: str) -> dict:
         "rating": rating,
         "confidence": confidence,
         "report_path": report_path,
+        "report": report,
         "elapsed": elapsed,
         "error": error,
     }
@@ -333,7 +345,9 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
         print(f"\n{'=' * 90}")
         print(f"  IFA 每日基金分析汇总 — {analysis_date}")
         print(f"{'=' * 90}")
-        print(f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'PE(TTM)':>8} {'股息率(参考)':>8} {'ERP':>8} {'耗时':>8}  {'状态'}")
+        print(
+            f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'PE(TTM)':>8} {'股息率(参考)':>8} {'ERP':>8} {'耗时':>8}  {'状态'}"
+        )
         print(f"  {'-' * 86}")
         for r in results:
             status = "失败" if r["error"] else "成功"
@@ -348,7 +362,48 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
         print(f"{'=' * 90}")
 
 
-def main():
+def send_report_email(
+    results: list[dict],
+    analysis_date: str,
+    mode: str,
+    fund_metrics: dict[str, dict] | None = None,
+) -> None:
+    """把本次结果组装成一封邮件发出去。
+
+    配置缺失或发送失败都直接抛异常，由 main() 决定退出码 —— 发信失败必须让 cron 知道。
+    """
+    from ifa.default_config import build_runtime_config
+    from ifa.notify.email import (
+        EmailConfig,
+        EmailConfigError,
+        build_daily_report_email,
+        send_email,
+    )
+
+    config = EmailConfig.from_config(build_runtime_config())
+    if config is None:
+        raise EmailConfigError(
+            "未配置邮件通知：--email 需要 smtp_host / smtp_recipients / smtp_sender"
+            "（用 ifa config 写入，或设置 IFA_SMTP_* / IFA_EMAIL_TO 环境变量，"
+            "详见 README「每日邮件报告」）。"
+        )
+
+    subject, body, attachments = build_daily_report_email(
+        analysis_date=analysis_date,
+        results=results,
+        fund_metrics=fund_metrics,
+        mode=mode,
+    )
+    attached = send_email(subject, body, config=config, attachments=attachments)
+    logger.info(
+        "邮件已发送至 %s（正文 %d 字符，附件 %d 个）",
+        ", ".join(config.recipients),
+        len(body),
+        attached,
+    )
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="IFA 每日基金批处理深度分析",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -371,6 +426,17 @@ def main():
         action="store_true",
         help="强制运行，跳过交易日检查",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["deep", "deep_simple"],
+        default="deep",
+        help="分析模式: deep（含辩论，默认）/ deep_simple（无辩论，快得多）",
+    )
+    parser.add_argument(
+        "--email",
+        action="store_true",
+        help="分析完成后发送邮件（报告全文进正文，.md 报告作附件）",
+    )
     args = parser.parse_args()
 
     # 加载 .env（含用户配置目录下的 .env）
@@ -384,17 +450,18 @@ def main():
     # 确定分析日期
     analysis_date = args.date or datetime.now().strftime("%Y-%m-%d")
 
-    # 交易日检查
+    # 交易日检查：非交易日直接跳过 —— 不发邮件、退出码 0（休市不是故障）
     if not args.force:
         if not check_trading_day(analysis_date):
-            logger.info("%s 非交易日，跳过分析。使用 --force 强制运行。", analysis_date)
-            return
+            logger.info("%s 非交易日，跳过分析（不发邮件）。使用 --force 强制运行。", analysis_date)
+            return 0
         logger.info("%s 是交易日，开始分析。", analysis_date)
 
     # 确定基金列表
     fund_codes = args.codes.split(",") if args.codes else DEFAULT_FUND_CODES
 
     logger.info("待分析基金: %s", ", ".join(fund_codes))
+    logger.info("分析模式: %s", args.mode)
 
     # 获取估值指标（分析前，用于概览和汇总表）
     fund_metrics: dict[str, dict] = {}
@@ -409,16 +476,32 @@ def main():
 
     advisor = build_advisor()
 
-    # 逐只分析
+    # 逐只分析（串行：单只峰值内存约 500MB，小内存服务器上并行会 OOM）
     results = []
     for i, code in enumerate(fund_codes, 1):
         logger.info("[%d/%d] 分析基金 %s ...", i, len(fund_codes), code)
-        result = analyze_single_fund(advisor, code.strip(), analysis_date)
+        result = analyze_single_fund(advisor, code.strip(), analysis_date, mode=args.mode)
         results.append(result)
 
     # 打印汇总
     print_summary(results, analysis_date, fund_metrics)
 
+    # 失败即非零退出，让 cron / systemd 能发现（此前无论成败都返回 0）
+    failed = [r["fund_code"] for r in results if r["error"]]
+    exit_code = 0
+    if failed:
+        logger.error("以下基金分析失败: %s", ", ".join(failed))
+        exit_code = 1
+
+    if args.email:
+        try:
+            send_report_email(results, analysis_date, args.mode, fund_metrics)
+        except Exception as e:
+            logger.error("邮件发送失败: %s", e)
+            exit_code = 1
+
+    return exit_code
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

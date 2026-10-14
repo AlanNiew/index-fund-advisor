@@ -109,6 +109,12 @@ DEEPSEEK_API_KEY=...
 | `IFA_DATA_SOURCE_TIMEOUT` | 数据源请求（AkShare 内部 `requests`）默认超时秒数 | `30` |
 | `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` | 覆盖 quick / deep 档 LLM 调用超时（秒） | `120` / `180` |
 | `IFA_LLM_MAX_RETRIES` | 覆盖 LLM 重试次数 | `2` |
+| `IFA_SMTP_HOST` / `IFA_SMTP_PORT` | 每日邮件报告的 SMTP 服务器与端口（端口留空时按 `IFA_SMTP_USE_SSL` 推导 465 / 587） | 空 / 自动 |
+| `IFA_SMTP_USER` / `IFA_SMTP_PASSWORD` | SMTP 登录用户名与密码（QQ / 163 等用**授权码**，不是登录密码；密码建议只走环境变量，不落进 `config.json`） | 空 |
+| `IFA_SMTP_SENDER` | 发件人地址（留空复用 `IFA_SMTP_USER`） | 空 |
+| `IFA_EMAIL_TO` | 收件人，逗号 / 分号 / 空白分隔 | 空 |
+| `IFA_SMTP_USE_SSL` | `true` = SMTPS(465)；`false` = STARTTLS(587) | `true` |
+| `IFA_SMTP_TIMEOUT` | SMTP 连接 / 发送超时（秒） | `30` |
 
 ### 3. 配置项（`src/ifa/default_config.py`）
 
@@ -128,6 +134,13 @@ DEEPSEEK_API_KEY=...
 | `timeout` | `120` | quick 档（工具调用、分析师、辩论）的 LLM 调用超时（秒） |
 | `deep_timeout` | `180` | deep 档（报告生成、关键裁决）的 LLM 调用超时（秒）。deep 档产出最终报告，单独放宽 |
 | `llm_max_retries` | `2` | LLM 调用重试次数（总尝试 = 重试次数 + 1）。实测挂死请求要读到超时才返回，重试是最大的时间黑洞 |
+| `smtp_host` | `None` | SMTP 服务器。与 `smtp_recipients` / `smtp_sender` **缺一不可**：只配了一部分时抛 `EmailConfigError` 并列出缺项，**绝不静默跳过发信** |
+| `smtp_port` | `None` | 留空按 `smtp_use_ssl` 推导（465 / 587） |
+| `smtp_user` / `smtp_password` | `None` | SMTP 登录凭据；给了用户名却没给密码会报缺 `smtp_password`（QQ / 163 用授权码） |
+| `smtp_sender` | `None` | 发件人地址，留空复用 `smtp_user` |
+| `smtp_recipients` | `None` | 收件人列表（逗号 / 分号 / 空白分隔） |
+| `smtp_use_ssl` | `True` | `True` = SMTPS(465)；`False` = STARTTLS(587) |
+| `smtp_timeout` | `30` | SMTP 连接 / 发送超时（秒） |
 
 **切换提供方**（三种方式，优先级由低到高）：
 
@@ -494,6 +507,36 @@ python scripts/run_rating_validation.py --months-back 6 --hold-days 90
 
 ---
 
+## 每日邮件报告（cron 定时）
+
+`scripts/daily_analysis.py` 批量分析一组基金，并可把**报告全文 + `.md` 附件**发到邮箱。它是按无人值守的定时任务写的：非交易日直接跳过、失败非零退出、配置缺项报错而不是静默不发。
+
+```bash
+python scripts/daily_analysis.py --email                                  # 分析默认基金列表并发信
+python scripts/daily_analysis.py --codes 510300,159919 --mode deep_simple --email
+python scripts/daily_analysis.py --date 2026-10-13 --force --email        # 指定日期并强制跑（忽略交易日检查）
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--codes` | 脚本内 `DEFAULT_FUND_CODES` | 逗号分隔的基金代码（**部署前请改成自己的持仓**） |
+| `--date` | 今天 | 分析日期（`YYYY-MM-DD`） |
+| `--mode` | `deep` | `deep`（含辩论）或 `deep_simple`（不辩论，快得多） |
+| `--force` | 关 | 跳过交易日检查，非交易日也跑 |
+| `--email` | 关 | 跑完把汇总 + 报告全文 + `.md` 附件发到配置的邮箱 |
+
+- **退出码**：任一基金分析失败、或邮件发送失败 → `1`；否则 `0`（含「非交易日跳过」）。
+- **非交易日**：不加 `--force` 时直接跳过分析**且不发邮件**，退出码 `0`。
+- **配置**：`ifa config smtp_host smtp.qq.com` 等写进用户配置文件，或直接用上表的 `IFA_SMTP_*` / `IFA_EMAIL_TO` 环境变量（服务器上推荐环境变量，密码不落盘）。
+- **发信行为**：正文为 `text/plain`（与落盘 Markdown 逐字一致），同一份报告再作为 `.md` 附件；正文超过 12 万字符只截断正文并显式标注，完整内容始终在附件里；报告顶部含程序硬注入的【智识诚实声明】。
+- **服务器 cron**（工作日 15:30，收盘口径）：
+
+```cron
+30 15 * * 1-5 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/daily_analysis.py --email >> local_data/daily_analysis.log 2>&1
+```
+
+> 每只基金串行分析（deep 模式实测峰值内存约 500 MB，辩论段占大头）。内存紧张的机器上建议用 `--mode deep_simple`，或套一层 `systemd-run --scope -p MemoryMax=`。
+
 ## 开发
 
 ```bash
@@ -504,7 +547,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（651 个测试，覆盖 30 个模块）
+# 测试（684 个测试，覆盖 32 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -536,6 +579,7 @@ pytest -x                                                          # 遇到第�
 | Web | Streamlit + Plotly |
 | API | FastAPI + Uvicorn |
 | MCP | FastMCP（stdio） |
+| 邮件通知 | Python 标准库 `smtplib` + `email`（无第三方依赖） |
 | Python | ≥ 3.12 |
 
 ---
@@ -560,6 +604,7 @@ index-fund-advisor/
 │   ├── backtest/             # 买入持有回测引擎 + 评级验证模块
 │   ├── observability/        # per-request tracing
 │   ├── portfolio/            # 风险偏好模型 + 配置策略
+│   ├── notify/               # SMTP 邮件通知（纯标准库，报告全文 + .md 附件）
 │   ├── mcp/                  # FastMCP server（9 个工具）
 │   ├── cli/                  # Typer CLI 入口（ifa / ifa-web）+ tools_cmd（tool/tools/skill）
 │   ├── skills/               # 内置 skill（fund.md，工具表由 ifa tools --markdown 生成）
@@ -567,8 +612,8 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 651 个测试（30 个模块）
-├── scripts/                  # 每日分析等脚本
+├── tests/                    # 684 个测试（32 个模块）
+├── scripts/                  # 每日分析脚本（含 --email 定时邮件报告）
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml
 └── README.md / CLAUDE.md / MCP.md

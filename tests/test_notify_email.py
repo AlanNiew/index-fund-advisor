@@ -1,0 +1,332 @@
+"""`ifa.notify.email` 的单元测试：全程打桩，不连真实 SMTP。"""
+
+from __future__ import annotations
+
+import smtplib
+
+import pytest
+
+from ifa.notify.email import (
+    DEFAULT_SMTP_TIMEOUT,
+    DEFAULT_SSL_PORT,
+    DEFAULT_STARTTLS_PORT,
+    MAX_BODY_CHARS,
+    EmailConfig,
+    EmailConfigError,
+    EmailSendError,
+    build_daily_report_email,
+    parse_recipients,
+    send_email,
+)
+
+
+def _full_config(**overrides) -> dict:
+    config = {
+        "smtp_host": "smtp.example.com",
+        "smtp_recipients": "a@example.com, b@example.com",
+        "smtp_sender": "ifa@example.com",
+        "smtp_user": "ifa@example.com",
+        "smtp_password": "secret",
+        "smtp_port": None,
+        "smtp_use_ssl": True,
+        "smtp_timeout": 30,
+    }
+    config.update(overrides)
+    return config
+
+
+class FakeSMTP:
+    """记录调用的假 SMTP 客户端（同时冒充 SMTP 与 SMTP_SSL）。"""
+
+    instances: list[FakeSMTP] = []
+    fail_login = False
+    fail_send = False
+
+    def __init__(self, host="", port=0, timeout=None, context=None, **kwargs):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.context = context
+        self.calls: list[str] = []
+        self.sent: list = []
+        FakeSMTP.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def ehlo(self):
+        self.calls.append("ehlo")
+        return (250, b"ok")
+
+    def starttls(self, context=None):
+        self.calls.append("starttls")
+        self.starttls_context = context
+        return (220, b"ready")
+
+    def login(self, user, password):
+        if FakeSMTP.fail_login:
+            raise smtplib.SMTPAuthenticationError(535, b"auth failed")
+        self.calls.append(f"login:{user}")
+        self.credentials = (user, password)
+
+    def send_message(self, message):
+        if FakeSMTP.fail_send:
+            raise smtplib.SMTPServerDisconnected("connection lost")
+        self.calls.append("send_message")
+        self.sent.append(message)
+
+
+@pytest.fixture(autouse=True)
+def _reset_fake():
+    FakeSMTP.instances = []
+    FakeSMTP.fail_login = False
+    FakeSMTP.fail_send = False
+    yield
+
+
+class TestParseRecipients:
+    def test_splits_on_commas_semicolons_and_whitespace(self):
+        raw = "a@x.com, b@x.com;c@x.com  d@x.com"
+        assert parse_recipients(raw) == ("a@x.com", "b@x.com", "c@x.com", "d@x.com")
+
+    def test_accepts_sequence_and_drops_blanks(self):
+        assert parse_recipients(["a@x.com", " b@x.com ", ""]) == ("a@x.com", "b@x.com")
+
+    def test_none_and_blank_yield_empty_tuple(self):
+        assert parse_recipients(None) == ()
+        assert parse_recipients("   ") == ()
+
+
+class TestEmailConfigFromConfig:
+    def test_unconfigured_returns_none(self):
+        assert EmailConfig.from_config({}) is None
+
+    def test_transport_defaults_alone_are_not_configuration(self):
+        # smtp_use_ssl / smtp_timeout 有默认值，不能据此认为用户配过邮件
+        config = {"smtp_use_ssl": True, "smtp_timeout": 30, "smtp_port": None}
+        assert EmailConfig.from_config(config) is None
+
+    def test_partial_config_lists_missing_keys_and_env_names(self):
+        with pytest.raises(EmailConfigError) as excinfo:
+            EmailConfig.from_config({"smtp_host": "smtp.qq.com"})
+        message = str(excinfo.value)
+        assert "smtp_recipients" in message
+        assert "smtp_sender" in message
+        assert "IFA_EMAIL_TO" in message
+
+    def test_complete_config_builds_dataclass(self):
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+        assert config.host == "smtp.example.com"
+        assert config.recipients == ("a@example.com", "b@example.com")
+        assert config.sender == "ifa@example.com"
+        assert config.password == "secret"
+        assert config.timeout == DEFAULT_SMTP_TIMEOUT
+        assert config.resolved_port == DEFAULT_SSL_PORT
+
+    def test_sender_falls_back_to_user(self):
+        config = EmailConfig.from_config(_full_config(smtp_sender=None))
+        assert config is not None
+        assert config.sender == "ifa@example.com"
+
+    def test_user_without_password_is_reported_missing(self):
+        with pytest.raises(EmailConfigError, match="smtp_password"):
+            EmailConfig.from_config(_full_config(smtp_password=None))
+
+    def test_starttls_port_when_ssl_disabled(self):
+        config = EmailConfig.from_config(_full_config(smtp_use_ssl="false"))
+        assert config is not None
+        assert config.use_ssl is False
+        assert config.resolved_port == DEFAULT_STARTTLS_PORT
+
+    def test_explicit_port_wins(self):
+        config = EmailConfig.from_config(_full_config(smtp_port="2525"))
+        assert config is not None
+        assert config.resolved_port == 2525
+
+    def test_invalid_bool_raises(self):
+        with pytest.raises(EmailConfigError, match="布尔值"):
+            EmailConfig.from_config(_full_config(smtp_use_ssl="maybe"))
+
+    def test_non_integer_port_raises(self):
+        with pytest.raises(EmailConfigError, match="必须是整数"):
+            EmailConfig.from_config(_full_config(smtp_port="forty"))
+
+
+class TestBuildDailyReportEmail:
+    def test_subject_body_and_attachments(self, tmp_path):
+        report_file = tmp_path / "510300_2026-10-13_deep_abcd1234.md"
+        report_file.write_text("# 报告\n\n【智识诚实声明】", encoding="utf-8")
+        results = [
+            {
+                "fund_code": "510300",
+                "rating": "BUY",
+                "confidence": "High",
+                "report_path": str(report_file),
+                "report": "# 报告\n\n【智识诚实声明】",
+                "elapsed": 12.34,
+                "error": "",
+            }
+        ]
+        subject, body, attachments = build_daily_report_email(
+            analysis_date="2026-10-13",
+            results=results,
+            fund_metrics={"510300": {"pe_ttm": 12.3, "dividend_yield": 2.5, "erp": -1.2}},
+            mode="deep",
+            generated_at="2026-10-13 15:42:00",
+        )
+        assert subject == "[IFA] 2026-10-13 基金分析报告（1 只 / 成功 1）"
+        assert "分析模式: deep" in body
+        assert "生成时间: 2026-10-13 15:42:00" in body
+        assert "总耗时: 12.3s" in body
+        assert "== 评级汇总 ==" in body
+        assert "PE(TTM)" in body
+        assert "ERP" in body
+        assert "== 报告全文 ==" in body
+        assert "---------- 510300 ----------" in body
+        assert "【智识诚实声明】" in body
+        assert "本邮件由 IFA 自动生成" in body
+        assert attachments == [report_file]
+
+    def test_metrics_columns_absent_without_valuations(self):
+        results = [
+            {
+                "fund_code": "510300",
+                "rating": "HOLD",
+                "confidence": "Medium",
+                "report_path": None,
+                "report": "报告",
+                "elapsed": 1.0,
+                "error": "",
+            }
+        ]
+        _subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        assert "PE(TTM)" not in body
+        assert attachments == []
+
+    def test_failed_fund_reports_error_and_no_attachment(self):
+        results = [
+            {
+                "fund_code": "159919",
+                "rating": "N/A",
+                "confidence": "N/A",
+                "report_path": None,
+                "report": "",
+                "elapsed": 0.4,
+                "error": "数据源超时",
+            }
+        ]
+        subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        assert "成功 0" in subject
+        assert "[分析失败] 数据源超时" in body
+        assert "== 失败明细 ==" in body
+        assert "159919: 数据源超时" in body
+        assert attachments == []
+
+
+def _sent_body(message) -> str:
+    body_part = message.get_body(preferencelist=("plain",))
+    assert body_part is not None
+    return body_part.get_content()
+
+
+class TestSendEmail:
+    def test_ssl_path_sends_and_logs_in(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        attachment = tmp_path / "report.md"
+        attachment.write_text("内容", encoding="utf-8")
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        attached = send_email("主题", "正文", config=config, attachments=[attachment])
+
+        assert attached == 1
+        client = FakeSMTP.instances[0]
+        assert (client.host, client.port, client.timeout) == ("smtp.example.com", DEFAULT_SSL_PORT, 30)
+        assert client.context is not None
+        assert client.credentials == ("ifa@example.com", "secret")
+        message = client.sent[0]
+        assert message["Subject"] == "主题"
+        assert message["From"] == "ifa@example.com"
+        assert message["To"] == "a@example.com, b@example.com"
+        assert _sent_body(message).strip() == "正文"
+        assert [part.get_filename() for part in message.iter_attachments()] == ["report.md"]
+
+    def test_starttls_path_when_ssl_disabled(self, monkeypatch):
+        monkeypatch.setattr(smtplib, "SMTP", FakeSMTP)
+        monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *a, **k: pytest.fail("use_ssl=False 不应走 SMTPS"))
+        config = EmailConfig.from_config(_full_config(smtp_use_ssl="false"))
+        assert config is not None
+
+        attached = send_email("主题", "正文", config=config)
+
+        assert attached == 0
+        client = FakeSMTP.instances[0]
+        assert client.port == DEFAULT_STARTTLS_PORT
+        assert client.calls == ["ehlo", "starttls", "ehlo", "login:ifa@example.com", "send_message"]
+        assert client.starttls_context is not None
+
+    def test_anonymous_relay_skips_login(self, monkeypatch):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        config = EmailConfig.from_config(
+            {"smtp_host": "relay.local", "smtp_recipients": "a@x.com", "smtp_sender": "b@x.com"}
+        )
+        assert config is not None
+
+        send_email("主题", "正文", config=config)
+
+        assert "login" not in " ".join(FakeSMTP.instances[0].calls)
+
+    def test_missing_attachment_is_skipped(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        attached = send_email("主题", "正文", config=config, attachments=[tmp_path / "nope.md"])
+
+        assert attached == 0
+        assert FakeSMTP.instances[0].sent
+
+    def test_long_body_is_truncated_with_notice(self, monkeypatch):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        send_email("主题", "x" * (MAX_BODY_CHARS + 10), config=config)
+
+        sent_body = _sent_body(FakeSMTP.instances[0].sent[0])
+        assert sent_body.startswith("x" * 100)
+        assert "已截断" in sent_body
+        assert len(sent_body) < MAX_BODY_CHARS + 200
+
+    def test_auth_failure_is_wrapped(self, monkeypatch):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        FakeSMTP.fail_login = True
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        with pytest.raises(EmailSendError, match="smtp.example.com:465"):
+            send_email("主题", "正文", config=config)
+
+    def test_send_failure_is_wrapped(self, monkeypatch):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        FakeSMTP.fail_send = True
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        with pytest.raises(EmailSendError, match="SMTPServerDisconnected"):
+            send_email("主题", "正文", config=config)
+
+    def test_connect_failure_is_wrapped(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(smtplib, "SMTP_SSL", boom)
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        with pytest.raises(EmailSendError, match="OSError"):
+            send_email("主题", "正文", config=config)

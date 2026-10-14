@@ -135,6 +135,18 @@ DEFAULT_CONFIG = {
     "tool_vendors": {},
     # ── 缓存有效期（秒）──
     "ohlcv_cache_ttl_seconds": 86400,
+    # ── 邮件通知（scripts/daily_analysis.py --email）──
+    # host / recipients / sender 三项缺一不可：缺项时 ifa.notify.email 抛错并列出缺了哪几项，
+    # 而不是静默跳过发信 —— 静默降级是本仓库反复踩到的坑（tushare 白名单、过期 backend_url）。
+    # 密码推荐用 IFA_SMTP_PASSWORD 环境变量提供，避免明文落进 config.json。
+    "smtp_host": None,
+    "smtp_port": None,  # None = 按 smtp_use_ssl 推导 465（SSL）/ 587（STARTTLS）
+    "smtp_user": None,
+    "smtp_password": None,
+    "smtp_sender": None,  # 缺省复用 smtp_user
+    "smtp_recipients": None,  # 逗号/分号/空白分隔的收件人列表
+    "smtp_use_ssl": True,
+    "smtp_timeout": 30,
 }
 
 #: 可用 ifa config <key> <value> 或环境变量覆盖的键（路径键与嵌套字典除外——
@@ -157,6 +169,15 @@ _ENV_OVERRIDES: tuple[tuple[str, str], ...] = (
     ("IFA_DEEP_TIMEOUT", "deep_timeout"),
     ("IFA_LLM_MAX_RETRIES", "llm_max_retries"),
     ("IFA_ENABLE_DEBATE", "enable_debate"),
+    # 邮件通知：密码只走环境变量也能工作（不改任何文件即可在服务器上发信）
+    ("IFA_SMTP_HOST", "smtp_host"),
+    ("IFA_SMTP_PORT", "smtp_port"),
+    ("IFA_SMTP_USER", "smtp_user"),
+    ("IFA_SMTP_PASSWORD", "smtp_password"),
+    ("IFA_SMTP_SENDER", "smtp_sender"),
+    ("IFA_EMAIL_TO", "smtp_recipients"),
+    ("IFA_SMTP_USE_SSL", "smtp_use_ssl"),
+    ("IFA_SMTP_TIMEOUT", "smtp_timeout"),
 )
 
 _INT_KEYS = {
@@ -167,7 +188,12 @@ _INT_KEYS = {
     "max_risk_discuss_rounds",
     "max_recur_limit",
     "ohlcv_cache_ttl_seconds",
+    "smtp_port",
+    "smtp_timeout",
 }
+
+#: 布尔键：ifa config / 环境变量传字符串，必须归一成 bool（否则 "false" 是真值）。
+_BOOL_KEYS = {"enable_debate", "smtp_use_ssl"}
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 _BOOL_FALSE = {"0", "false", "no", "off"}
 
@@ -184,13 +210,13 @@ def _coerce_config_value(key: str, raw: str) -> Any:
             return int(value)
         except ValueError as exc:
             raise ValueError(f"{key} 需要整数，收到 {raw!r}") from exc
-    if key == "enable_debate":
+    if key in _BOOL_KEYS:
         lowered = value.lower()
         if lowered in _BOOL_TRUE:
             return True
         if lowered in _BOOL_FALSE:
             return False
-        raise ValueError(f"enable_debate 需要布尔值（true/false），收到 {raw!r}")
+        raise ValueError(f"{key} 需要布尔值（true/false），收到 {raw!r}")
     return value
 
 
@@ -255,8 +281,22 @@ def validate_config(config: dict) -> None:
         if timeout is not None and (not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0):
             errors.append(f"{timeout_key} 必须 > 0，当前值: {timeout}")
 
+    smtp_port = config.get("smtp_port")
+    if smtp_port is not None and (
+        not isinstance(smtp_port, int) or isinstance(smtp_port, bool) or not 1 <= smtp_port <= 65535
+    ):
+        errors.append(f"smtp_port 必须是 1-65535 的整数，当前值: {smtp_port}")
+
+    smtp_timeout = config.get("smtp_timeout")
+    if smtp_timeout is not None and (
+        not isinstance(smtp_timeout, int) or isinstance(smtp_timeout, bool) or smtp_timeout <= 0
+    ):
+        errors.append(f"smtp_timeout 必须 > 0，当前值: {smtp_timeout}")
+
     max_retries = config.get("llm_max_retries")
-    if max_retries is not None and (not isinstance(max_retries, int) or isinstance(max_retries, bool) or max_retries < 0):
+    if max_retries is not None and (
+        not isinstance(max_retries, int) or isinstance(max_retries, bool) or max_retries < 0
+    ):
         errors.append(f"llm_max_retries 必须 >= 0 的整数，当前值: {max_retries}")
 
     provider = config.get("llm_provider")

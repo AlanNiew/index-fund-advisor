@@ -2,7 +2,7 @@
 
 基于 LangGraph 多 Agent 辩论架构，对中国 A 股指数基金做深度分析、筛选对比和组合配置。
 
-> **智识诚实声明**：本工具输出的评级（BUY/HOLD/SELL）与置信度由统计模型（多 Agent 辩论）生成，**不构成任何投资建议**，其历史预测准确率未经独立验证。报告中的客观数据（估值百分位、PE/PB、费率、规模、持仓）来自公开数据源，可独立核查；模型的判断部分仅供参考与学习。
+> **智识诚实声明**：本工具输出的评级（STRONG_BUY/BUY/HOLD/UNDERWEIGHT/SELL）与置信度由统计模型（多 Agent 辩论）生成，**不构成任何投资建议**，其历史预测准确率未经独立验证。报告中的客观数据（估值百分位、PE/PB、费率、规模、持仓）来自公开数据源，可独立核查；模型的判断部分仅供参考与学习。
 
 ---
 
@@ -13,7 +13,7 @@
 | **单基金深度分析** | 业绩/持仓/风险/估值/成分股十余维度，含看涨 vs 看跌研究员多轮辩论 | ✅ |
 | **基金筛选对比** | 自然语言或结构化条件筛选指数基金，含辩论裁决 | ✅ |
 | **组合配置建议** | 按风险偏好（保守/稳健/积极/成长）推荐组合，含三方风险辩论 | ✅ |
-| **指数估值分析** | PE/PB/ROE/股息率/盈利收益率 + 历史百分位 + 估值判断 | ❌ |
+| **指数估值分析** | PE/PB/ROE/股息率（指数自身口径）/盈利收益率 + 历史百分位 + 估值判断；无估值数据的指数会显式标注 | ❌ |
 | **三种估值信号** | 盈利收益率法 / 博格公式（PE）/ 博格公式（PB），自动按指数类型选择 | ❌ |
 | **快速查询** | 基金搜索、基本信息、配置查看 | ❌ |
 | **买入持有回测** | 年化收益、最大回撤、Sharpe、波动率、月度收益、净值曲线 | ❌ |
@@ -368,6 +368,8 @@ START → Portfolio Advisor (R1) → Fund Screener → Fund Analyst →
         Portfolio Manager 裁决 → Report Generator → END
 ```
 
+
+> **权重硬约束由代码校验**：`Portfolio Advisor` 之后会解析资产类别/单基金权重，校验合计 100%、单基金 ≤ 风险偏好上限、债券 ≥ 下限、海外/QDII ≤ 上限。违规时在建议末尾追加 `## WEIGHT CHECK（代码校验，非 LLM 自述）`（违规项 + 按约束重排后的权重 + 告警），CLI / Web / API 三处都会看到；约束不可行时明确写「无法满足」而不是硬凑一组数字。
 ### 整体架构
 
 ```
@@ -549,7 +551,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（728 个测试，覆盖 34 个模块）
+# 测试（785 个测试，覆盖 35 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -562,7 +564,10 @@ pytest -x                                                          # 遇到第�
 - 缓存读写异常隔离，磁盘故障降级为直接执行
 - vendor fallback 链：`route_to_vendor()` 逐个 try/except，失败自动尝试下一个
 - Agent 报告经 `truncate_report(max_chars=3000)` 截断，防 token 溢出
+- 评级/置信度优先从管理层输出的机器可读 `Rating:` / `Confidence:` 行**确定性解析**（零额外 LLM 调用），取不到才回退到 LLM 抽取；词表固定 5 级 `STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL`
 - `SignalProcessor` 对 LLM 输出做合法性校验 + 模糊匹配，非法值 fallback 到 `HOLD` / `Medium`
+- 组合权重由 `src/ifa/portfolio/weights.py` 代码校验（合计 100% / 单基金上限 / 债券下限 / QDII 上限），违规时追加 `WEIGHT CHECK` 并告警
+- 估值数据缺失（乐咕乐股只覆盖 12 个指数）与股息率口径在报告、邮件与日志里显式标注，不静默留空
 - 每份报告顶部**程序硬注入智识诚实声明**（`report_generator.py`），不依赖 LLM 自觉输出
 
 **Ruff 规则**：忽略 E501（行长）/ F403,F405（星号导入）/ E402（导入顺序）；`isort.known-first-party` = `["ifa","api","web"]`。

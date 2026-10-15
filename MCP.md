@@ -33,7 +33,7 @@ MCP server 与 CLI 一样走 `ifa.env_loader.load_env_files()`，会**同时**�
 | --- | --- | --- | --- | --- |
 | `search_funds` | 按关键词 / 代码搜索公募基金 | `query: str=""`, `limit: int=20` | `{query, results: list[str], total}` | 否 |
 | `get_fund_info` | 基金基本信息（类型/规模/经理/费率） | `code: str` | `{fund_code, data: str}` | 否 |
-| `get_index_valuation_metrics` | 指数结构化估值指标 | `index_name: str="沪深300"` | dict：`pe_ttm/pb/roe/dividend_yield/earnings_yield/risk_free_rate/erp/date` | 否 |
+| `get_index_valuation_metrics` | 指数结构化估值指标 | `index_name: str="沪深300"` | dict：`pe_ttm/pb/roe/dividend_yield/dividend_yield_reference/dividend_yield_source/earnings_yield/risk_free_rate/erp/date`（`dividend_yield` 为**该指数自身**口径，取自中证指数官方；未登记指数为 `None`，此时全市场参考值另列 `dividend_yield_reference`） | 否 |
 | `get_index_valuation_report` | 指数综合估值报告（含历史百分位） | `index_name: str="沪深300"` | str（Markdown） | 否 |
 | `get_valuation_signal` | 估值信号（买入/持有/卖出） | `index_name: str="沪深300"` | str | 否 |
 | `screen_index_funds` | 按分类+跟踪方式筛选指数基金 | `index_category="全部"`, `tracking_method="全部"` | str（CSV） | 否 |

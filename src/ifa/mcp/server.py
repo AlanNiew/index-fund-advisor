@@ -106,8 +106,10 @@ async def get_index_valuation_metrics(index_name: str = "沪深300") -> dict:
     参数：
         index_name: 指数名称，如 "沪深300" / "中证500" / "中证1000"。
 
-    返回字段（不可用时为 None）：pe_ttm、pb、roe、dividend_yield（上证A股市场参考值，
-        非该指数自身股息率）、earnings_yield、risk_free_rate、erp（股权风险溢价）、date。
+    返回字段（不可用时为 None）：pe_ttm、pb、roe、dividend_yield（该指数自身股息率，
+        中证指数官方指标，总股本口径；取不到时为 None）、earnings_yield、risk_free_rate、
+        erp（股权风险溢价）、date，以及 dividend_yield_reference（全市场「上证A股」参考值，
+        仅作对照）、dividend_yield_source（前者来源，如 csindex:000300）。
     """
     from ifa.dataflows.a_share_macro import fetch_valuation_metrics
 

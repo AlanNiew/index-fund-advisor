@@ -185,6 +185,17 @@ def fetch_valuations(fund_codes: list[str], fund_snapshots: dict[str, dict] | No
         metrics.setdefault("index_name", index_name)
         fund_metrics[code] = metrics
 
+    no_anchor = [
+        f"{code}({metrics.get('index_name')})"
+        for code, metrics in fund_metrics.items()
+        if metrics.get("index_name") and metrics.get("pe_ttm") is None and metrics.get("pb") is None
+    ]
+    if no_anchor:
+        logger.warning(
+            "以下基金无估值锚（数据源未覆盖其指数），本次评级未使用估值百分位: %s",
+            ", ".join(no_anchor),
+        )
+
     return fund_metrics
 
 
@@ -234,7 +245,7 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
         table.add_column("PE(TTM)", justify="right")
         table.add_column("PB", justify="right")
         table.add_column("ROE", justify="right")
-        table.add_column("股息率(参考)", justify="right")
+        table.add_column("股息率", justify="right")
         table.add_column("盈利收益率", justify="right")
         table.add_column("无风险利率", justify="right")
         table.add_column("ERP", justify="right")
@@ -262,7 +273,7 @@ def print_valuation_overview(fund_codes: list[str], fund_metrics: dict[str, dict
         print(f"\n{'=' * 90}")
         print("  指数估值概览")
         print(f"{'=' * 90}")
-        header = f"  {'指数':<10} {'PE(TTM)':>8} {'PB':>8} {'ROE':>8} {'股息率(参考)':>8} {'盈利收益率':>10} {'无风险利率':>10} {'ERP':>8}"
+        header = f"  {'指数':<10} {'PE(TTM)':>8} {'PB':>8} {'ROE':>8} {'股息率':>8} {'盈利收益率':>10} {'无风险利率':>10} {'ERP':>8}"
         print(header)
         print(f"  {'-' * 86}")
         for idx_name, m in indices:

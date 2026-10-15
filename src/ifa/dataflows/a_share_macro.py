@@ -343,6 +343,71 @@ def _clean_float(value) -> float | None:
     return f
 
 
+# 指数名称 → 中证指数官方代码（用于取「该指数自身」的股息率）。
+# 只登记实测能取到 indicator.xls 的代码：取不到的名称宁可返回 None，
+# 也不拿全市场数据或别的指数顶上（张冠李戴比没有数据更糟）。
+_CSINDEX_CODES: dict[str, str] = {
+    "沪深300": "000300",
+    "上证50": "000016",
+    "上证380": "000009",
+    "中证500": "000905",
+    "上证180": "000010",
+    "中证1000": "000852",
+    "上证红利": "000015",
+    "中证100": "000903",
+    "中证800": "000906",
+    "中证白酒": "399997",
+    "中证红利": "000922",
+}
+
+
+def fetch_index_dividend_yield(index_name: str) -> dict:
+    """
+    获取「该指数自身」的股息率（中证指数官方指标文件 indicator.xls）。
+
+    官方文件有两列股息率：
+        股息率1（总股本）—— 按成分股总股本加权，本函数作为主口径；
+        股息率2（计算用股本）—— 按指数计算用（自由流通）股本加权，附带返回。
+
+    注意：该文件按日期倒序排列（最新在最前），必须显式按日期排序后取最后一行。
+
+    参数：
+        index_name: 指数名称（如 沪深300、中证白酒）；未登记的名称直接返回 available=False。
+
+    返回：
+        dict: {"index_name", "available", "date", "dividend_yield",
+               "dividend_yield_calc", "source"}；取不到时 available=False 且数值为 None。
+    """
+    result: dict = {
+        "index_name": index_name,
+        "available": False,
+        "date": None,
+        "dividend_yield": None,
+        "dividend_yield_calc": None,
+        "source": None,
+    }
+    code = _CSINDEX_CODES.get(index_name.strip())
+    if not code:
+        return result
+
+    try:
+        df = _call_akshare_api(ak.stock_zh_index_value_csindex, symbol=code)
+        if df is None or df.empty:
+            return result
+        recent = df.dropna(subset=["日期"]).sort_values("日期")
+        if recent.empty:
+            return result
+        row = recent.iloc[-1]
+        result["date"] = str(row["日期"])[:10]
+        result["dividend_yield"] = _clean_float(row.get("股息率1"))
+        result["dividend_yield_calc"] = _clean_float(row.get("股息率2"))
+        result["available"] = result["dividend_yield"] is not None
+        result["source"] = f"csindex:{code}"
+    except Exception:  # noqa: BLE001
+        return result
+    return result
+
+
 def fetch_valuation_metrics(index_name: str) -> dict:
     """
     获取指数的结构化估值指标，用于脚本和程序化消费。
@@ -353,7 +418,12 @@ def fetch_valuation_metrics(index_name: str) -> dict:
     返回：
         dict: 包含 pe_ttm / pb / roe / dividend_yield / earnings_yield /
               risk_free_rate / erp 等字段，不可用字段为 None。
-              注意：dividend_yield 为「上证A股」整体市场参考值，并非该指数自身股息率。
+
+              股息率分两个字段，不要混用：
+                dividend_yield —— 该指数自身的股息率（中证指数官方指标，总股本口径）；
+                                  取不到时为 None，绝不拿别的口径顶上；
+                dividend_yield_reference —— 全市场「上证A股」股息率，仅作对照。
+              dividend_yield_source 记录前者的来源（如 csindex:000300）。
     """
     result: dict = {
         "index_name": index_name,
@@ -362,6 +432,8 @@ def fetch_valuation_metrics(index_name: str) -> dict:
         "pb": None,
         "roe": None,
         "dividend_yield": None,
+        "dividend_yield_reference": None,
+        "dividend_yield_source": None,
         "earnings_yield": None,
         "risk_free_rate": None,
         "erp": None,
@@ -392,11 +464,17 @@ def fetch_valuation_metrics(index_name: str) -> dict:
     if result["pb"] is not None and result["pe_ttm"] is not None and result["pe_ttm"] > 0:
         result["roe"] = result["pb"] / result["pe_ttm"] * 100
 
-    # ── 股息率（上证A股整体参考，非该指数自身股息率） ──
+    # ── 股息率（指数自身，中证指数官方；取不到就保持 None） ──
+    index_div = fetch_index_dividend_yield(index_name)
+    if index_div["available"]:
+        result["dividend_yield"] = index_div["dividend_yield"]
+        result["dividend_yield_source"] = index_div["source"]
+
+    # ── 股息率（全市场「上证A股」参考值，仅供对照，不是该指数股息率） ──
     try:
         div_df = _call_akshare_api(ak.stock_a_gxl_lg, symbol="上证A股")
         if div_df is not None and not div_df.empty:
-            result["dividend_yield"] = _clean_float(div_df["股息率"].iloc[-1])
+            result["dividend_yield_reference"] = _clean_float(div_df["股息率"].iloc[-1])
     except Exception:  # noqa: BLE001
         pass
 
@@ -450,18 +528,31 @@ def get_index_valuation(index_name: str = "沪深300") -> str:
     except Exception:  # noqa: BLE001
         pass
 
-    # ── 拉取 A 股股息率（市场参考） ──
+    # ── 指数自身股息率（中证指数官方） ──
+    index_div = fetch_index_dividend_yield(name)
+
+    # ── 拉取 A 股股息率（全市场参考，不是该指数的股息率） ──
     div_rows: list[str] = []
     try:
         div_df = _call_akshare_api(ak.stock_a_gxl_lg, symbol="上证A股")
         if div_df is not None and not div_df.empty:
             div_recent = div_df.tail(_LOOKBACK_ROWS)
-            div_rows.append(_compute_metric(div_recent["股息率"], "A股股息率(参考)"))
+            div_rows.append(_compute_metric(div_recent["股息率"], "A股股息率(市场参考)"))
     except Exception:  # noqa: BLE001
         pass
 
     if not pe_rows and not pb_rows:
-        return f"未获取到「{name}」的估值数据。"
+        missing = [
+            f"未获取到「{name}」的估值数据。",
+            "",
+            "⚠ 本次分析缺少估值锚（PE/PB 均不可用），不能据此判断估值高低。",
+        ]
+        if index_div["available"]:
+            missing.append(
+                f"（中证指数官方指标里该指数股息率为 {index_div['dividend_yield']:.2f}%，"
+                f"日期 {index_div['date']}；股息率不能替代 PE/PB 估值锚）"
+            )
+        return "\n".join(missing)
 
     # ── 汇总报告 ──
     lines = [
@@ -474,6 +565,13 @@ def get_index_valuation(index_name: str = "沪深300") -> str:
     lines.extend(pe_rows)
     lines.extend(pb_rows)
     lines.extend(div_rows)
+    lines.append("")
+    if index_div["available"]:
+        lines.append(
+            f"- 指数自身股息率（中证指数官方，总股本口径，{index_div['date']}）: {index_div['dividend_yield']:.2f}%"
+        )
+    else:
+        lines.append("- 未取到该指数自身股息率；表中「A股股息率(市场参考)」是全市场口径，不可当作该指数股息率。")
     lines.extend(
         [
             "",
@@ -482,6 +580,9 @@ def get_index_valuation(index_name: str = "沪深300") -> str:
             "- <30% 低估 | 30%-70% 合理 | >70% 高估",
         ]
     )
+    if not pe_rows or not pb_rows:
+        missing_names = "、".join(label for label, rows in (("PE", pe_rows), ("PB", pb_rows)) if not rows)
+        lines.append(f"- ⚠ 本次缺少 {missing_names} 数据（估值锚不完整），基于百分位的估值判断不成立。")
 
     return "\n".join(lines)
 
@@ -558,11 +659,12 @@ def _calc_bogle_pe_signal(
     pe_ttm: float,
     pe_series: pd.Series,
     div_yield: float | None,
+    div_source: str = "参考",
 ) -> list[str]:
     """
     博格公式（市盈率）：预期年化收益率 = 股息率 + 盈利增长率 + PE 变化率。
 
-    - 股息率：来自市场数据
+    - 股息率：优先指数自身（中证指数官方），取不到才退到全市场参考值
     - 盈利增长率：近 5 年 EPS 复合增长率（EPS = 指数点位 / PE）
     - PE 变化率：(中位数PE / 当前PE)^(1/N) - 1，N=3 年均值回归
     """
@@ -594,7 +696,7 @@ def _calc_bogle_pe_signal(
         "",
         "| 项目 | 数值 |",
         "|------|------|",
-        f"| 股息率(参考) | {div_label} |",
+        f"| 股息率({div_source}) | {div_label} |",
         f"| 近5年 EPS 年化增长率 | {eps_growth_label} |",
         f"| PE 中位数（10年） | {pe_median:.2f} |",
         f"| PE 均值回归贡献（{N}年） | {pe_change * 100:+.2f}% |",
@@ -682,22 +784,30 @@ def get_valuation_signal(index_name: str = "沪深300") -> str:
     # ── 10 年期国债收益率 ──
     bond_yield = _get_bond_yield_10y()
 
-    # ── 股息率（市场参考） ──
+    # ── 股息率（优先指数自身，取不到才退到全市场参考值） ──
     div_yield = None
-    try:
-        div_df = _call_akshare_api(ak.stock_a_gxl_lg, symbol="上证A股")
-        if div_df is not None and not div_df.empty:
-            div_yield = float(div_df["股息率"].iloc[-1])
-    except Exception:  # noqa: BLE001
-        pass
+    div_source = "市场参考"
+    index_div = fetch_index_dividend_yield(name)
+    if index_div["available"]:
+        div_yield = index_div["dividend_yield"]
+        div_source = f"指数自身, {index_div['date']}"
+    else:
+        try:
+            div_df = _call_akshare_api(ak.stock_a_gxl_lg, symbol="上证A股")
+            if div_df is not None and not div_df.empty:
+                div_yield = float(div_df["股息率"].iloc[-1])
+        except Exception:  # noqa: BLE001
+            pass
 
     if pe_ttm <= 0 and pb <= 0:
-        return f"未获取到「{name}」的估值数据。"
+        return f"未获取到「{name}」的估值数据。\n\n⚠ 本次分析缺少估值锚（PE/PB 均不可用），三种估值方法均不成立。"
 
     # ── 汇总报告 ──
     roe_approx = pb / pe_ttm * 100 if pe_ttm > 0 else 0
     bond_label = f"{bond_yield:.2f}%" if bond_yield else "暂无数据"
     div_label = f"{div_yield:.2f}%" if div_yield else "暂无数据"
+    pe_label = f"{pe_ttm:.2f}" if pe_ttm > 0 else "暂无数据"
+    pb_label = f"{pb:.2f}" if pb > 0 else "暂无数据"
 
     lines = [
         f"# Valuation Signal Report: {name} ({date_str})",
@@ -706,12 +816,17 @@ def get_valuation_signal(index_name: str = "沪深300") -> str:
         "",
         "| 项目 | 数值 |",
         "|------|------|",
-        f"| 当前 PE-TTM | {pe_ttm:.2f} |",
-        f"| 当前 PB | {pb:.2f} |",
+        f"| 当前 PE-TTM | {pe_label} |",
+        f"| 当前 PB | {pb_label} |",
         f"| 近似 ROE | {roe_approx:.2f}% |",
         f"| 10年期国债收益率 | {bond_label} |",
-        f"| A股股息率(参考) | {div_label} |",
+        f"| 股息率({div_source}) | {div_label} |",
     ]
+    if pe_ttm <= 0 or pb <= 0:
+        lines += [
+            "",
+            "- ⚠ 本次分析缺少估值锚（PE/PB 未取全），基于估值百分位与均值回归的判断不成立，仅作参考。",
+        ]
 
     # ── 方法一：盈利收益率法 ──
     if methods["ey"]:
@@ -724,7 +839,7 @@ def get_valuation_signal(index_name: str = "沪深300") -> str:
     # ── 方法二：博格公式（PE） ──
     if methods["bogle_pe"] and pe_ttm > 0 and pe_series is not None:
         lines.append("")
-        lines.extend(_calc_bogle_pe_signal(pe_ttm, pe_series, div_yield))
+        lines.extend(_calc_bogle_pe_signal(pe_ttm, pe_series, div_yield, div_source))
 
     # ── 方法三：博格公式（PB） ──
     if methods["bogle_pb"] and pb > 0 and pe_ttm > 0 and pb_series is not None:

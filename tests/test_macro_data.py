@@ -1,5 +1,7 @@
 """宏观数据参数校验测试 — 不调用实际 API，仅验证参数校验和纯函数逻辑。"""
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -14,6 +16,7 @@ from ifa.dataflows.a_share_macro import (
     _compute_metric,
     _get_bond_yield_10y,
     _valuation_label,
+    fetch_index_dividend_yield,
     fetch_valuation_metrics,
     get_index_valuation,
     get_macro_indicator,
@@ -317,7 +320,80 @@ def _macro_fake_api(func, *args, **kwargs):
         return pd.DataFrame({"日期": ["2024-01-02", "2024-01-03"], "市净率": [1.2, 1.5]})
     if name == "stock_a_gxl_lg":
         return pd.DataFrame({"日期": ["2024-01-02"], "股息率": [2.5]})
+    if name == "stock_zh_index_value_csindex":
+        # 真实接口返回的是倒序表（最新在最前）—— 必须取到 2024-01-03 的 2.6
+        return pd.DataFrame(
+            {
+                "日期": [date(2024, 1, 3), date(2024, 1, 2)],
+                "市盈率1": [12.0, 11.0],
+                "股息率1": [2.6, 2.4],
+                "股息率2": [2.4, 2.2],
+            }
+        )
     raise AssertionError(f"未预期的 akshare 调用: {name}")
+
+
+class TestFetchIndexDividendYield:
+    """指数自身股息率 —— 官方文件是倒序表，取错方向会静默给出过期数据。"""
+
+    def test_takes_latest_row_from_descending_table(self, monkeypatch):
+        """akshare 的 indicator.xls 按日期倒序（最新在最前），必须取最新一行而不是 iloc[-1]。"""
+
+        def fake(func, *args, **kwargs):
+            assert getattr(func, "__name__", "") == "stock_zh_index_value_csindex"
+            return pd.DataFrame(
+                {
+                    "日期": [date(2024, 1, 3), date(2024, 1, 2)],
+                    "市盈率1": [12.0, 11.0],
+                    "股息率1": [2.6, 2.4],
+                    "股息率2": [2.4, 2.2],
+                }
+            )
+
+        monkeypatch.setattr(macro, "_call_akshare_api", fake)
+
+        d = fetch_index_dividend_yield("沪深300")
+        assert d["available"] is True
+        assert d["date"] == "2024-01-03"
+        assert d["dividend_yield"] == 2.6  # 总股本口径（主口径）
+        assert d["dividend_yield_calc"] == 2.4  # 计算用股本口径
+        assert d["source"] == "csindex:000300"
+
+    def test_unregistered_index_does_not_call_api(self, monkeypatch):
+        """未实测可用的指数直接返回 available=False，绝不拿别的指数顶上。"""
+
+        def boom(*args, **kwargs):
+            raise AssertionError("未登记的指数不应发起请求")
+
+        monkeypatch.setattr(macro, "_call_akshare_api", boom)
+
+        d = fetch_index_dividend_yield("创业板50")
+        assert d["available"] is False
+        assert d["dividend_yield"] is None
+        assert d["source"] is None
+
+    def test_fetch_failure_is_unavailable(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("404 Not Found")
+
+        monkeypatch.setattr(macro, "_call_akshare_api", boom)
+
+        d = fetch_index_dividend_yield("沪深300")
+        assert d["available"] is False
+        assert d["date"] is None
+
+    def test_nan_dividend_is_unavailable_not_zero(self, monkeypatch):
+        """官方文件首行是表头文本，数值被 akshare 转成 NaN —— 不能当成 0。"""
+
+        def fake(func, *args, **kwargs):
+            return pd.DataFrame({"日期": [pd.NaT, date(2024, 1, 3)], "股息率1": [float("nan"), float("nan")]})
+
+        monkeypatch.setattr(macro, "_call_akshare_api", fake)
+
+        d = fetch_index_dividend_yield("沪深300")
+        assert d["available"] is False
+        assert d["dividend_yield"] is None
+        assert d["date"] == "2024-01-03"
 
 
 class TestFetchValuationMetrics:
@@ -333,7 +409,9 @@ class TestFetchValuationMetrics:
         assert m["pe_ttm"] == 12.0
         assert m["pb"] == 1.5
         assert m["roe"] == pytest.approx(12.5)  # PB/PE×100
-        assert m["dividend_yield"] == 2.5
+        assert m["dividend_yield"] == 2.6  # 指数自身（中证指数官方，总股本口径）
+        assert m["dividend_yield_source"] == "csindex:000300"
+        assert m["dividend_yield_reference"] == 2.5  # 全市场参考值，不可与上面混用
         assert m["earnings_yield"] == pytest.approx(100 / 12)
         assert m["risk_free_rate"] == 2.5
         assert m["erp"] == pytest.approx(round(100 / 12 - 2.5, 2))
@@ -369,6 +447,8 @@ class TestFetchValuationMetrics:
                 return pd.DataFrame({"市净率": [1.5]})
             if name == "stock_a_gxl_lg":
                 return pd.DataFrame({"股息率": [2.5]})
+            if name == "stock_zh_index_value_csindex":
+                return pd.DataFrame({"日期": [date(2024, 1, 3)], "股息率1": [2.6]})
             raise AssertionError(name)
 
         monkeypatch.setattr(macro, "_call_akshare_api", fake)
@@ -377,7 +457,8 @@ class TestFetchValuationMetrics:
         m = fetch_valuation_metrics("沪深300")
         assert m["pe_ttm"] is None
         assert m["pb"] == 1.5
-        assert m["dividend_yield"] == 2.5
+        assert m["dividend_yield"] == 2.6  # 官方口径独立于 PE/PB 的失败
+        assert m["dividend_yield_reference"] == 2.5
         assert m["roe"] is None
         assert m["risk_free_rate"] == 2.5
 
@@ -443,3 +524,98 @@ class TestValuationSignalComposition:
 
         out = get_valuation_signal("沪深300")
         assert "数据不足，无法计算。" in out
+
+
+class TestValuationAnchorAnnotations:
+    """P0-4：没有估值锚必须显式标注 —— 否则读者会以为评级看过估值百分位。"""
+
+    @staticmethod
+    def _fake(pe: bool = True, pb: bool = True):
+        def fake(func, *args, **kwargs):
+            name = getattr(func, "__name__", "")
+            if name == "stock_index_pe_lg":
+                if not pe:
+                    raise RuntimeError("PE 接口挂了")
+                return pd.DataFrame(
+                    {
+                        "日期": ["2024-01-02", "2024-01-03"],
+                        "滚动市盈率": [11.0, 12.0],
+                        "静态市盈率": [10.5, 11.5],
+                    }
+                )
+            if name == "stock_index_pb_lg":
+                if not pb:
+                    raise RuntimeError("PB 接口挂了")
+                return pd.DataFrame({"日期": ["2024-01-02", "2024-01-03"], "市净率": [1.2, 1.5]})
+            if name == "stock_a_gxl_lg":
+                return pd.DataFrame({"日期": ["2024-01-02"], "股息率": [2.5]})
+            if name == "stock_zh_index_value_csindex":
+                return pd.DataFrame({"日期": [date(2024, 1, 3)], "股息率1": [2.6], "股息率2": [2.4]})
+            raise AssertionError(f"未预期的 akshare 调用: {name}")
+
+        return fake
+
+    def test_index_valuation_labels_market_reference(self, monkeypatch):
+        """全市场股息率必须自带「市场参考」字样，指数自身股息率单独成行。"""
+        monkeypatch.setattr(macro, "_call_akshare_api", self._fake())
+        monkeypatch.setattr(macro, "_get_bond_yield_10y", lambda: 2.5)
+
+        out = get_index_valuation("沪深300")
+        assert "A股股息率(市场参考)" in out
+        assert "指数自身股息率（中证指数官方，总股本口径，2024-01-03）: 2.60%" in out
+        assert "缺少估值锚" not in out
+
+    def test_index_valuation_flags_missing_anchor(self, monkeypatch):
+        """PE/PB 都取不到时明确写「缺少估值锚」，并说明股息率不能替代。"""
+        monkeypatch.setattr(macro, "_call_akshare_api", self._fake(pe=False, pb=False))
+        monkeypatch.setattr(macro, "_get_bond_yield_10y", lambda: 2.5)
+
+        out = get_index_valuation("沪深300")
+        assert "缺少估值锚（PE/PB 均不可用）" in out
+        assert "股息率不能替代 PE/PB 估值锚" in out
+        assert "2.60%" in out
+
+    def test_index_valuation_flags_partial_anchor(self, monkeypatch):
+        """只有 PE 没有 PB 时估值锚不完整，同样要标注。"""
+        monkeypatch.setattr(macro, "_call_akshare_api", self._fake(pb=False))
+        monkeypatch.setattr(macro, "_get_bond_yield_10y", lambda: 2.5)
+
+        out = get_index_valuation("沪深300")
+        assert "本次缺少 PB 数据（估值锚不完整）" in out
+        assert "缺少估值锚（PE/PB 均不可用）" not in out
+
+    def test_valuation_signal_uses_own_index_dividend(self, monkeypatch):
+        monkeypatch.setattr(macro, "_call_akshare_api", self._fake())
+        monkeypatch.setattr(macro, "_get_bond_yield_10y", lambda: 2.5)
+
+        out = get_valuation_signal("沪深300")
+        assert "股息率(指数自身, 2024-01-03)" in out
+        assert "2.60%" in out
+
+    def test_valuation_signal_falls_back_to_market_reference(self, monkeypatch):
+        """指数自身股息率取不到时才退到全市场参考值，且必须标出是哪个口径。"""
+        monkeypatch.setattr(macro, "_call_akshare_api", self._fake())
+        monkeypatch.setattr(
+            macro,
+            "fetch_index_dividend_yield",
+            lambda name: {
+                "index_name": name,
+                "available": False,
+                "date": None,
+                "dividend_yield": None,
+                "dividend_yield_calc": None,
+                "source": None,
+            },
+        )
+        monkeypatch.setattr(macro, "_get_bond_yield_10y", lambda: 2.5)
+
+        out = get_valuation_signal("沪深300")
+        assert "股息率(市场参考)" in out
+        assert "2.50%" in out
+
+    def test_valuation_signal_flags_missing_anchor(self, monkeypatch):
+        monkeypatch.setattr(macro, "_call_akshare_api", self._fake(pe=False, pb=False))
+        monkeypatch.setattr(macro, "_get_bond_yield_10y", lambda: 2.5)
+
+        out = get_valuation_signal("沪深300")
+        assert "缺少估值锚" in out

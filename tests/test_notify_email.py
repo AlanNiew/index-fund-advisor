@@ -15,6 +15,7 @@ from ifa.notify.email import (
     EmailConfigError,
     EmailSendError,
     _display_width,
+    _valuation_anchor_note,
     build_daily_report_email,
     parse_recipients,
     send_email,
@@ -364,6 +365,79 @@ def _sent_html(message) -> str:
     body_part = message.get_body(preferencelist=("html",))
     assert body_part is not None
     return body_part.get_content()
+
+
+class TestValuationAnchorNote:
+    """P0-4：邮件里必须能看出哪些基金本次没有估值锚（没看估值百分位就评级）。"""
+
+    def test_all_funds_have_anchor_returns_none(self):
+        results = [{"fund_code": "510300"}]
+        metrics = {"510300": {"index_name": "沪深300", "pe_ttm": 12.0, "pb": 1.5}}
+        assert _valuation_anchor_note(results, metrics) is None
+
+    def test_pe_only_still_counts_as_anchor(self):
+        """PE / PB 有一个就不算无估值锚（另一个缺失由报告自身标注）。"""
+        results = [{"fund_code": "510300"}]
+        metrics = {"510300": {"index_name": "沪深300", "pe_ttm": 12.0, "pb": None}}
+        assert _valuation_anchor_note(results, metrics) is None
+
+    def test_missing_pe_and_pb_is_listed_with_index_name(self):
+        results = [{"fund_code": "510300"}, {"fund_code": "161725"}]
+        metrics = {
+            "510300": {"index_name": "沪深300", "pe_ttm": 12.0, "pb": 1.5},
+            "161725": {"index_name": "中证白酒", "pe_ttm": None, "pb": None},
+        }
+        note = _valuation_anchor_note(results, metrics)
+        assert note is not None
+        assert "1 只基金有 PE/PB 数据" in note
+        assert "161725(中证白酒)" in note
+        assert "未使用估值百分位" in note
+
+    def test_unknown_index_is_reported_separately(self):
+        """认不出跟踪指数与数据源没覆盖是两回事，分开列。"""
+        results = [{"fund_code": "999999"}, {"fund_code": "161725"}]
+        metrics = {"161725": {"index_name": "中证白酒", "pe_ttm": None, "pb": None}}
+        note = _valuation_anchor_note(results, metrics)
+        assert note is not None
+        assert "未识别跟踪指数: 999999" in note
+        assert "无估值锚: 161725(中证白酒)" in note
+
+    def test_missing_metrics_mapping_is_unknown_index(self):
+        results = [{"fund_code": "510300"}]
+        note = _valuation_anchor_note(results, {})
+        assert note is not None
+        assert "未识别跟踪指数: 510300" in note
+
+    def test_note_reaches_both_bodies(self):
+        results = [
+            {"fund_code": "510300", "rating": "BUY", "confidence": "High", "elapsed": 1.0, "error": ""},
+            {"fund_code": "161725", "rating": "HOLD", "confidence": "Medium", "elapsed": 1.0, "error": ""},
+        ]
+        fund_metrics = {
+            "510300": {
+                "index_name": "沪深300",
+                "date": "2026-10-13",
+                "pe_ttm": 12.0,
+                "pb": 1.5,
+                "roe": 12.5,
+                "dividend_yield": 2.6,
+                "erp": 5.0,
+            },
+            "161725": {
+                "index_name": "中证白酒",
+                "date": "2026-10-13",
+                "pe_ttm": None,
+                "pb": None,
+                "roe": None,
+                "dividend_yield": None,
+                "erp": None,
+            },
+        }
+        _subject, body, html_body, _attachments = build_daily_report_email(
+            analysis_date="2026-10-13", results=results, fund_metrics=fund_metrics
+        )
+        assert "161725(中证白酒)" in body
+        assert "161725(中证白酒)" in html_body
 
 
 class TestSendEmail:

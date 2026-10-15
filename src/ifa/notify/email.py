@@ -343,6 +343,40 @@ def _valuation_table(
     return _render_table(headers, rows)
 
 
+def _valuation_anchor_note(
+    results: Sequence[Mapping[str, Any]],
+    fund_metrics: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    """标注哪些基金本次没有估值锚（PE/PB 都取不到）—— 评级里没有估值百分位信息。
+
+    没有估值锚与「认不出跟踪指数」是两件事，分开列：前者是数据源没覆盖，后者是识别失败。
+    全部基金都有估值锚时返回 None（调用方据此不输出这一行）。
+    """
+    no_anchor: list[str] = []
+    unknown_index: list[str] = []
+    with_anchor = 0
+    for result in results:
+        code = str(result.get("fund_code", ""))
+        metrics = fund_metrics.get(code) or {}
+        index_name = str(metrics.get("index_name") or "").strip()
+        if not index_name:
+            unknown_index.append(code)
+        elif metrics.get("pe_ttm") is None and metrics.get("pb") is None:
+            no_anchor.append(f"{code}({index_name})")
+        else:
+            with_anchor += 1
+
+    if not no_anchor and not unknown_index:
+        return None
+
+    parts = [f"估值锚: {with_anchor} 只基金有 PE/PB 数据。"]
+    if no_anchor:
+        parts.append("无估值锚: " + "、".join(no_anchor) + "（数据源未覆盖该指数，本次评级未使用估值百分位）。")
+    if unknown_index:
+        parts.append("未识别跟踪指数: " + "、".join(unknown_index) + "（未参与估值判断）。")
+    return " ".join(parts)
+
+
 _FONT_STACK = (
     "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,"
     "'PingFang SC','Microsoft YaHei',sans-serif"
@@ -411,8 +445,11 @@ def _build_html_body(
             "<h3>指数估值</h3>",
             _html_table(*valuation),
             '<p style="color:#777;font-size:12px">'
-            "注: 股息率为全市场（上证A股）参考值，非该指数自身股息率；'-' 表示该指数暂无数据。</p>",
+            "注: 股息率为该指数自身股息率（中证指数官方指标，总股本口径）；'-' 表示该指数暂无数据。</p>",
         ]
+        anchor_note = _valuation_anchor_note(results, fund_metrics)
+        if anchor_note:
+            parts.append(f'<p style="color:#777;font-size:12px">{html.escape(anchor_note)}</p>')
 
     failures = [result for result in results if result.get("error")]
     if failures:
@@ -460,7 +497,8 @@ def build_daily_report_email(
 
     fund_snapshots 形如 `{fund_code: {"name", "nav", "nav_date", "change_pct"}}`；
     fund_metrics 形如 `{fund_code: {"index_name", "date", "pe_ttm", "pb", "roe",
-    "dividend_yield", "erp"}}`。两者缺失时正文相应退化为「-」或整节省略。
+    "dividend_yield", "erp"}}`，其中 dividend_yield 为该指数自身股息率（中证指数官方）。
+    两者缺失时正文相应退化为「-」或整节省略；PE/PB 都取不到的基金会额外标注「无估值锚」。
     """
     metrics = fund_metrics or {}
     snapshots = fund_snapshots or {}
@@ -485,8 +523,11 @@ def build_daily_report_email(
             "",
             "== 指数估值 ==",
             valuation,
-            "注: 股息率为全市场（上证A股）参考值，非该指数自身股息率；'-' 表示该指数暂无数据。",
+            "注: 股息率为该指数自身股息率（中证指数官方指标，总股本口径）；'-' 表示该指数暂无数据。",
         ]
+        anchor_note = _valuation_anchor_note(results, metrics)
+        if anchor_note:
+            parts.append(anchor_note)
 
     failures = [result for result in results if result.get("error")]
     if failures:

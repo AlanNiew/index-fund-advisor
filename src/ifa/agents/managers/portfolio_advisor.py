@@ -1,6 +1,8 @@
 # ifa/agents/managers/portfolio_advisor.py
 """组合配置顾问 —— 基于风险偏好和资产配置理论推荐指数基金组合方案。"""
 
+import logging
+
 from ifa.agents.utils import (
     get_final_language_instruction,
     get_internal_language_instruction,
@@ -8,6 +10,9 @@ from ifa.agents.utils import (
 )
 from ifa.portfolio.models import RISK_PROFILES
 from ifa.portfolio.strategies import STRATEGY_DESCRIPTIONS
+from ifa.portfolio.weights import format_weight_check, validate_portfolio_weights
+
+logger = logging.getLogger(__name__)
 
 _PORTFOLIO_ADVISOR_PROMPT = """You are a professional index fund portfolio advisor for A-share (A股) market.
 Your role is to create an optimized index fund portfolio based on the user's risk profile.
@@ -24,7 +29,10 @@ Your role is to create an optimized index fund portfolio based on the user's ris
 2. For each asset class, identify the best index fund candidates using screening criteria;
 3. Consider diversification, correlation, and risk-adjusted returns;
 4. Specify exact allocation percentages that sum to 100%;
-5. Provide clear reasoning for each allocation decision.
+5. Provide clear reasoning for each allocation decision;
+6. Write every weight in a machine-readable form - "类别: NN%" in ASSET ALLOCATION and
+   "<6-digit fund code>: NN%" in FUND SELECTIONS - so the weights can be verified
+   against the profile limits below (the limits are enforced in code, not just requested).
 
 ## Fund Analysis Results (from Fund Analyst):
 {fund_analysis_report}
@@ -73,10 +81,23 @@ def create_portfolio_advisor(llm, memory=None):
         )
 
         response = invoke_llm_safely(llm, prompt)
+        advice = response.content or ""
+
+        # 权重约束由代码校验：LLM 自述「合计 100%」不算数，违规时附上确定性重排结果与告警
+        weight_report = validate_portfolio_weights(advice, profile)
+        if not weight_report.ok:
+            logger.warning(
+                "组合权重校验未通过（%s）: %s",
+                risk_profile,
+                "; ".join(weight_report.issues),
+            )
+            appendix = format_weight_check(weight_report, profile)
+            if appendix:
+                advice = f"{advice}\n{appendix}"
 
         return {
             "messages": [response],
-            "portfolio_advice": response.content,
+            "portfolio_advice": advice,
         }
 
     return portfolio_advisor_node

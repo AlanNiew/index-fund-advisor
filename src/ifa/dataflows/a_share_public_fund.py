@@ -869,6 +869,44 @@ def _fetch_etf_price_change(code: str) -> float | None:
     return _to_float(df.iloc[-1].get(change_col)) if change_col else None
 
 
+def _etf_sina_symbol(code: str) -> str | None:
+    """场内代码 → 新浪符号（新浪日线只认带交易所前缀的符号）。"""
+    if len(code) != 6 or not code.isdigit():
+        return None
+    if code[0] == "5":
+        return "sh" + code
+    if code[0] == "1":
+        return "sz" + code
+    if code[0] in {"4", "8"}:
+        return "bj" + code
+    return None
+
+
+def _fetch_etf_price_change_sina(code: str) -> float | None:
+    """ETF 日涨跌兜底：新浪日线（最近两个交易日收盘价相除）。
+
+    东财 push2his（fund_etf_hist_em）在部分网络下会持续 RemoteDisconnected，
+    而同一台机器访问新浪正常，所以换个数据源兜底，而不是让「日涨跌」一直空着。
+    """
+    symbol = _etf_sina_symbol(code)
+    if symbol is None:
+        return None
+    try:
+        df = _call_akshare_api(ak.fund_etf_hist_sina, symbol=symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取 ETF %s 新浪日线失败，日涨跌留空: %s", code, exc)
+        return None
+    if df is None or df.empty or "close" not in df.columns:
+        return None
+    closes = pd.to_numeric(df["close"], errors="coerce").dropna()
+    if len(closes) < 2:
+        return None
+    previous, latest = float(closes.iloc[-2]), float(closes.iloc[-1])
+    if not previous:
+        return None
+    return round((latest - previous) / previous * 100, 2)
+
+
 def _fill_from_etf_table(snapshots: dict[str, dict]) -> None:
     """场内 ETF：每日行情表给出单位净值/市价，但收盘前的「增长率」是 '---'。"""
     try:
@@ -896,6 +934,8 @@ def _fill_from_etf_table(snapshots: dict[str, dict]) -> None:
             data["price"] = _to_float(row.get(price_col))
         if data["change_pct"] is None:
             data["change_pct"] = _fetch_etf_price_change(code)
+        if data["change_pct"] is None:
+            data["change_pct"] = _fetch_etf_price_change_sina(code)
 
 
 def fetch_fund_daily_snapshots(codes: Sequence[str]) -> dict[str, dict]:

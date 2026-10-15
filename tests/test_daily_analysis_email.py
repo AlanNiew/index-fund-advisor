@@ -42,11 +42,12 @@ def _stub_result(fund_code: str, error: str = "") -> dict:
     }
 
 
-def _patch_main(monkeypatch, module, *, trading_day=True, results=None, email_error=None):
+def _patch_main(monkeypatch, module, *, trading_day=True, results=None, email_error=None, previous_day="2026-10-12"):
     """把 main() 的外部依赖全部替换掉，返回记录调用的容器。"""
-    calls: dict = {"email": [], "analyze": [], "snapshots": []}
+    calls: dict = {"email": [], "analyze": [], "analyze_dates": [], "snapshots": []}
 
     monkeypatch.setattr(module, "check_trading_day", lambda date_str: trading_day)
+    monkeypatch.setattr(module, "previous_trading_day", lambda reference=None: previous_day)
     monkeypatch.setattr(module, "fetch_valuations", lambda codes, fund_snapshots=None: {})
 
     def fake_snapshots(codes):
@@ -60,6 +61,7 @@ def _patch_main(monkeypatch, module, *, trading_day=True, results=None, email_er
 
     def fake_analyze(advisor, fund_code, analysis_date, mode="deep"):
         calls["analyze"].append((fund_code, mode))
+        calls["analyze_dates"].append(analysis_date)
         return _stub_result(fund_code)
 
     monkeypatch.setattr(module, "analyze_single_fund", results or fake_analyze)
@@ -86,6 +88,36 @@ def test_non_trading_day_skips_analysis_and_email(monkeypatch, script):
     monkeypatch.setattr(sys, "argv", ["daily_analysis.py", "--date", "2026-10-10", "--email"])
 
     assert script.main() == 0
+    assert calls["analyze"] == []
+    assert calls["email"] == []
+
+
+def test_default_run_analyzes_previous_trading_day(monkeypatch, script):
+    """不带 --date 时分析「前一交易日」—— 早上 08:00 跑批时当天数据还没出来。"""
+    calls = _patch_main(monkeypatch, script, trading_day=True)
+    monkeypatch.setattr(sys, "argv", ["daily_analysis.py", "--codes", "510300", "--email"])
+
+    assert script.main() == 0
+    assert calls["analyze_dates"] == ["2026-10-12"]
+    assert calls["email"][0]["date"] == "2026-10-12"
+
+
+def test_non_trading_today_skips_without_explicit_date(monkeypatch, script):
+    """今天休市 → 不发（哪怕「前一交易日」是开市的）。"""
+    calls = _patch_main(monkeypatch, script, trading_day=False)
+    monkeypatch.setattr(sys, "argv", ["daily_analysis.py", "--codes", "510300", "--email"])
+
+    assert script.main() == 0
+    assert calls["analyze"] == []
+    assert calls["email"] == []
+
+
+def test_unavailable_calendar_exits_nonzero(monkeypatch, script):
+    """交易日历取不到 → 无法确定分析日期，按失败上报（exit 1），不能静默什么都不做。"""
+    calls = _patch_main(monkeypatch, script, trading_day=True, previous_day=None)
+    monkeypatch.setattr(sys, "argv", ["daily_analysis.py", "--codes", "510300", "--email"])
+
+    assert script.main() == 1
     assert calls["analyze"] == []
     assert calls["email"] == []
 
@@ -181,6 +213,28 @@ def test_analyze_single_fund_passes_mode_to_build_state_and_run(monkeypatch, scr
     assert result["rating"] == "BUY"
     assert result["confidence"] == "High"
     assert result["error"] == ""
+
+
+class TestPreviousTradingDay:
+    def test_asks_calendar_for_the_day_before_reference(self, monkeypatch, script):
+        seen: dict = {}
+
+        def fake_prev(date_str):
+            seen["arg"] = date_str
+            return "2026-10-12"
+
+        monkeypatch.setattr("ifa.dataflows.a_share_common.get_previous_trade_date", fake_prev)
+
+        assert script.previous_trading_day("2026-10-13") == "2026-10-12"
+        assert seen["arg"] == "2026-10-12"  # 查询的是 reference 的前一天，不是 reference 当天
+
+    def test_calendar_failure_returns_none_instead_of_raising(self, monkeypatch, script):
+        def boom(date_str):
+            raise RuntimeError("日历不可用")
+
+        monkeypatch.setattr("ifa.dataflows.a_share_common.get_previous_trade_date", boom)
+
+        assert script.previous_trading_day("2026-10-13") is None
 
 
 class TestIndexResolution:

@@ -7,7 +7,7 @@
 HTML 版由 ifa.notify.markdown 现场渲染（客户端不渲染 Markdown），纯文本版是可读摘要；完整报告作为 .md 附件送达。
 
 用法:
-    python scripts/daily_analysis.py                 # 分析今天（仅交易日）
+    python scripts/daily_analysis.py                 # 分析「前一交易日」（仅交易日运行）
     python scripts/daily_analysis.py --force         # 强制运行（不检查交易日）
     python scripts/daily_analysis.py --date 2025-04-25  # 指定日期
     python scripts/daily_analysis.py --codes 161725,110020  # 指定基金
@@ -18,12 +18,15 @@ HTML 版由 ifa.notify.markdown 现场渲染（客户端不渲染 Markdown），
     0  正常（含「非交易日跳过」—— 休市不是故障，不该触发告警）
     1  有基金分析失败，或邮件发送失败
 
-定时任务配置（Windows 任务计划程序）:
-    每个工作日 15:30 运行:
-    schtasks /create /tn "IFA每日基金分析" /tr "python D:\\path\\to\\scripts\\daily_analysis.py --email" /sc weekly /d MON,TUE,WED,THU,FRI /st 15:30
+分析日期：默认取「前一交易日」（周一 → 上周五，长假后 → 节前最后一个交易日）；
+今天不是交易日则直接跳过、不发邮件（休市不是故障）。
 
-定时任务配置（Linux crontab，15:30 收盘后跑，跑完即发）:
-    30 15 * * 1-5 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/daily_analysis.py --email >> local_data/daily_analysis.log 2>&1
+定时任务配置（Windows 任务计划程序）:
+    每个工作日 08:00 运行（早上跑，前一交易日的净值已公布；分析的是前一交易日）:
+    schtasks /create /tn "IFA每日基金分析" /tr "python D:\\path\\to\\scripts\\daily_analysis.py --email" /sc weekly /d MON,TUE,WED,THU,FRI /st 08:00
+
+定时任务配置（Linux crontab，工作日 08:00 跑，跑完即发）:
+    0 8 * * 1-5 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/daily_analysis.py --email >> local_data/daily_analysis.log 2>&1
 
 邮件配置见 README「每日邮件报告」一节；SMTP 密码建议放 IFA_SMTP_PASSWORD 环境变量。
 """
@@ -33,7 +36,7 @@ import logging
 import math
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # 将 src 目录加入 sys.path，确保直接运行也能导入 ifa
@@ -108,6 +111,22 @@ def check_trading_day(date_str: str) -> bool:
     except Exception as e:
         logger.warning("交易日判断失败 (%s)，默认视为非交易日。请检查网络连接。", e)
         return False
+
+
+def previous_trading_day(reference: str | None = None) -> str | None:
+    """返回 reference（默认今天）之前最近的一个交易日；交易日历取不到时返回 None。
+
+    早上跑批时「今天」还没收盘，能拿到的完整数据属于前一交易日 ——
+    周一取上周五，长假后第一个工作日取节前最后一个交易日。
+    """
+    try:
+        from ifa.dataflows.a_share_common import get_previous_trade_date
+
+        base = datetime.strptime(reference, "%Y-%m-%d") if reference else datetime.now()
+        return get_previous_trade_date((base - timedelta(days=1)).strftime("%Y-%m-%d"))
+    except Exception as e:  # noqa: BLE001
+        logger.error("无法确定前一交易日 (%s): %s", reference or "今天", e)
+        return None
 
 
 def fetch_fund_snapshots(fund_codes: list[str]) -> dict[str, dict]:
@@ -467,7 +486,7 @@ def main() -> int:
         "--date",
         type=str,
         default=None,
-        help="分析日期 YYYY-MM-DD，默认今天",
+        help="分析日期 YYYY-MM-DD，默认前一交易日",
     )
     parser.add_argument(
         "--force",
@@ -495,15 +514,25 @@ def main() -> int:
     except ImportError:
         pass
 
-    # 确定分析日期
-    analysis_date = args.date or datetime.now().strftime("%Y-%m-%d")
-
-    # 交易日检查：非交易日直接跳过 —— 不发邮件、退出码 0（休市不是故障）
-    if not args.force:
-        if not check_trading_day(analysis_date):
+    # 确定分析日期：显式 --date 优先；否则分析「前一交易日」
+    # （早上 08:00 跑批时当天还没收盘，能拿到的完整数据属于前一交易日）
+    if args.date:
+        analysis_date = args.date
+        if not args.force and not check_trading_day(analysis_date):
             logger.info("%s 非交易日，跳过分析（不发邮件）。使用 --force 强制运行。", analysis_date)
             return 0
         logger.info("%s 是交易日，开始分析。", analysis_date)
+    else:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if not args.force and not check_trading_day(today):
+            logger.info("%s 非交易日，跳过分析（不发邮件）。使用 --force 强制运行。", today)
+            return 0
+        resolved = previous_trading_day(today)
+        if resolved is None:
+            logger.error("交易日历不可用，无法确定 %s 的前一交易日，跳过本次分析。", today)
+            return 1
+        analysis_date = resolved
+        logger.info("%s 是交易日，分析前一交易日 %s。", today, analysis_date)
 
     # 确定基金列表
     fund_codes = args.codes.split(",") if args.codes else DEFAULT_FUND_CODES

@@ -162,3 +162,60 @@ def test_missing_tokens_are_treated_as_missing(tables):
 
 def test_empty_codes_returns_empty(tables):
     assert pf.fetch_fund_daily_snapshots([]) == {}
+
+
+class TestEtfSinaFallback:
+    """东财 push2his 抖动时用新浪日线兜底（服务器上实测过 RemoteDisconnected）。"""
+
+    def test_uses_sina_when_eastmoney_history_fails(self, tables):
+        _stub_all(tables)
+        tables["fund_etf_hist_em"] = RuntimeError("RemoteDisconnected")
+        tables["fund_etf_hist_sina"] = pd.DataFrame({"date": ["2026-10-13", "2026-10-14"], "close": [4.3, 4.3479]})
+
+        snapshots = pf.fetch_fund_daily_snapshots(["510300"])
+
+        assert snapshots["510300"]["change_pct"] == pytest.approx(1.11, abs=0.01)
+        assert tables["__calls__"][-2:] == ["fund_etf_hist_em", "fund_etf_hist_sina"]
+
+    def test_uses_sina_when_eastmoney_history_is_empty(self, tables):
+        _stub_all(tables)
+        tables["fund_etf_hist_em"] = pd.DataFrame()
+        tables["fund_etf_hist_sina"] = pd.DataFrame({"date": ["2026-10-13", "2026-10-14"], "close": ["4.00", "4.10"]})
+
+        snapshots = pf.fetch_fund_daily_snapshots(["510300"])
+
+        assert snapshots["510300"]["change_pct"] == 2.5
+
+    def test_single_bar_history_yields_no_change(self, tables):
+        _stub_all(tables)
+        tables["fund_etf_hist_em"] = RuntimeError("boom")
+        tables["fund_etf_hist_sina"] = pd.DataFrame({"date": ["2026-10-14"], "close": [4.3479]})
+
+        snapshots = pf.fetch_fund_daily_snapshots(["510300"])
+
+        assert snapshots["510300"]["change_pct"] is None
+
+    def test_both_sources_failing_keeps_nav_only(self, tables):
+        _stub_all(tables)
+        tables["fund_etf_hist_em"] = RuntimeError("boom")
+        tables["fund_etf_hist_sina"] = RuntimeError("sina down")
+
+        snapshots = pf.fetch_fund_daily_snapshots(["510300"])
+
+        assert snapshots["510300"]["change_pct"] is None
+        assert snapshots["510300"]["nav"] == 4.3479
+
+
+class TestEtfSinaSymbol:
+    def test_exchange_prefixes(self):
+        assert pf._etf_sina_symbol("510300") == "sh510300"
+        assert pf._etf_sina_symbol("159919") == "sz159919"
+        assert pf._etf_sina_symbol("830799") == "bj830799"
+        # 场内 LOF（深市）同样能用新浪日线
+        assert pf._etf_sina_symbol("161725") == "sz161725"
+
+    def test_rejects_non_exchange_codes(self):
+        assert pf._etf_sina_symbol("600000") is None
+        assert pf._etf_sina_symbol("000834") is None
+        assert pf._etf_sina_symbol("51030") is None
+        assert pf._etf_sina_symbol("abcdef") is None

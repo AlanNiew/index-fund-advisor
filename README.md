@@ -512,7 +512,7 @@ python scripts/run_rating_validation.py --months-back 6 --hold-days 90
 `scripts/daily_analysis.py` 批量分析一组基金，并把**摘要正文（HTML + 纯文本两个版本）+ 完整报告的 `.md` 附件**发到邮箱。邮件是 `multipart/alternative`：HTML 版把摘要渲染成真表格、并把报告 Markdown 现场渲染成 HTML（邮件客户端不渲染 Markdown，这一步必须由发送方做）；纯文本版是等宽对齐的同一份摘要，给不认 HTML 的客户端兜底。它是按无人值守的定时任务写的：非交易日直接跳过、失败非零退出、配置缺项报错而不是静默不发。
 
 ```bash
-python scripts/daily_analysis.py --email                                  # 分析默认基金列表并发信
+python scripts/daily_analysis.py --email                                  # 分析前一交易日 + 发信（默认基金列表）
 python scripts/daily_analysis.py --codes 510300,159919 --mode deep_simple --email
 python scripts/daily_analysis.py --date 2026-10-13 --force --email        # 指定日期并强制跑（忽略交易日检查）
 ```
@@ -520,19 +520,21 @@ python scripts/daily_analysis.py --date 2026-10-13 --force --email        # 指�
 | 参数 | 默认 | 说明 |
 |------|------|------|
 | `--codes` | 脚本内 `DEFAULT_FUND_CODES` | 逗号分隔的基金代码（**部署前请改成自己的持仓**） |
-| `--date` | 今天 | 分析日期（`YYYY-MM-DD`） |
+| `--date` | **前一交易日** | 分析日期（`YYYY-MM-DD`）；不带该参数时自动取前一交易日 |
 | `--mode` | `deep` | `deep`（含辩论）或 `deep_simple`（不辩论，快得多） |
 | `--force` | 关 | 跳过交易日检查，非交易日也跑 |
 | `--email` | 关 | 跑完把摘要正文（HTML + 纯文本：核心参数表 + 指数估值表 + 渲染后的报告全文）+ 完整报告 `.md` 附件发到配置的邮箱 |
 
 - **退出码**：任一基金分析失败、或邮件发送失败 → `1`；否则 `0`（含「非交易日跳过」）。
-- **非交易日**：不加 `--force` 时直接跳过分析**且不发邮件**，退出码 `0`。
+- **非交易日**：不加 `--force` 时，**今天**不是交易日就直接跳过分析**且不发邮件**，退出码 `0`（休市不是故障）。
+- **分析日期**：不带 `--date` 时分析**前一交易日** —— 早上跑批时当天还没收盘，能拿到的完整数据属于前一交易日（周一 → 上周五，长假后 → 节前最后一个交易日）。交易日历取不到时按失败上报（退出码 `1`），不会静默什么都不做。
 - **配置**：`ifa config smtp_host smtp.qq.com` 等写进用户配置文件，或直接用上表的 `IFA_SMTP_*` / `IFA_EMAIL_TO` 环境变量（服务器上推荐环境变量，密码不落盘）。
 - **发信行为**：同一份内容发两个版本（`multipart/alternative`）——`text/html` 版把摘要渲染成真表格，并把报告 Markdown 现场渲染成 HTML（自写的 `src/ifa/notify/markdown.py`，纯标准库：标题/表格/列表/粗体/分隔线，其余降级为段落；所有文本先转义，链接只放行 http/https/mailto）；`text/plain` 版是等宽对齐的同一份摘要，给不认 HTML 的客户端兜底。两版都含「核心参数」表（基金代码/基金名称/净值(日期)/日涨跌/评级/置信度/耗时/状态）+「指数估值」表（跟踪指数/数据日期/PE(TTM)/PB/ROE/股息率/ERP，只覆盖乐咕乐股支持的那 12 个指数，且股息率是「上证A股」全市场参考值而非指数自身值）+ 失败明细。HTML 正文超过 12 万字符时**显式省略报告全文**并写明「见 .md 附件」（绝不静默省略）；完整报告始终作为 `.md` 附件（含程序硬注入的【智识诚实声明】）。
-- **服务器 cron**（工作日 15:30，收盘口径）：
+- **日涨跌兜底**：ETF 的日涨跌优先取场内行情表的「增长率」；还没发布时回退东财日线（`fund_etf_hist_em`），仍失败再回退新浪日线（`fund_etf_hist_sina`，用最近两个交易日收盘价算涨跌幅）—— 东财 `push2his` 在部分网络下会持续 `RemoteDisconnected`，换源兜底好过让这一列长期空着。
+- **服务器 cron**（工作日 08:00，分析前一交易日 —— 前一交易日的净值此时已公布）：
 
 ```cron
-30 15 * * 1-5 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/daily_analysis.py --email >> local_data/daily_analysis.log 2>&1
+0 8 * * 1-5 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/daily_analysis.py --email >> local_data/daily_analysis.log 2>&1
 ```
 
 > 每只基金串行分析（deep 模式实测峰值内存约 500 MB，辩论段占大头）。内存紧张的机器上建议用 `--mode deep_simple`，或套一层 `systemd-run --scope -p MemoryMax=`。
@@ -547,7 +549,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（717 个测试，覆盖 34 个模块）
+# 测试（728 个测试，覆盖 34 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -612,7 +614,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 717 个测试（34 个模块）
+├── tests/                    # 728 个测试（34 个模块）
 ├── scripts/                  # 每日分析脚本（含 --email 定时邮件报告）
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml

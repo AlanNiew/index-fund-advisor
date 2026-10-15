@@ -3,23 +3,26 @@
 
 设计约束（每条都对应本仓库踩过的坑）:
 
-- **只用标准库**（`smtplib` + `email`）。发信是运维管道，不该为一个通知功能引入第三方
-  依赖，也不该让 wheel 的依赖面变大。
+- **只用标准库**（`smtplib` + `email` + 自写的 `markdown.py`）。发信是运维管道，不该为一个
+  通知功能引入第三方依赖，也不该让 wheel 的依赖面变大。
 - **配了就必须生效**：SMTP 配置缺项时抛 :class:`EmailConfigError` 并列出缺了哪几项，
   而不是静默跳过发信 —— 「tushare 配了却被静默回退到 akshare」是同一种病。
 - **密码优先走环境变量** `IFA_SMTP_PASSWORD`，避免明文落进 `config.json`。
-- **正文是摘要，不是全文**：邮件客户端不渲染 Markdown，把报告全文塞进正文只会看到
-  一堆井号和表格线。正文因此改成纯文本摘要（核心参数 + 指数估值 + 失败明细），
-  完整报告仍作为 `.md` 附件送达；附件才是唯一权威版本。
+- **正文同时带 text/plain 与 text/html 两个版本**（`multipart/alternative`）：邮件客户端不渲染
+  Markdown，HTML 版因此由 :mod:`ifa.notify.markdown` 现场渲染（报告本身就是 Markdown），
+  纯文本版是可读的等宽摘要（`_render_table` 按显示宽度补空格，CJK 全角算 2 列）——
+  任何客户端都能读到内容，附件仍是唯一权威版本。
+- **报告全文进不进正文由体积决定**：HTML 正文超过 :data:`MAX_BODY_CHARS` 时显式省略全文并指向
+  `.md` 附件 —— 省略必须写出来，不能让收件人以为报告只有摘要。
 - **附件缺失不影响正文**：附件文件读不到只记 warning，不中断发信。
 
-为什么正文用 `text/plain` 而不是 HTML：摘要表靠等宽字体对齐（`_render_table` 按显示
-宽度补空格，CJK 全角算 2 列）；HTML 要么引入 `markdown` 依赖、要么手写一套转义，
-而收件人需要的正是「打开就能读、不依赖客户端渲染」的内容。
+为什么 HTML 自己渲染而不引入 `markdown`：见 :mod:`ifa.notify.markdown` 顶部说明（依赖面 +
+`tests/test_dependency_declarations.py` 门禁 + requirements.lock 的一致性要求）。
 """
 
 from __future__ import annotations
 
+import html
 import logging
 import math
 import re
@@ -32,6 +35,8 @@ from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
+
+from .markdown import render_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -262,11 +267,11 @@ def _format_change(value: Any) -> str:
     return f"{number:+.2f}%"
 
 
-def _fund_info_table(
+def _fund_info_rows(
     results: Sequence[Mapping[str, Any]],
     fund_snapshots: Mapping[str, Mapping[str, Any]],
-) -> str:
-    """核心参数表：名称 / 净值(日期) / 日涨跌 + 评级 / 置信度 / 耗时 / 状态。"""
+) -> tuple[list[str], list[list[str]]]:
+    """核心参数表的表头与数据行（纯文本 / HTML 两个渲染器共用同一份数据）。"""
     headers = ["基金代码", "基金名称", "净值(日期)", "日涨跌", "评级", "置信度", "耗时", "状态"]
     rows: list[list[str]] = []
     for result in results:
@@ -284,14 +289,23 @@ def _fund_info_table(
                 "失败" if result.get("error") else "成功",
             ]
         )
+    return headers, rows
+
+
+def _fund_info_table(
+    results: Sequence[Mapping[str, Any]],
+    fund_snapshots: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """核心参数表（纯文本）：名称 / 净值(日期) / 日涨跌 + 评级 / 置信度 / 耗时 / 状态。"""
+    headers, rows = _fund_info_rows(results, fund_snapshots)
     return _render_table(headers, rows)
 
 
-def _valuation_table(
+def _valuation_rows(
     results: Sequence[Mapping[str, Any]],
     fund_metrics: Mapping[str, Mapping[str, Any]],
-) -> str | None:
-    """指数估值表：只列能确定跟踪指数的基金 —— 认不出指数就不猜，免得张冠李戴。"""
+) -> tuple[list[str], list[list[str]]] | None:
+    """指数估值表的表头与数据行；认不出跟踪指数的基金整行跳过 —— 不猜指数，免得张冠李戴。"""
     rows: list[list[str]] = []
     for result in results:
         code = str(result.get("fund_code", ""))
@@ -314,7 +328,117 @@ def _valuation_table(
     if not rows:
         return None
     headers = ["基金代码", "跟踪指数", "数据日期", "PE(TTM)", "PB", "ROE", "股息率", "ERP"]
+    return headers, rows
+
+
+def _valuation_table(
+    results: Sequence[Mapping[str, Any]],
+    fund_metrics: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    """指数估值表（纯文本）；没有可展示的行时返回 None（调用方据此整节省略）。"""
+    data = _valuation_rows(results, fund_metrics)
+    if data is None:
+        return None
+    headers, rows = data
     return _render_table(headers, rows)
+
+
+_FONT_STACK = (
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,"
+    "'PingFang SC','Microsoft YaHei',sans-serif"
+)
+
+
+def _html_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    """HTML 表格：老式 border/cellpadding 属性 + 内联样式，邮件客户端普遍支持。"""
+
+    def cell(tag: str, text: str) -> str:
+        styles = "padding:6px 8px;text-align:left" + (";background:#f2f2f2" if tag == "th" else "")
+        return f'<{tag} style="{styles}">{html.escape(str(text))}</{tag}>'
+
+    head = "".join(cell("th", header) for header in headers)
+    body = "".join("<tr>" + "".join(cell("td", value) for value in row) + "</tr>" for row in rows)
+    return (
+        '<table border="1" cellspacing="0" cellpadding="6" '
+        'style="border-collapse:collapse;font-size:13px;margin:8px 0">'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    )
+
+
+def _reports_html(results: Sequence[Mapping[str, Any]]) -> str:
+    """把每只基金的报告全文渲染成 HTML（`report` 字段本身就是 Markdown）。"""
+    blocks: list[str] = []
+    for result in results:
+        report = str(result.get("report") or "").strip()
+        if not report:
+            continue
+        code = html.escape(str(result.get("fund_code") or ""))
+        blocks.append(f"<h3>{code} 报告全文</h3>")
+        blocks.append(render_markdown(report))
+    return "".join(blocks)
+
+
+def _build_html_body(
+    *,
+    analysis_date: str,
+    results: Sequence[Mapping[str, Any]],
+    fund_metrics: Mapping[str, Mapping[str, Any]],
+    fund_snapshots: Mapping[str, Mapping[str, Any]],
+    mode: str,
+    generated_at: str,
+    success: int,
+    total_seconds: float,
+) -> str:
+    """HTML 正文：摘要表 + （放得下时）渲染后的报告全文。
+
+    全文是否进正文只由体积决定，且省略时会在正文里写明 —— 静默省略会让人以为报告只有摘要。
+    """
+    parts: list[str] = [
+        f'<div style="font-family:{_FONT_STACK};font-size:14px;color:#222;line-height:1.6">',
+        f'<h2 style="margin:0 0 6px">IFA 每日基金分析报告 — {html.escape(analysis_date)}</h2>',
+        '<p style="margin:0;color:#555">'
+        f"分析模式: {html.escape(mode)} &nbsp;|&nbsp; 生成时间: {html.escape(generated_at)}</p>",
+        '<p style="margin:4px 0 12px;color:#555">'
+        f"基金数量: {len(results)} &nbsp; 成功: {success} &nbsp; 失败: {len(results) - success} "
+        f"&nbsp; 总耗时: {total_seconds:.1f}s</p>",
+        "<h3>核心参数</h3>",
+        _html_table(*_fund_info_rows(results, fund_snapshots)),
+    ]
+
+    valuation = _valuation_rows(results, fund_metrics)
+    if valuation is not None:
+        parts += [
+            "<h3>指数估值</h3>",
+            _html_table(*valuation),
+            '<p style="color:#777;font-size:12px">'
+            "注: 股息率为全市场（上证A股）参考值，非该指数自身股息率；'-' 表示该指数暂无数据。</p>",
+        ]
+
+    failures = [result for result in results if result.get("error")]
+    if failures:
+        items = "".join(
+            f"<li>{html.escape(str(result.get('fund_code')))}: {html.escape(str(result.get('error')))}</li>"
+            for result in failures
+        )
+        parts.append(f"<h3>失败明细</h3><ul>{items}</ul>")
+
+    reports = _reports_html(results)
+    if reports:
+        if sum(len(part) for part in parts) + len(reports) <= MAX_BODY_CHARS:
+            parts += ["<h3>报告全文</h3>", reports]
+        else:
+            parts.append(
+                '<p style="color:#777;font-size:12px">'
+                f"报告全文超过正文上限（{MAX_BODY_CHARS} 字符），已省略；完整内容见 .md 附件。</p>"
+            )
+
+    parts.append(
+        '<hr style="border:none;border-top:1px solid #ddd;margin:16px 0">'
+        f'<p style="color:#777;font-size:12px">本邮件由 IFA 自动生成（模式: {html.escape(mode)}）。'
+        "完整报告（含【智识诚实声明】与全部数据）见 .md 附件；评级与置信度由多 Agent 辩论生成，"
+        "不构成投资建议。</p></div>"
+    )
+    return "\n".join(parts)
 
 
 def build_daily_report_email(
@@ -325,13 +449,14 @@ def build_daily_report_email(
     fund_snapshots: Mapping[str, Mapping[str, Any]] | None = None,
     mode: str = "deep",
     generated_at: str | None = None,
-) -> tuple[str, str, list[Path]]:
-    """组装每日报告邮件，返回 (主题, 正文, 附件路径列表)。
+) -> tuple[str, str, str, list[Path]]:
+    """组装每日报告邮件，返回 (主题, 纯文本正文, HTML 正文, 附件路径列表)。
 
     results 的每一项形如
     `{"fund_code", "rating", "confidence", "elapsed", "error", "report_path", "report"}`，
-    与 `scripts/daily_analysis.py` 的结果字典一致。正文只放摘要：报告全文不再进正文
-    （Markdown 在邮件客户端不渲染），只由 `report_path` 指定的 `.md` 文件作为附件送达。
+    与 `scripts/daily_analysis.py` 的结果字典一致。两个正文版本都含摘要表与失败明细，
+    区别是 HTML 版还会把 `report` 里的 Markdown 现场渲染成 HTML（体积超上限时显式省略并
+    指向附件）；`report_path` 指定的 `.md` 文件始终是唯一权威版本。
 
     fund_snapshots 形如 `{fund_code: {"name", "nav", "nav_date", "change_pct"}}`；
     fund_metrics 形如 `{fund_code: {"index_name", "date", "pe_ttm", "pb", "roe",
@@ -377,7 +502,18 @@ def build_daily_report_email(
         "与全部数据）见 .md 附件；评级与置信度由多 Agent 辩论生成，不构成投资建议。",
     ]
 
-    return subject, "\n".join(parts), attachments
+    text_body = "\n".join(parts)
+    html_body = _build_html_body(
+        analysis_date=analysis_date,
+        results=results,
+        fund_metrics=metrics,
+        fund_snapshots=snapshots,
+        mode=mode,
+        generated_at=generated_at,
+        success=success,
+        total_seconds=total_seconds,
+    )
+    return subject, text_body, html_body, attachments
 
 
 def _build_message(
@@ -385,8 +521,13 @@ def _build_message(
     body: str,
     config: EmailConfig,
     attachments: Iterable[str | Path],
+    html_body: str | None = None,
 ) -> tuple[EmailMessage, int]:
-    """构造 EmailMessage，返回 (消息, 实际附上的附件数)。"""
+    """构造 EmailMessage，返回 (消息, 实际附上的附件数)。
+
+    `html_body` 非空时用 multipart/alternative 带上 HTML 版本（纯文本必须在前，客户端挑它能
+    渲染的那一个）。附件最后追加，EmailMessage 会自动把结构升级成 multipart/mixed。
+    """
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = config.sender
@@ -396,6 +537,8 @@ def _build_message(
     if len(text) > MAX_BODY_CHARS:
         text = text[:MAX_BODY_CHARS] + f"\n\n…（正文超过 {MAX_BODY_CHARS} 字符已截断；完整内容见 .md 附件）"
     message.set_content(text)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
 
     attached = 0
     for item in attachments:
@@ -416,12 +559,14 @@ def send_email(
     *,
     config: EmailConfig,
     attachments: Iterable[str | Path] = (),
+    html_body: str | None = None,
 ) -> int:
     """发送邮件，返回实际附上的附件数；失败抛 :class:`EmailSendError`。
 
+    `body` 是纯文本版本，`html_body` 是可选的 HTML 版本，两者一起构成 multipart/alternative。
     `use_ssl=True` 走 SMTPS（默认 465），否则走 STARTTLS（默认 587）。
     """
-    message, attached = _build_message(subject, body, config, attachments)
+    message, attached = _build_message(subject, body, config, attachments, html_body)
     port = config.resolved_port
 
     try:

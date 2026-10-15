@@ -3,8 +3,8 @@
 对指定基金列表逐一执行 deep 模式深度分析，保存 Markdown 报告，
 并在控制台打印评级汇总表格。非交易日自动跳过。
 
---email 发出的正文是**盘后摘要**（基金名称/净值(日期)/日涨跌/评级 + 指数估值），
-完整报告作为 .md 附件送达 —— 邮件客户端不渲染 Markdown，正文塞全文只会看到表格线。
+--email 发出的正文是**盘后摘要**（基金名称/净值(日期)/日涨跌/评级 + 指数估值）：
+HTML 版由 ifa.notify.markdown 现场渲染（客户端不渲染 Markdown），纯文本版是可读摘要；完整报告作为 .md 附件送达。
 
 用法:
     python scripts/daily_analysis.py                 # 分析今天（仅交易日）
@@ -12,7 +12,7 @@
     python scripts/daily_analysis.py --date 2025-04-25  # 指定日期
     python scripts/daily_analysis.py --codes 161725,110020  # 指定基金
     python scripts/daily_analysis.py --mode deep_simple     # 无辩论（快得多）
-    python scripts/daily_analysis.py --email         # 跑完把摘要发到邮箱（.md 报告作附件）
+    python scripts/daily_analysis.py --email         # 跑完把摘要（HTML + 纯文本）发到邮箱（.md 报告作附件）
 
 退出码（供 cron / systemd 判断是否告警）:
     0  正常（含「非交易日跳过」—— 休市不是故障，不该触发告警）
@@ -434,18 +434,19 @@ def send_report_email(
             "详见 README「每日邮件报告」）。"
         )
 
-    subject, body, attachments = build_daily_report_email(
+    subject, body, html_body, attachments = build_daily_report_email(
         analysis_date=analysis_date,
         results=results,
         fund_metrics=fund_metrics,
         fund_snapshots=fund_snapshots,
         mode=mode,
     )
-    attached = send_email(subject, body, config=config, attachments=attachments)
+    attached = send_email(subject, body, config=config, attachments=attachments, html_body=html_body)
     logger.info(
-        "邮件已发送至 %s（正文 %d 字符，附件 %d 个）",
+        "邮件已发送至 %s（纯文本 %d 字符 / HTML %d 字符，附件 %d 个）",
         ", ".join(config.recipients),
         len(body),
+        len(html_body),
         attached,
     )
 
@@ -482,7 +483,7 @@ def main() -> int:
     parser.add_argument(
         "--email",
         action="store_true",
-        help="分析完成后发送邮件（正文为摘要，.md 报告作附件）",
+        help="分析完成后发送邮件（正文为摘要 + HTML 渲染的报告全文，.md 报告作附件）",
     )
     args = parser.parse_args()
 

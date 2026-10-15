@@ -294,7 +294,7 @@ def test_send_report_email_wires_body_and_attachment(monkeypatch, script, tmp_pa
 
     monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
 
-    script.send_report_email(results, "2026-10-13", "deep", {})
+    script.send_report_email(results, "2026-10-13", "deep", {}, {})
 
     assert len(FakeSMTP.sent) == 1
     message = FakeSMTP.sent[0]
@@ -305,5 +305,12 @@ def test_send_report_email_wires_body_and_attachment(monkeypatch, script, tmp_pa
     assert body_part is not None
     sent_body = body_part.get_content()
     assert "【智识诚实声明】" in sent_body
-    # 正文是摘要，报告全文只作附件
+    # 纯文本正文是摘要：报告原文（Markdown）不进正文
     assert "# 报告" not in sent_body
+
+    html_part = message.get_body(preferencelist=("html",))
+    assert html_part is not None
+    sent_html = html_part.get_content()
+    # HTML 正文把报告渲染成标签（声明来自报告正文本身）
+    assert "<h1>报告</h1>" in sent_html
+    assert "【智识诚实声明】" in sent_html

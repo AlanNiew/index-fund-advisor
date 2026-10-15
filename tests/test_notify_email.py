@@ -172,7 +172,7 @@ class TestBuildDailyReportEmail:
                 "error": "",
             }
         ]
-        subject, body, attachments = build_daily_report_email(
+        subject, body, html_body, attachments = build_daily_report_email(
             analysis_date="2026-10-13",
             results=results,
             fund_metrics={
@@ -211,27 +211,87 @@ class TestBuildDailyReportEmail:
         assert "本邮件由 IFA 自动生成" in body
         assert attachments == [report_file]
 
-    def test_report_text_is_not_inlined_into_body(self, tmp_path):
-        """正文是摘要：报告全文只走附件，Markdown 不再塞进邮件正文。"""
-        long_report = "# 报告\n\n正文很长" * 200
+    def test_plain_text_body_stays_summary_while_html_renders_the_report(self, tmp_path):
+        """纯文本正文只放摘要（原始 Markdown 不进正文）；HTML 正文把报告渲染成标签。"""
+        report_text = "# 报告\n\n正文很长"
         report_file = tmp_path / "510300_2026-10-13_deep_abcd1234.md"
-        report_file.write_text(long_report, encoding="utf-8")
+        report_file.write_text(report_text, encoding="utf-8")
         results = [
             {
                 "fund_code": "510300",
                 "rating": "BUY",
                 "confidence": "High",
                 "report_path": str(report_file),
-                "report": long_report,
+                "report": report_text,
                 "elapsed": 1.0,
                 "error": "",
             }
         ]
-        _subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        _subject, body, html_body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
         assert "# 报告" not in body
         assert "正文很长" not in body
         assert len(body) < 1000
+        assert "<h1>报告</h1>" in html_body
+        assert "正文很长" in html_body
         assert attachments == [report_file]
+
+    def test_html_body_renders_tables_and_escapes_report_text(self):
+        """HTML 正文是真表格；报告里的 HTML 必须转义 —— 邮件客户端按 HTML 解析，不能让数据当标签跑。"""
+        results = [
+            {
+                "fund_code": "510300",
+                "rating": "BUY",
+                "confidence": "High",
+                "report_path": None,
+                "report": "<script>alert(1)</script>",
+                "elapsed": 2.0,
+                "error": "",
+            }
+        ]
+        _subject, _body, html_body, _attachments = build_daily_report_email(
+            analysis_date="2026-10-13",
+            results=results,
+            fund_metrics={
+                "510300": {
+                    "index_name": "沪深300",
+                    "pe_ttm": 12.3,
+                    "pb": 1.42,
+                    "roe": 11.37,
+                    "dividend_yield": 2.5,
+                    "erp": -1.2,
+                }
+            },
+            fund_snapshots={
+                "510300": {
+                    "name": "沪深300ETF华泰",
+                    "nav": 4.3479,
+                    "nav_date": "2026-10-13",
+                    "change_pct": -0.42,
+                }
+            },
+        )
+        assert "<table" in html_body
+        assert "沪深300ETF华泰" in html_body
+        assert "PE(TTM)" in html_body
+        assert "<script>" not in html_body
+        assert "&lt;script&gt;" in html_body
+
+    def test_oversized_report_is_omitted_from_html_with_notice(self):
+        """正文上限是硬约束：超长时显式写明「已省略」，不能让收件人以为报告只有摘要。"""
+        huge_report = "# 报告\n\n" + ("正文很长" * 30) * 1200
+        results = [
+            {
+                "fund_code": "510300",
+                "rating": "BUY",
+                "confidence": "High",
+                "elapsed": 1.0,
+                "error": "",
+                "report": huge_report,
+            }
+        ]
+        _subject, _body, html_body, _attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        assert "已省略" in html_body
+        assert "正文很长" not in html_body
 
     def test_metrics_columns_absent_without_valuations(self):
         results = [
@@ -245,7 +305,7 @@ class TestBuildDailyReportEmail:
                 "error": "",
             }
         ]
-        _subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        _subject, body, html_body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
         assert "PE(TTM)" not in body
         assert "== 指数估值 ==" not in body
         # 没有快照时核心参数表仍然在，只是名称/净值/日涨跌显示 '-'
@@ -256,7 +316,7 @@ class TestBuildDailyReportEmail:
     def test_index_row_skipped_when_index_unknown(self):
         """认不出跟踪指数的基金不进估值表 —— 不猜指数，免得张冠李戴。"""
         results = [{"fund_code": "000001", "rating": "HOLD", "confidence": "Low", "elapsed": 1.0, "error": ""}]
-        _subject, body, _attachments = build_daily_report_email(
+        _subject, body, _html_body, _attachments = build_daily_report_email(
             analysis_date="2026-10-13",
             results=results,
             fund_metrics={"000001": {"index_name": None, "pe_ttm": 9.9}},
@@ -276,7 +336,7 @@ class TestBuildDailyReportEmail:
                 "error": "数据源超时",
             }
         ]
-        subject, body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
+        subject, body, html_body, attachments = build_daily_report_email(analysis_date="2026-10-13", results=results)
         assert "成功 0" in subject
         assert "== 失败明细 ==" in body
         assert "159919: 数据源超时" in body
@@ -286,7 +346,7 @@ class TestBuildDailyReportEmail:
         """CJK 全角算 2 列，否则等宽字体下表格会错位。"""
         results = [{"fund_code": "510300", "rating": "BUY", "confidence": "High", "elapsed": 1.0, "error": ""}]
         snapshots = {"510300": {"name": "沪深300ETF华泰", "nav": 4.3479, "nav_date": "2026-10-13", "change_pct": 0.42}}
-        _subject, body, _attachments = build_daily_report_email(
+        _subject, body, _html_body, _attachments = build_daily_report_email(
             analysis_date="2026-10-13", results=results, fund_snapshots=snapshots
         )
         table_lines = [line for line in body.splitlines() if "510300" in line or line.startswith("基金代码")]
@@ -296,6 +356,12 @@ class TestBuildDailyReportEmail:
 
 def _sent_body(message) -> str:
     body_part = message.get_body(preferencelist=("plain",))
+    assert body_part is not None
+    return body_part.get_content()
+
+
+def _sent_html(message) -> str:
+    body_part = message.get_body(preferencelist=("html",))
     assert body_part is not None
     return body_part.get_content()
 
@@ -356,6 +422,18 @@ class TestSendEmail:
 
         assert attached == 0
         assert FakeSMTP.instances[0].sent
+
+    def test_html_body_rides_along_as_alternative(self, monkeypatch):
+        monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+        config = EmailConfig.from_config(_full_config())
+        assert config is not None
+
+        send_email("主题", "纯文本摘要", config=config, html_body="<p>HTML 版</p>")
+
+        message = FakeSMTP.instances[0].sent[0]
+        assert message.get_content_type() == "multipart/alternative"
+        assert "纯文本摘要" in _sent_body(message)
+        assert "<p>HTML 版</p>" in _sent_html(message)
 
     def test_long_body_is_truncated_with_notice(self, monkeypatch):
         monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)

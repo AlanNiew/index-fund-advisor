@@ -23,7 +23,7 @@ ifa backtest 510300                      # 买入-持有回测（不经过 LLM�
 ifa tools                                # 列出全部数据工具与参数（36 个，由注册表生成）
 ifa tool get_index_valuation -p index_name=沪深300   # 直接调用一个数据工具
 ifa skill                                # 把内置 skill 安装到用户级目录（任意项目可用）
-python scripts/daily_analysis.py --email  # 批量分析 + 邮件报告（cron 定时用；--mode deep_simple 跳过辩论）
+python scripts/daily_analysis.py --email  # 批量分析 + 邮件报告（HTML 摘要正文 + .md 附件；cron 定时用；--mode deep_simple 跳过辩论）
 
 # Web 界面
 ifa-web    # 启动 Streamlit（内部通过 subprocess 调用 streamlit run web/app.py）
@@ -35,7 +35,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（702 个，覆盖 33 个模块）
+pytest                # 全部测试（717 个，覆盖 34 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -95,7 +95,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - 提供方清单是单一事实来源：`src/ifa/providers.py` 的 `PROVIDER_CONFIG`（base_url / api_key_env / 展示名）与 `OPENAI_COMPATIBLE_PROVIDERS`。该模块**零依赖**且位于包顶层，`default_config` 只能从它取提供方信息 —— 若放进 `llm_clients/` 会让 `ifa config` / `search` / `info` 连带拉起 langchain 全栈
   - `custom` 提供方 = 任意 OpenAI 兼容端点（自建网关/内网 one-api）：必须显式提供 `backend_url`（否则构造 LLM 时抛 `ValueError`），模型名不做目录校验，Key 取 `IFA_CUSTOM_API_KEY` 或配置项 `custom_api_key`
   - `opencode` 走 **OpenCode Go** 聚合端点（`https://opencode.ai/inference/go/v1`，订阅制）。该服务要求客户端自报身份并携带稳定会话 ID，故 opencode 提供方会额外注入 `default_headers`：自定义 `User-Agent` + 进程级 `x-opencode-session`（可用 `OPENCODE_SESSION_ID` 环境变量覆盖；一次 `ifa` 运行 = 一个会话）。缺失时服务端按通用 SDK 客户端处理且无法复用提示缓存。思考模式下该网关还要求把历史 assistant 消息的 `reasoning_content` 原样回传（langchain_openai 双向丢弃该字段，故 `NormalizedChatOpenAI` 只对 opencode 打开 `_preserve_reasoning_content`）。
-- **通知层** (`src/ifa/notify/`) — SMTP 邮件通知（`email.py`，**只用标准库** `smtplib` + `email`）：配置缺项抛 `EmailConfigError` 并列出缺项，绝不静默跳过发信；正文是 `text/plain` **摘要**（核心参数表 + 指数估值表，**报告全文不进正文**，因为邮件客户端不渲染 Markdown），完整报告作为 `.md` 附件；当前唯一调用方是 `scripts/daily_analysis.py --email`
+- **通知层** (`src/ifa/notify/`) — SMTP 邮件通知（`email.py`，**只用标准库** `smtplib` + `email`）：配置缺项抛 `EmailConfigError` 并列出缺项，绝不静默跳过发信；正文是 `multipart/alternative` 双版本 —— `text/html` 版（摘要渲染成真表格 + 报告 Markdown 由 `markdown.py` 现场渲染成 HTML；超 12 万字符时显式省略全文并指向附件）+ `text/plain` 版（等宽对齐摘要，兜底不认 HTML 的客户端），完整报告作为 `.md` 附件。`markdown.py` 是自写的极简渲染器（标题/表格/列表/粗体/分隔线，**先转义再套标记**、链接只放行 http/https/mailto、未知构造降级为段落），不引第三方 `markdown` 依赖；当前唯一调用方是 `scripts/daily_analysis.py --email`
 - **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块；`tools_cmd.py` 提供 `tools` / `tool` / `skill` 三个不经过 LLM 的命令）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
 - **内置 skill** (`src/ifa/skills/fund.md`) — 随包分发（`pyproject.toml` 的 `[tool.setuptools.package-data]`），`ifa skill` 装到 `~/.claude/skills/`。文件里的工具表由 `ifa tools --markdown` 在 BEGIN/END 标记之间生成，**不要手写**；`tests/test_skill_doc.py` 校验它覆盖全部工具且不含 `cd` / `python -c`
 - **环境加载** (`src/ifa/env_loader.py`) — `user_config_dir()`（`IFA_CONFIG_DIR` → `%APPDATA%\ifa` → `~/.config/ifa`）与 `load_env_files()`（工作目录向上 6 层 + 用户级 `.env`，`override=False`）。四个入口都用它取代裸 `load_dotenv()`：否则全局安装后从任意目录启动会读不到 Key，报错却是 "Missing credentials"
@@ -192,5 +192,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：702 个测试覆盖 33 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py` 等）
+- 测试：717 个测试覆盖 34 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

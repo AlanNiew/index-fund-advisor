@@ -300,13 +300,16 @@ def analyze_single_fund(advisor, fund_code: str, analysis_date: str, mode: str =
     report = final_state.get("final_report", "")
     report_path = save_report(final_state) if report else None
 
-    # 提取评级和置信度
-    rating = "N/A"
-    confidence = "N/A"
-    if report:
+    # 提取评级和置信度：优先用 AdvisorGraph 写入的结构化结果（管理层裁决里
+    # 机器可读的 Rating:/Confidence: 行确定性解析而来），只有缺失时才回落 LLM 抽取。
+    rating = str(final_state.get("final_rating") or "N/A")
+    confidence = str(final_state.get("final_confidence") or "N/A")
+    if report and (rating == "N/A" or confidence == "N/A"):
         try:
-            rating = advisor.process_signal(report)
-            confidence = advisor.process_confidence(report)
+            if rating == "N/A":
+                rating = advisor.process_signal(report)
+            if confidence == "N/A":
+                confidence = advisor.process_confidence(report)
         except Exception as e:
             logger.warning("评级提取失败 (%s): %s", fund_code, e)
 

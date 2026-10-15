@@ -12,7 +12,7 @@ from ifa.agents.utils import (
 # LLM 自由发挥的免责声明不可靠——这里硬注入，保证不丢。
 _DISCLAIMER = (
     "【智识诚实声明】\n"
-    "本报告的评级（BUY/HOLD/SELL）与置信度由统计模型（多 Agent 辩论）生成，"
+    "本报告的评级（STRONG_BUY/BUY/HOLD/UNDERWEIGHT/SELL）与置信度由统计模型（多 Agent 辩论）生成，"
     "不构成任何投资建议；其历史预测准确率未经任何独立验证，"
     "不应作为买卖决策的依据。报告中的客观数据（估值百分位、PE/PB、费率、"
     "规模、持仓）来自公开数据源，可独立核查；模型的判断部分仅供参考与学习。\n"
@@ -60,9 +60,14 @@ Generate a comprehensive final report in Markdown format with the following stru
 - Constituent stock analysis (if applicable, for ETF/index funds)
 
 ## 投资建议
-- Final recommendation: BUY / HOLD / REDEEM
-- Confidence level
+- Final recommendation: one of STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL.
+  It MUST be identical to the rating stated in the Research/Portfolio debate judgment above.
+  Never use any other word (such as REDEEM) and never fall back to HOLD by default.
+- Confidence level: one of High / Medium / Low.
 - Key reasons
+- End this section with exactly these two lines, each on its own line, nothing else on that line:
+  Rating: <the same rating as above>
+  Confidence: <the same confidence as above>
 
 ## 风险提示
 - Important risk factors to consider

@@ -166,3 +166,30 @@ class TestMemoryPersistenceWiring:
             adv.portfolio_manager_memory,
         ):
             assert mem._path == tmp_path / f"{mem.name}.json"
+
+class TestResolveDecisionSignals:
+    """AdvisorGraph.resolve_decision_signals：管理层裁决优先，其次最终报告（确定性，零 LLM）。"""
+
+    def test_prefers_risk_debate_decision(self, advisor):
+        state = {
+            "risk_debate_state": {"judge_decision": "RATING: SELL\nCONFIDENCE: Low"},
+            "fund_debate_state": {"judge_decision": "RATING: BUY\nCONFIDENCE: High"},
+            "final_report": "Rating: HOLD\nConfidence: Medium",
+        }
+        assert advisor.resolve_decision_signals(state) == ("SELL", "Low")
+
+    def test_falls_back_to_fund_debate_decision(self, advisor):
+        state = {"fund_debate_state": {"judge_decision": "RATING: BUY\nCONFIDENCE: High"}}
+        assert advisor.resolve_decision_signals(state) == ("BUY", "High")
+
+    def test_falls_back_to_final_report(self, advisor):
+        state = {"final_report": "# 报告\n\nRating: HOLD\nConfidence: Medium"}
+        assert advisor.resolve_decision_signals(state) == ("HOLD", "Medium")
+
+    def test_returns_none_when_nothing_parseable(self, advisor):
+        assert advisor.resolve_decision_signals({"final_report": "无结构化结论"}) == (None, None)
+        assert advisor.resolve_decision_signals({}) == (None, None)
+
+    def test_ignores_non_dict_debate_state(self, advisor):
+        state = {"fund_debate_state": "not-a-dict", "final_report": "Rating: BUY"}
+        assert advisor.resolve_decision_signals(state) == ("BUY", None)

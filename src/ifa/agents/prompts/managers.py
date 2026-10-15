@@ -22,6 +22,10 @@ RESEARCH_MANAGER_PROMPT = (
     "\n\n"
     "Here is the debate history:\n"
     "{history}\n\n"
+    "**Machine-readable decision (required):** end your response with exactly these two lines, "
+    "each on its own line with nothing else on that line:\n"
+    "RATING: <one of STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL>\n"
+    "CONFIDENCE: <High / Medium / Low>\n\n"
     "{language_instruction}"
 )
 
@@ -50,6 +54,10 @@ PORTFOLIO_MANAGER_PROMPT = (
     "---\n\n"
     "**Risk Analysts Debate History:**\n"
     "{history}\n\n"
-    "Be decisive and ground every conclusion in specific evidence from the analysts."
+    "Be decisive and ground every conclusion in specific evidence from the analysts.\n\n"
+    "**Machine-readable decision (required):** end your response with exactly these two lines, "
+    "each on its own line with nothing else on that line:\n"
+    "RATING: <one of STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL>\n"
+    "CONFIDENCE: <High / Medium / Low>\n"
     "{language_instruction}"
 )

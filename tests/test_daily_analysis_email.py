@@ -368,3 +368,47 @@ def test_send_report_email_wires_body_and_attachment(monkeypatch, script, tmp_pa
     # HTML 正文把报告渲染成标签（声明来自报告正文本身）
     assert "<h1>报告</h1>" in sent_html
     assert "【智识诚实声明】" in sent_html
+
+
+def test_analyze_single_fund_prefers_structured_rating_from_state(monkeypatch, script):
+    """state 里已有结构化评级时不再调用 LLM 抽取（process_signal 零调用）。"""
+    monkeypatch.setattr("ifa.common.build_state", lambda **kw: {"fund_codes": kw["fund_codes"]})
+    monkeypatch.setattr("ifa.common.save_report", lambda state: None)
+    calls: list[str] = []
+
+    class StubAdvisor:
+        def run(self, mode, state):
+            return {"final_report": "正文", "final_rating": "UNDERWEIGHT", "final_confidence": "Low"}
+
+        def process_signal(self, report):
+            calls.append("signal")
+            return "HOLD"
+
+        def process_confidence(self, report):
+            calls.append("confidence")
+            return "Medium"
+
+    result = script.analyze_single_fund(StubAdvisor(), "510300", "2026-10-13")
+
+    assert (result["rating"], result["confidence"]) == ("UNDERWEIGHT", "Low")
+    assert calls == []
+
+
+def test_analyze_single_fund_falls_back_to_llm_when_state_empty(monkeypatch, script):
+    """state 没有结构化评级时才回落 LLM 抽取（旧行为保持不变）。"""
+    monkeypatch.setattr("ifa.common.build_state", lambda **kw: {"fund_codes": kw["fund_codes"]})
+    monkeypatch.setattr("ifa.common.save_report", lambda state: None)
+
+    class StubAdvisor:
+        def run(self, mode, state):
+            return {"final_report": "正文"}
+
+        def process_signal(self, report):
+            return "BUY"
+
+        def process_confidence(self, report):
+            return "High"
+
+    result = script.analyze_single_fund(StubAdvisor(), "510300", "2026-10-13")
+
+    assert (result["rating"], result["confidence"]) == ("BUY", "High")

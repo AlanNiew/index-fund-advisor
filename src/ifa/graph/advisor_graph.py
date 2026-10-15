@@ -75,7 +75,7 @@ from ifa.default_config import DEFAULT_MAX_DEBATE_ROUNDS, DEFAULT_MAX_RISK_DISCU
 from .conditional_logic import ConditionalLogic
 from .propagation import Propagator
 from .reflection import Reflector
-from .signal_processing import SignalProcessor
+from .signal_processing import SignalProcessor, parse_decision_signals
 
 # ── 节点名称 → 用户友好的中文进度描述 ──
 _NODE_DESCRIPTIONS: dict[str, str] = {
@@ -584,10 +584,23 @@ class AdvisorGraph:
         # 用 try/except 隔离：提取失败不影响主流程（评级留空，消费者自行兜底）。
         if not final_state.get("error") and final_state.get("final_report"):
             try:
-                if not final_state.get("final_rating"):
-                    final_state["final_rating"] = self.process_signal(final_state["final_report"])
-                if not final_state.get("final_confidence"):
-                    final_state["final_confidence"] = self.process_confidence(final_state["final_report"])
+                needs_rating = not final_state.get("final_rating")
+                needs_confidence = not final_state.get("final_confidence")
+                if needs_rating or needs_confidence:
+                    # 第一优先级：管理层裁决/最终报告里机器可读的 Rating:/Confidence: 行（零 LLM 调用）
+                    parsed_rating, parsed_confidence = self.resolve_decision_signals(final_state)
+                    if parsed_rating or parsed_confidence:
+                        logger.debug(
+                            "评级/置信度取自决策文本的机器可读行（未调用 LLM）: %s / %s",
+                            parsed_rating,
+                            parsed_confidence,
+                        )
+                    if needs_rating:
+                        final_state["final_rating"] = parsed_rating or self.process_signal(final_state["final_report"])
+                    if needs_confidence:
+                        final_state["final_confidence"] = parsed_confidence or self.process_confidence(
+                            final_state["final_report"]
+                        )
             except Exception as e:
                 logger.warning("评级提取失败，final_rating/final_confidence 留空: %s", e)
 
@@ -658,6 +671,36 @@ class AdvisorGraph:
         from ifa.common import _atomic_write_json
 
         _atomic_write_json(log_path, log_entry)
+
+    def resolve_decision_signals(self, state: dict) -> tuple[str | None, str | None]:
+        """确定性解析评级/置信度：管理层裁决优先，其次最终报告；都不命中返回 (None, None)。
+
+        管理层（Research/Portfolio Manager）与报告生成器都被要求输出机器可读的
+        `Rating: X` / `Confidence: Y` 行，因此正常情况下这里不需要再花一次 LLM 调用。
+        portfolio 模式下 risk_debate_state 的裁决才是最终决策，故排在 fund_debate_state 之前。
+        """
+        candidates: list[str] = []
+        for key in ("risk_debate_state", "fund_debate_state"):
+            debate = state.get(key)
+            if isinstance(debate, dict):
+                decision = debate.get("judge_decision")
+                if decision:
+                    candidates.append(str(decision))
+        report = state.get("final_report")
+        if report:
+            candidates.append(str(report))
+
+        rating: str | None = None
+        confidence: str | None = None
+        for text in candidates:
+            parsed_rating, parsed_confidence = parse_decision_signals(text)
+            if rating is None and parsed_rating:
+                rating = parsed_rating
+            if confidence is None and parsed_confidence:
+                confidence = parsed_confidence
+            if rating and confidence:
+                break
+        return rating, confidence
 
     def process_signal(self, full_signal: str) -> str:
         """从最终决策中提取标准化评级。"""

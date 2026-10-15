@@ -103,3 +103,63 @@ class TestSignalProcessor:
         processor = SignalProcessor(mock_llm)
         result = processor.process_confidence("Uncertain analysis")
         assert result == "Low"
+
+class TestParseDecisionSignals:
+    """确定性解析管理层裁决/报告里的机器可读 Rating:/Confidence: 行（零 LLM 调用）。"""
+
+    def test_parses_plain_machine_lines(self):
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        assert parse_decision_signals("RATING: BUY\nCONFIDENCE: High") == ("BUY", "High")
+
+    def test_parses_markdown_bold_labels(self):
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        text = "**Rating**: STRONG_BUY\n**Confidence**: Low"
+        assert parse_decision_signals(text) == ("STRONG_BUY", "Low")
+
+    def test_last_occurrence_wins_over_menu_echo(self):
+        """prompt 里的词表菜单会被回显；结论行在末尾，应取末尾那一行。"""
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        text = (
+            "1. **Rating**: State one of STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL.\n"
+            "2. **Confidence**: High / Medium / Low.\n"
+            "RATING: SELL\nCONFIDENCE: Medium"
+        )
+        assert parse_decision_signals(text) == ("SELL", "Medium")
+
+    def test_menu_with_multiple_ratings_is_not_guessed(self):
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        assert parse_decision_signals("Rating: BUY / HOLD / SELL") == (None, None)
+
+    def test_unknown_word_is_not_guessed(self):
+        """REDEEM 不在 5 级词表里 —— 不能靠猜，交给上层回落 LLM 抽取。"""
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        assert parse_decision_signals("Rating: REDEEM") == (None, None)
+        assert parse_decision_signals("Rating: REDEEM\nConfidence: Medium") == (None, "Medium")
+
+    def test_chinese_labels_and_values(self):
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        assert parse_decision_signals("评级：买入\n置信度：较高") == ("BUY", "High")
+
+    def test_negated_chinese_sentence_is_not_guessed(self):
+        """「不建议买入」不是评级结论，整值匹配不上就不猜。"""
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        assert parse_decision_signals("评级：不建议买入") == (None, None)
+
+    def test_inline_trailing_comment_is_tolerated(self):
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        text = "- **Rating**: BUY — 估值处于低位\n- **Confidence**: Medium（中等）"
+        assert parse_decision_signals(text) == ("BUY", "Medium")
+
+    def test_empty_or_non_string_input(self):
+        from ifa.graph.signal_processing import parse_decision_signals
+
+        assert parse_decision_signals("") == (None, None)
+        assert parse_decision_signals(None) == (None, None)  # type: ignore[arg-type]

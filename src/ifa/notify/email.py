@@ -627,7 +627,9 @@ def send_email(
     except (smtplib.SMTPException, OSError) as exc:
         raise EmailSendError(f"发送邮件到 {config.host}:{port} 失败（{type(exc).__name__}: {exc}）") from exc
 
-    logger.info("邮件已发送至 %s（附件 %d 个）", ", ".join(config.recipients), attached)
+    # 调用方负责面向用户的「已发送」日志（scripts/daily_analysis.py 会带上正文/附件尺寸），
+    # 这里只留 DEBUG，避免同一封信打两行。
+    logger.debug("send_email: 投递完成（收件人 %s，附件 %d 个）", ", ".join(config.recipients), attached)
     return attached
 
 

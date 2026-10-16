@@ -1,8 +1,11 @@
 # ifa/backtest/engine.py
-"""简易回测引擎 —— 基于买入-持有策略的历史收益回测。
+"""简易回测引擎 —— 买入-持有（一次性投资）策略的历史收益回测。
 
-支持 ETF/指数基金的定投和一次性投资回测，
-计算年化收益、最大回撤、Sharpe 等关键指标。
+计算年化收益、最大回撤、Sharpe 等关键指标，并把「价格口径」与「投资者口径」
+（扣掉申购费/赎回费/佣金后真正拿到手的收益）同时给出。
+
+**不支持定投** —— 原 docstring 声称「支持定投和一次性投资」，但实现里只有一次性买入，
+这是句假话，已删除。定投需要现金流加权（money-weighted）收益率，不是这套指标能表达的。
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ifa.backtest.fees import FeeAssumptions, resolve_fees
 from ifa.dataflows.data_cleaning import clean_dataframe
 
 logger = logging.getLogger(__name__)
@@ -34,6 +38,20 @@ class BacktestResult:
     sharpe_ratio: float
     volatility_pct: float
     trading_days: int
+    # —— 口径（P1 回测口径修正新增）——
+    #: 价格序列是什么口径（累计净值 / 前复权价 / 指数价格），见 _price_basis_label
+    price_basis: str = ""
+    #: Sharpe 用的无风险利率（年化 %）及其来源
+    risk_free_rate_pct: float = 2.0
+    risk_free_source: str = "默认值 2%"
+    #: 投资者口径：扣掉申购费/赎回费/佣金后真正拿到手的期末价值与收益
+    net_final_value: float = 0.0
+    net_total_return_pct: float = 0.0
+    net_annualized_return_pct: float = 0.0
+    #: 费用拖累（价格口径收益 − 投资者口径收益，百分点）
+    fee_impact_pct: float = 0.0
+    #: 本次用到的费用假设（含 describe 一行说明与 notes 列表）
+    fee_assumptions: dict[str, Any] = field(default_factory=dict)
     monthly_returns: list[dict[str, Any]] = field(default_factory=list)
     equity_curve: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
@@ -101,34 +119,63 @@ def _fetch_etf_index_data(
 
 
 def _fetch_fund_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame | None:
-    """获取公募基金/场外基金净值数据。"""
-    from ifa.dataflows.a_share_public_fund import get_fund_history_nav
+    """获取公募基金/场外基金净值数据（优先**累计净值**，完整历史）。
 
-    raw = get_fund_history_nav(symbol)
-    df = _parse_raw_to_dataframe(raw)
-    if df is None:
-        return None
+    两个必须避开的坑：
 
-    date_col = _find_column(df, "净值日期", "date", "日期")
-    close_col = _find_column(df, "单位净值", "nav", "close")
-    if date_col is None or close_col is None:
-        return None
+    1. **单位净值 ≠ 收益**。分红除权日单位净值会向下跳空，直接拿单位净值算收益会把
+       分红记成亏损。累计净值把分红再投计入，才是投资者真实收益口径。
+    2. get_fund_history_nav 这个 Agent 工具取的是 tail(120) —— 只有半年，
+       回测三年会静默截断成半年。所以这里改用 fetch_fund_nav_series（完整历史）。
 
-    df = df[[date_col, close_col]].copy()
-    df.columns = ["date", "close"]
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["close"] = pd.to_numeric(df["close"], errors="coerce")
-    df = df.dropna(subset=["date", "close"])
+    累计净值取不到时退回单位净值，并把口径写进 df.attrs["price_basis"]，报告里可见。
+    """
+    from ifa.dataflows.a_share_public_fund import fetch_fund_nav_series
 
     start = pd.to_datetime(start_date)
     end = pd.to_datetime(end_date)
-    df = df[(df["date"] >= start) & (df["date"] <= end)]
-    df = df.sort_values("date").reset_index(drop=True)
-    return df
+    attempts = (
+        ("累计净值走势", "累计净值", "基金累计净值（分红再投已计入）"),
+        ("单位净值走势", "单位净值", "基金单位净值（**未计分红**，收益被低估）"),
+    )
+    for indicator, column, basis in attempts:
+        raw_df = fetch_fund_nav_series(symbol, indicator)
+        if raw_df is None or raw_df.empty:
+            continue
+        date_col = _find_column(raw_df, "净值日期", "date", "日期")
+        close_col = _find_column(raw_df, column, "nav", "close")
+        if date_col is None or close_col is None:
+            continue
+        picked = raw_df[[date_col, close_col]].copy()
+        picked.columns = ["date", "close"]
+        picked["date"] = pd.to_datetime(picked["date"], errors="coerce")
+        picked["close"] = pd.to_numeric(picked["close"], errors="coerce")
+        picked = picked.dropna(subset=["date", "close"])
+        picked = picked[(picked["date"] >= start) & (picked["date"] <= end)]
+        picked = picked.sort_values("date").reset_index(drop=True)
+        if len(picked) >= 2:
+            picked.attrs["price_basis"] = basis
+            return picked
+    return None
+
+
+def _price_basis_label(asset_type_name: str) -> str:
+    """价格序列的口径说明（进报告，避免读者误以为都是「含分红的总收益」）。"""
+    if asset_type_name == "ETF":
+        return "ETF 前复权收盘价（分红已还原）"
+    if asset_type_name in ("PUBLIC_FUND", "OFFSHORE_FUND"):
+        return "基金净值（口径见下）"
+    if asset_type_name == "INDEX":
+        return "指数收盘价（价格指数，**不含分红**）"
+    return "收盘价"
 
 
 def _fetch_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame | None:
-    """获取历史价格数据。"""
+    """获取历史价格数据，并在 df.attrs 上标注资产类型与价格口径。
+
+    用 attrs 而不是返回元组：run_backtest 的既有测试会 monkeypatch 这个函数，
+    保持「三参数 → DataFrame|None」的签名不变最省事。
+    """
     from ifa.dataflows.asset_type import AssetType, detect_asset_type
 
     try:
@@ -137,12 +184,17 @@ def _fetch_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFra
         asset_type = AssetType.ETF
 
     if asset_type in (AssetType.ETF, AssetType.INDEX):
-        return _fetch_etf_index_data(symbol, start_date, end_date, asset_type)
+        df = _fetch_etf_index_data(symbol, start_date, end_date, asset_type)
+    elif asset_type in (AssetType.PUBLIC_FUND, AssetType.OFFSHORE_FUND):
+        df = _fetch_fund_data(symbol, start_date, end_date)
+    else:
+        return None
 
-    if asset_type in (AssetType.PUBLIC_FUND, AssetType.OFFSHORE_FUND):
-        return _fetch_fund_data(symbol, start_date, end_date)
-
-    return None
+    if df is None:
+        return None
+    df.attrs["asset_type"] = asset_type.name
+    df.attrs.setdefault("price_basis", _price_basis_label(asset_type.name))
+    return df
 
 
 def _find_column(df: pd.DataFrame, *candidates: str) -> str | None:
@@ -184,22 +236,98 @@ def _calc_monthly_returns(df: pd.DataFrame) -> list[dict[str, Any]]:
     return [{"month": str(m), "return_pct": round(r, 2)} for m, r in monthly["return_pct"].items()]
 
 
+#: 国债收益率取不到时退回去的无风险利率（年化 %）—— 与旧硬编码值一致，但会标注来源。
+DEFAULT_RISK_FREE_PCT = 2.0
+_RISK_FREE_CACHE: tuple[float, str] | None = None
+
+
+def resolve_risk_free_rate() -> tuple[float, str]:
+    """无风险利率（年化 %）+ 来源说明。
+
+    与估值模块同源：中债 10 年期国债收益率。取不到时退回 2% 并在报告里标注 ——
+    Sharpe 的分子对无风险利率高度敏感，来源必须可见。此前这里硬编码 2%，而同一系统的
+    ERP 用的是真实国债利率，两个口径互相打架。
+    """
+    global _RISK_FREE_CACHE
+    if _RISK_FREE_CACHE is not None:
+        return _RISK_FREE_CACHE
+    value: float | None = None
+    try:
+        from ifa.dataflows.a_share_macro import _get_bond_yield_10y
+
+        value = _get_bond_yield_10y()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("无风险利率取数失败: %s", exc)
+    if value is not None and 0 < value < 15:
+        _RISK_FREE_CACHE = (float(value), "中债10年期国债收益率")
+    else:
+        _RISK_FREE_CACHE = (DEFAULT_RISK_FREE_PCT, "默认值 2%（国债收益率取数失败）")
+    return _RISK_FREE_CACHE
+
+
+def _holding_days(df: pd.DataFrame) -> int:
+    """回测区间实际持有的自然日数（用于挑赎回费率档位）。"""
+    try:
+        return max(0, int((df["date"].iloc[-1] - df["date"].iloc[0]).days))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _safe_resolve_fees(
+    symbol: str,
+    asset_type_name: str,
+    holding_days: int,
+    include_fees: bool,
+    commission_pct: float | None,
+) -> FeeAssumptions:
+    """解析费用假设；任何异常都退化为「不收费 + 明确标注」，不让回测挂掉。"""
+    if not include_fees:
+        return FeeAssumptions(
+            applies=False,
+            holding_days=holding_days,
+            source="disabled",
+            notes=("调用方显式关闭了费用（include_fees=False），收益为价格口径的乐观值",),
+        )
+    try:
+        return resolve_fees(symbol, asset_type_name, holding_days, commission_pct=commission_pct)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("费率解析失败 (%s): %s", symbol, exc)
+        return FeeAssumptions(
+            applies=False,
+            holding_days=holding_days,
+            source="error",
+            notes=(f"费率解析失败（{exc}），本次未计交易成本，收益偏乐观",),
+        )
+
+
 def run_backtest(
     symbol: str,
     start_date: str,
     end_date: str,
     initial_investment: float = 100000.0,
+    *,
+    include_fees: bool = True,
+    commission_pct: float | None = None,
 ) -> BacktestResult:
-    """执行买入-持有策略的回测。
+    """执行**买入-持有**（一次性投资）策略的回测。
 
     参数:
         symbol: 基金/ETF/指数代码
         start_date: 回测起始日期 YYYY-MM-DD
         end_date: 回测结束日期 YYYY-MM-DD
         initial_investment: 初始投资金额
+        include_fees: 是否计入申购费/赎回费/券商佣金（默认计入）
+        commission_pct: 场内 ETF 单边券商佣金（%），None 表示用默认万 3
 
     返回:
         BacktestResult 包含完整的回测指标
+
+    口径说明（这是本函数最容易读错的地方）:
+        * total_return_pct / final_value 是**价格口径**（不含申赎费），与指数基准同口径，
+          适合做超额收益比较；
+        * net_* 字段是**投资者口径**（扣掉申购费/赎回费/佣金后真正拿到手的），
+          报告里两个都给，差额即 fee_impact_pct；
+        * 净值/复权价本身**已扣除**管理费与托管费，绝不能再扣一次（那是重复计费）。
     """
     empty_result = BacktestResult(
         symbol=symbol,
@@ -213,6 +341,7 @@ def run_backtest(
         sharpe_ratio=0,
         volatility_pct=0,
         trading_days=0,
+        net_final_value=initial_investment,
     )
 
     try:
@@ -230,7 +359,11 @@ def run_backtest(
     initial_price = float(prices.iloc[0])
     final_price = float(prices.iloc[-1])
 
-    # 总收益
+    asset_type_name = str(df.attrs.get("asset_type") or "ETF")
+    price_basis = str(df.attrs.get("price_basis") or _price_basis_label(asset_type_name))
+    risk_free_pct, risk_free_source = resolve_risk_free_rate()
+
+    # 总收益（价格口径）
     total_return = (final_price / initial_price - 1) * 100
 
     # 年化收益
@@ -247,19 +380,33 @@ def run_backtest(
     # 最大回撤
     max_dd = _calc_max_drawdown(prices)
 
-    # Sharpe
-    sharpe = _calc_sharpe(daily_returns)
+    # Sharpe —— 无风险利率用真实 10Y 国债（取不到才退回 2%，来源进报告）
+    sharpe = _calc_sharpe(daily_returns, risk_free_pct / 100)
 
     # 月度收益
     monthly = _calc_monthly_returns(df)
 
-    # 净值曲线（采样到最多 120 个点）
+    # —— 交易成本：只有申购费/赎回费/佣金落在净值之外 ——
+    holding_days = _holding_days(df)
+    fees = _safe_resolve_fees(symbol, asset_type_name, holding_days, include_fees, commission_pct)
+    entry_factor = 1 - fees.entry_pct / 100 if fees.applies else 1.0
+    exit_factor = 1 - fees.exit_pct / 100 if fees.applies else 1.0
+    invested = initial_investment * entry_factor
+    gross_final = invested * final_price / initial_price
+    net_final = gross_final * exit_factor
+    net_total_return = (net_final / initial_investment - 1) * 100 if initial_investment else 0.0
+    if years > 0 and initial_investment > 0 and net_final > 0:
+        net_annualized = ((net_final / initial_investment) ** (1 / max(years, 0.01)) - 1) * 100
+    else:
+        net_annualized = 0.0
+
+    # 净值曲线（持仓市值：已计入买入成本，未扣赎回费 —— 卖出费只发生在最后一天）
     step = max(1, len(df) // 120)
     sampled = df.iloc[::step]
     equity = [
         {
             "date": str(row["date"].date()) if hasattr(row["date"], "date") else str(row["date"]),
-            "value": round(initial_investment * row["close"] / initial_price, 2),
+            "value": round(invested * row["close"] / initial_price, 2),
         }
         for _, row in sampled.iterrows()
     ]
@@ -276,9 +423,40 @@ def run_backtest(
         sharpe_ratio=round(sharpe, 2),
         volatility_pct=round(volatility, 2),
         trading_days=days,
+        price_basis=price_basis,
+        risk_free_rate_pct=round(risk_free_pct, 4),
+        risk_free_source=risk_free_source,
+        net_final_value=round(net_final, 2),
+        net_total_return_pct=round(net_total_return, 2),
+        net_annualized_return_pct=round(net_annualized, 2),
+        fee_impact_pct=round(total_return - net_total_return, 2),
+        fee_assumptions=fees.as_dict() | {"describe": fees.describe()},
         monthly_returns=monthly,
         equity_curve=equity,
     )
+
+
+def _format_cost_section(result: BacktestResult) -> list[str]:
+    """「交易成本口径」小节：把价格口径与投资者口径的差额摆到明面上。"""
+    if not result.fee_assumptions:
+        return []
+    describe = str(result.fee_assumptions.get("describe") or "")
+    notes = list(result.fee_assumptions.get("notes") or [])
+    lines = [
+        "### 交易成本口径",
+        "",
+        f"- 价格口径（未计申赎费）总收益：{result.total_return_pct:+.2f}%",
+        f"- 投资者口径（计费后）总收益：**{result.net_total_return_pct:+.2f}%**",
+        f"- 投资者口径期末价值：¥{result.net_final_value:,.2f}",
+        f"- 投资者口径年化收益：{result.net_annualized_return_pct:+.2f}%",
+        f"- 费用拖累：{result.fee_impact_pct:.2f} 个百分点",
+        f"- 费用假设：{describe}",
+    ]
+    for note in notes:
+        lines.append(f"- 说明：{note}")
+    lines.append("- 管理费/托管费**已包含在净值中**，未重复扣除。")
+    lines.append("")
+    return lines
 
 
 def format_backtest_report(result: BacktestResult) -> str:
@@ -300,8 +478,12 @@ def format_backtest_report(result: BacktestResult) -> str:
         f"| 最大回撤 | {result.max_drawdown_pct:.2f}% |",
         f"| Sharpe 比率 | {result.sharpe_ratio:.2f} |",
         f"| 年化波动率 | {result.volatility_pct:.2f}% |",
+        f"| 价格口径 | {result.price_basis or '—'} |",
+        f"| 无风险利率 | {result.risk_free_rate_pct:.2f}%（{result.risk_free_source}） |",
         "",
     ]
+
+    lines.extend(_format_cost_section(result))
 
     if result.monthly_returns:
         lines.append("### 月度收益")

@@ -194,6 +194,11 @@ def backtest(
     start: str = typer.Option(None, "--start", help="回测起始日期 YYYY-MM-DD（默认近 3 年）"),
     end: str = typer.Option(None, "--end", help="回测结束日期 YYYY-MM-DD（默认今天）"),
     amount: float = typer.Option(100000.0, "--amount", "-a", help="初始投入金额"),
+    no_fees: bool = typer.Option(
+        False,
+        "--no-fees",
+        help="不计申购费/赎回费/券商佣金（价格口径，收益偏乐观）",
+    ),
 ):
     """买入-持有回测（不经过 LLM）。"""
     from datetime import date, timedelta
@@ -203,7 +208,7 @@ def backtest(
     end_date = end or date.today().isoformat()
     start_date = start or (date.today() - timedelta(days=365 * 3)).isoformat()
     console.print(f"回测 {fund_code}: {start_date} ~ {end_date}")
-    result = run_backtest(fund_code, start_date, end_date, initial_investment=amount)
+    result = run_backtest(fund_code, start_date, end_date, initial_investment=amount, include_fees=not no_fees)
     console.print(format_backtest_report(result))
     if result.error:
         # 取数失败必须是非零退出码：否则脚本会把「数据源挂了」当成「回测完了」。

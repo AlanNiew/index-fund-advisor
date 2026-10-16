@@ -18,12 +18,21 @@ runner = CliRunner()
 def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     calls: dict[str, Any] = {}
 
-    def fake_run(symbol: str, start_date: str, end_date: str, initial_investment: float = 100000.0) -> Any:
+    def fake_run(
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        initial_investment: float = 100000.0,
+        *,
+        include_fees: bool = True,
+        commission_pct: float | None = None,
+    ) -> Any:
         calls.update(
             symbol=symbol,
             start_date=start_date,
             end_date=end_date,
             initial_investment=initial_investment,
+            include_fees=include_fees,
         )
         return SimpleNamespace(error=None)
 
@@ -61,6 +70,14 @@ class TestBacktestCommand:
         assert captured["start_date"] == "2020-01-01"
         assert captured["end_date"] == "2023-12-31"
         assert captured["initial_investment"] == 50000.0
+
+    def test_fees_are_on_by_default(self, captured: dict[str, Any]) -> None:
+        assert runner.invoke(app, ["backtest", "510300"]).exit_code == 0
+        assert captured["include_fees"] is True
+
+    def test_no_fees_flag_switches_to_price_basis(self, captured: dict[str, Any]) -> None:
+        assert runner.invoke(app, ["backtest", "510300", "--no-fees"]).exit_code == 0
+        assert captured["include_fees"] is False
 
     def test_error_result_exits_non_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("ifa.backtest.engine.run_backtest", lambda *a, **k: SimpleNamespace(error="数据源挂了"))

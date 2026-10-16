@@ -11,6 +11,7 @@ import akshare as ak
 import pandas as pd
 
 from .a_share import (
+    DATA_SOURCE_ERROR_MARKER,
     _call_akshare_api,
     _format_data_error,
     _format_key_value,
@@ -515,6 +516,42 @@ def get_fund_purchase_status() -> str:
 
 
 # ── 14. 基金交易费率 ────────────────────────────────────────────
+
+
+def fetch_fund_fee_table(symbol: str, indicator: str) -> pd.DataFrame | None:
+    """取基金费率**原始表**（不截断、不格式化），失败返回 None。
+
+    `fund_fee_em` 是上游接口，字段名与形状随 indicator 变化（运作费用是 1 行 N 列的
+    键值对，赎回费率是「持有期限 / 赎回费率」两列多行），格式化后调用方没法解析，
+    所以这里把原表直接交出去，由 :mod:`ifa.backtest.fees` 负责解释。
+    """
+    plain = safe_plain_code(symbol)
+    try:
+        df = _call_akshare_api(ak.fund_fee_em, symbol=plain, indicator=indicator)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("费率数据获取失败 (%s / %s): %s", plain, indicator, exc)
+        return None
+    if df is None or df.empty:
+        return None
+    return df
+
+
+def fetch_fund_nav_series(symbol: str, indicator: str = "累计净值走势") -> pd.DataFrame:
+    """取基金**完整**历史净值序列（不截断）。
+
+    与 :func:`get_fund_history_nav` 的区别：那个是给 Agent 读的文本工具，取 `tail(120)`
+    以免撑爆上下文；回测需要完整历史（120 条只有半年），所以单独走这个函数。
+    数据源失败时抛 `ValueError`（带 `DATA_SOURCE_ERROR_MARKER` 前缀），**不要**静默返回
+    空表 —— 否则回测会把「数据源挂了」误报成「数据不足（少于 2 个交易日）」。
+    """
+    plain = safe_plain_code(symbol)
+    try:
+        df = _call_akshare_api(ak.fund_open_fund_info_em, symbol=plain, indicator=indicator)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"{DATA_SOURCE_ERROR_MARKER}{exc}") from exc
+    if df is None or df.empty:
+        return pd.DataFrame()
+    return df.reset_index(drop=True)
 
 
 def get_fund_fee(symbol: str, indicator: str = "申购费率") -> str:

@@ -35,7 +35,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（728 个，覆盖 34 个模块）
+pytest                # 全部测试（909 个，覆盖 38 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -99,7 +99,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块；`tools_cmd.py` 提供 `tools` / `tool` / `skill` 三个不经过 LLM 的命令）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
 - **内置 skill** (`src/ifa/skills/fund.md`) — 随包分发（`pyproject.toml` 的 `[tool.setuptools.package-data]`），`ifa skill` 装到 `~/.claude/skills/`。文件里的工具表由 `ifa tools --markdown` 在 BEGIN/END 标记之间生成，**不要手写**；`tests/test_skill_doc.py` 校验它覆盖全部工具且不含 `cd` / `python -c`
 - **环境加载** (`src/ifa/env_loader.py`) — `user_config_dir()`（`IFA_CONFIG_DIR` → `%APPDATA%\ifa` → `~/.config/ifa`）与 `load_env_files()`（工作目录向上 6 层 + 用户级 `.env`，`override=False`）。四个入口都用它取代裸 `load_dotenv()`：否则全局安装后从任意目录启动会读不到 Key，报错却是 "Missing credentials"
-- **回测引擎** (`src/ifa/backtest/`) — 买入-持有策略回测，`run_backtest()` 输出年化收益、最大回撤、Sharpe、月度收益、净值曲线
+- **回测引擎** (`src/ifa/backtest/`) — 买入-持有（**只支持一次性投资，不定投**）策略回测。`engine.py` 的 `run_backtest()` 输出价格口径与投资者口径两套收益、真实无风险利率（中债 10 年期国债，取不到才退 2%）、最大回撤、Sharpe、月度收益与净值曲线；`fees.py` 解析真实申赎费率并显式建模交易成本（管理费/托管费已含在净值里，**绝不重复扣**）；`rating_validator.py` 做评级 vs 实际收益验证，`rating_stats.py` 是纯统计层（多视界/超额/rank IC/分档/置信度校准），`benchmarks.py` 逐基金解析基准指数
 - **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
 - **组合模型** (`src/ifa/portfolio/`) — `RiskProfile` 数据模型（4 种风险偏好）+ 资产配置策略描述 + `weights.py`（权重的确定性解析与校验）
 
@@ -185,6 +185,8 @@ CLI / Web / API 三个接口层共用四个函数：
   - 解析取舍：同一基金代码多次出现取**最大值**而非累加（真实报告常在明细表后用「宽基小计：510300（20%）…」复述一遍，累加会把合规组合算成 200%）；行内有 `+` 或「小计/合计」时跳过 `= 45%` 这种组内合计；支持 markdown 表格行（名字里的 `|` 会被剥掉）；「合计」行不会被当成一个 100% 的类别
 - **估值数据缺失必须显式标注** — 乐咕乐股只覆盖 12 个指数，其余（中证白酒、纳斯达克100、标普500 等）PE/PB/ERP 全为空。`notify/email.py` 的 `_valuation_anchor_note()` 与 `daily_analysis.py` 的 `fetch_valuations()` 会在邮件正文、估值表与日志里标注「本次无估值锚」，避免「依据估值百分位给出评级」这种没有锚的宣称看不出来
 - **股息率必须用指数自身口径** — `fetch_index_dividend_yield()` 走中证指数官方 `stock_zh_index_value_csindex`（列名被上游固定重命名为 `市盈率1/2`、`股息率1/2`，须先按日期取最新、忽略倒序与表头 NaN 行），`dividend_yield_source` 记录来源（如 `csindex:000300`）；未登记的指数返回 `available=False`，**绝不退回全市场 `stock_a_gxl_lg` 顶替**（历史上 5 只基金全显 2.73% 就是这么来的）。全市场值只作 `dividend_yield_reference` 参考
+- **回测必须标明价格口径与费用假设** — ETF 走前复权价、公募基金优先取「累计净值走势」（分红再投已计入；单位净值会把分红记成亏损），且**不再截断历史**（旧实现 `tail(120)` 把三年回测压成半年）。价格口径（可与指数基准直接比较）与投资者口径（扣申购费/赎回费/券商佣金）同时给出，差额即费用拖累；管理费/托管费只作说明，**不从净值里再扣一次**。取不到费率时用保守默认值（申购 0.15% / 赎回 0.50% / 佣金 0.03% 单边）并写进 `notes`，绝不静默按 0 计；`ifa backtest --no-fees` 可回到纯价格口径
+- **评级验证必须看超额、多视界、逐基金基准** — 绝对命中率主要反映 beta，可证伪的是**超额命中率**；每个视界（默认 20/60/120 交易日）各自取数，**只有主视界允许回退到扁平字段**（60 日收益绝不许冒充 120 日）；基准逐基金解析（显式 override > 基金名识别 > 回退沪深300 并写清原因），报告里列明回退条数；另给 rank IC、5 档分档平均超额、单调性、置信度分档校准。多视界/多指标属多重比较，**只有主视界可当确认性结论**（免责声明里写明）
 - **Analyst 报告 fallback** — 当 Agent 有 tool_calls 但同时返回文本内容时，使用文本内容作为报告
 
 ### 关键约定
@@ -196,5 +198,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：785 个测试覆盖 35 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
+- 测试：909 个测试覆盖 38 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

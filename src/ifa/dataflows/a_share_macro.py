@@ -361,6 +361,22 @@ _CSINDEX_CODES: dict[str, str] = {
 }
 
 
+def csindex_code(index_name: str) -> str | None:
+    """
+    查指数名称对应的中证指数官方代码（000300 / 399997 之类）。
+
+    供回测基准解析使用：只有登记在册的指数才有官方行情可取，
+    未登记的名称返回 None，调用方必须自己决定回退策略并写明原因。
+
+    参数：
+        index_name: 指数名称（如 沪深300、中证白酒）；大小写与首尾空白会被规整。
+
+    返回：
+        str | None: 中证指数代码；未登记或空名称返回 None。
+    """
+    return _CSINDEX_CODES.get((index_name or "").strip())
+
+
 def fetch_index_dividend_yield(index_name: str) -> dict:
     """
     获取「该指数自身」的股息率（中证指数官方指标文件 indicator.xls）。

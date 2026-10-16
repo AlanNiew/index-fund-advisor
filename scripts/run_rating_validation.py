@@ -2,9 +2,11 @@
 """IFA 评级 vs 实际收益 回测验证脚本（独立入口，可 cron 调度）。
 
 跑历史分析，对比「AI 当时给的评级」和「事后实际收益」，
-输出命中率、置信区间、混淆矩阵、基准对比。
+输出多视界命中率、超额命中率（剔除基准）、置信区间、评级分档、置信度校准、混淆矩阵。
 
-注意：仅支持 ETF/指数基金（避开公募基金净值的 tail(120) 截断问题）。
+基准逐基金解析：按基金名称识别跟踪指数，识别不到时回退沪深300 并在报告里标注
+（回退记录的超额不代表跑赢了自己的跟踪指数）。公募基金也可验证：回测已改用
+累计净值（分红再投已计入）且不再 tail(120) 截断。
 
 用法:
     # 基本用法：默认 ETF，过去 3 个月每月一次，持有 60 交易日
@@ -16,12 +18,16 @@
     # 过去 6 个月，持有 90 天
     python scripts/run_rating_validation.py --months-back 6 --hold-days 90
 
+    # 自定义统计视界（默认 20,60,120，且必含 --hold-days）
+    python scripts/run_rating_validation.py --horizons 20,60,120
+
     # 显式开启记忆更新（注意幸存者偏差风险）
     python scripts/run_rating_validation.py --update-memory
 
 智识诚实提醒：
-    样本量 < 30 时统计结论无显著性。本验证不证明评级「有效」或「无效」，
-    仅描述其在给定样本上的历史表现。过往表现不代表未来结果。
+    样本量 < 30 时统计结论无显著性；多视界/多指标属于多重比较，只有主视界可当
+    确认性结论。本验证不证明评级「有效」或「无效」，仅描述其在给定样本上的历史表现。
+    过往表现不代表未来结果。
 
 定时任务配置（Windows 任务计划程序）:
     每月 1 号 16:00 运行:
@@ -70,12 +76,18 @@ def main() -> None:
     )
     parser.add_argument("--dates", help="逗号分隔的分析日期 YYYY-MM-DD（与 --months-back 二选一）")
     parser.add_argument("--months-back", type=int, default=3, help="自动生成过去 N 个月每月一个分析日期（默认 3）")
-    parser.add_argument("--hold-days", type=int, default=60, help="评级后持有多少交易日看收益（默认 60）")
+    parser.add_argument("--hold-days", type=int, default=60, help="评级后持有多少交易日看收益（主视界，默认 60）")
+    parser.add_argument(
+        "--horizons",
+        default="20,60,120",
+        help="逗号分隔的统计视界（交易日），默认 20,60,120 且必含 --hold-days",
+    )
     parser.add_argument("--update-memory", action="store_true", help="把结果喂回反思系统（注意幸存者偏差风险）")
     parser.add_argument("--output-dir", default="results/validation", help="报告输出目录")
     args = parser.parse_args()
 
     # 延迟导入，避免 argparse 解析失败时白付导入成本
+    from ifa.backtest.rating_stats import ordered_horizons
     from ifa.backtest.rating_validator import (
         format_validation_report,
         generate_monthly_dates,
@@ -93,12 +105,20 @@ def main() -> None:
     else:
         analysis_dates = generate_monthly_dates(args.months_back)
 
+    try:
+        horizon_list: list[int] | None = [int(h.strip()) for h in args.horizons.split(",") if h.strip()]
+    except ValueError:
+        logger.error("--horizons 必须是逗号分隔的整数交易日，如 20,60,120")
+        sys.exit(1)
+    effective_horizons = ordered_horizons(horizon_list, args.hold_days)
+
     total_tasks = len(fund_codes) * len(analysis_dates)
     logger.info("=" * 60)
     logger.info("评级验证回测启动")
     logger.info("基金: %s", ", ".join(fund_codes))
     logger.info("分析日期: %s", ", ".join(analysis_dates))
-    logger.info("持有周期: %d 个交易日", args.hold_days)
+    logger.info("持有周期（主视界）: %d 个交易日", args.hold_days)
+    logger.info("统计视界: %s 个交易日", " / ".join(str(h) for h in effective_horizons))
     logger.info("总任务数: %d", total_tasks)
     if args.update_memory:
         logger.warning("已开启 --update-memory，将更新 Agent 记忆（存在幸存者偏差风险）")
@@ -116,6 +136,7 @@ def main() -> None:
         advisor=advisor,
         on_progress=on_progress,
         update_memory=args.update_memory,
+        horizons=effective_horizons,
     )
 
     # 输出报告
@@ -138,6 +159,7 @@ def main() -> None:
             "period_end": result.period_end,
             "fund_codes": fund_codes,
             "update_memory": args.update_memory,
+            "horizons": [h.hold_days for h in result.horizons],
         },
         "summary": {
             "total": result.total,
@@ -153,7 +175,26 @@ def main() -> None:
             "alpha_vs_csi300": result.alpha_vs_csi300,
             "random_benchmark": result.random_benchmark,
             "csi300_benchmark": result.csi300_benchmark,
+            "benchmark_up_rate": result.benchmark_up_rate,
+            "bullish_excess_hit_rate": result.bullish_excess_hit_rate,
+            "bearish_excess_hit_rate": result.bearish_excess_hit_rate,
+            "mean_excess_pct": result.mean_excess_pct,
+            "median_excess_pct": result.median_excess_pct,
+            "excess_t": result.excess_t,
+            "excess_p": result.excess_p,
+            "excess_n": result.excess_n,
+            "rank_ic": result.rank_ic,
+            "rank_ic_n": result.rank_ic_n,
+            "monotonicity": result.monotonicity,
+            "hold_n": result.hold_n,
+            "hold_mean_excess_pct": result.hold_mean_excess_pct,
+            "confidence_spread": result.confidence_spread,
+            "benchmark_labels": result.benchmark_labels,
+            "benchmark_fallback_n": result.benchmark_fallback_n,
         },
+        "horizons": [h.to_dict() for h in result.horizons],
+        "rating_buckets": [b.to_dict() for b in result.buckets],
+        "confidence_calibration": [c.to_dict() for c in result.confidence_calibration],
         "confusion_matrix": result.confusion_matrix,
         "records": [
             {
@@ -166,6 +207,12 @@ def main() -> None:
                 "excess_return_pct": r.excess_return_pct,
                 "hold_days": r.hold_days,
                 "fetch_error": r.fetch_error,
+                "benchmark_code": r.benchmark_code,
+                "benchmark_label": r.benchmark_label,
+                "benchmark_source": r.benchmark_source,
+                "returns_by_horizon": {str(k): v for k, v in r.returns_by_horizon.items()},
+                "excess_by_horizon": {str(k): v for k, v in r.excess_by_horizon.items()},
+                "horizon_errors": {str(k): v for k, v in r.horizon_errors.items()},
             }
             for r in result.records
         ],
@@ -188,8 +235,12 @@ def main() -> None:
         logger.info("看涨命中率: %.1f%%%s [n=%d]", result.bullish_hit_rate * 100, ci, result.bullish_n)
     if result.alpha_vs_random is not None:
         logger.info("Alpha vs 随机: %+.1f%%", result.alpha_vs_random * 100)
+    if result.bullish_excess_hit_rate is not None:
+        logger.info("看涨超额命中率（剔除基准）: %.1f%%", result.bullish_excess_hit_rate * 100)
+    if result.mean_excess_pct is not None:
+        logger.info("平均超额: %+.2f%% (n=%d)", result.mean_excess_pct, result.excess_n)
     if result.alpha_vs_csi300 is not None:
-        logger.info("Alpha vs 沪深300: %+.1f%%", result.alpha_vs_csi300 * 100)
+        logger.info("Alpha vs 同期基准: %+.1f%%", result.alpha_vs_csi300 * 100)
 
     for w in result.warnings:
         logger.warning("⚠️ %s", w)

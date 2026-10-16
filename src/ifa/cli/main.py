@@ -265,21 +265,24 @@ def validate(
     codes: str = typer.Option(..., "--codes", help="逗号分隔的基金代码，如 510300,159919"),
     dates: str = typer.Option(None, "--dates", help="逗号分隔的分析日期 YYYY-MM-DD（与 --months-back 二选一）"),
     months_back: int = typer.Option(None, "--months-back", help="自动生成过去 N 个月每月一个分析日期"),
-    hold_days: int = typer.Option(60, "--hold-days", help="评级后持有多少交易日看收益（默认 60）"),
+    hold_days: int = typer.Option(60, "--hold-days", help="评级后持有多少交易日看收益（主视界，默认 60）"),
+    horizons: str = typer.Option(None, "--horizons", help="逗号分隔的统计视界（交易日），如 20,60,120；默认 20,60,120 且必含 --hold-days"),
     update_memory: bool = typer.Option(False, "--update-memory", help="显式开启：把结果喂回反思系统（注意幸存者偏差风险）"),
     output: str = typer.Option(None, "--output", "-o", help="报告输出路径（默认 results/validation/）"),
 ):
     """评级 vs 实际收益 回测验证。
 
     跑历史分析，对比「AI 当时给的评级」和「事后实际收益」，
-    输出命中率、置信区间、混淆矩阵、基准对比。
+    输出多视界命中率、超额命中率（剔除基准）、置信区间、评级分档、置信度校准、混淆矩阵。
 
-    智识诚实提醒：样本量 < 30 时统计结论无显著性，本验证不证明评级「有效」或「无效」。
+    智识诚实提醒：样本量 < 30 时统计结论无显著性；多视界/多指标属于多重比较，
+    只有主视界可当确认性结论。本验证不证明评级「有效」或「无效」。
     """
     import datetime as _dt
     import json
     from pathlib import Path
 
+    from ifa.backtest.rating_stats import ordered_horizons
     from ifa.backtest.rating_validator import (
         format_validation_report,
         generate_monthly_dates,
@@ -301,13 +304,25 @@ def validate(
         console.print("[red]必须指定 --dates 或 --months-back[/red]")
         raise typer.Exit(1)
 
+    horizon_list: list[int] | None = None
+    if horizons:
+        try:
+            horizon_list = [int(h.strip()) for h in horizons.split(",") if h.strip()]
+        except ValueError:
+            console.print("[red]--horizons 必须是逗号分隔的整数交易日，如 20,60,120[/red]")
+            raise typer.Exit(1) from None
+        if not horizon_list:
+            horizon_list = None
+    effective_horizons = ordered_horizons(horizon_list, hold_days)
+
     total_tasks = len(fund_codes) * len(analysis_dates)
     console.print(
         Panel(
             f"[bold]评级验证回测[/bold]\n"
             f"基金: {', '.join(fund_codes)}\n"
             f"分析日期: {', '.join(analysis_dates)}\n"
-            f"持有周期: {hold_days} 个交易日\n"
+            f"持有周期（主视界）: {hold_days} 个交易日\n"
+            f"统计视界: {' / '.join(str(h) for h in effective_horizons)} 个交易日\n"
             f"总任务数: {total_tasks}"
         )
     )
@@ -327,6 +342,7 @@ def validate(
             advisor=advisor,
             on_progress=on_progress,
             update_memory=update_memory,
+            horizons=effective_horizons,
         )
 
     # 输出报告
@@ -347,6 +363,7 @@ def validate(
             "period_end": result.period_end,
             "fund_codes": fund_codes,
             "update_memory": update_memory,
+            "horizons": [h.hold_days for h in result.horizons],
         },
         "summary": {
             "total": result.total,
@@ -362,7 +379,26 @@ def validate(
             "alpha_vs_csi300": result.alpha_vs_csi300,
             "random_benchmark": result.random_benchmark,
             "csi300_benchmark": result.csi300_benchmark,
+            "benchmark_up_rate": result.benchmark_up_rate,
+            "bullish_excess_hit_rate": result.bullish_excess_hit_rate,
+            "bearish_excess_hit_rate": result.bearish_excess_hit_rate,
+            "mean_excess_pct": result.mean_excess_pct,
+            "median_excess_pct": result.median_excess_pct,
+            "excess_t": result.excess_t,
+            "excess_p": result.excess_p,
+            "excess_n": result.excess_n,
+            "rank_ic": result.rank_ic,
+            "rank_ic_n": result.rank_ic_n,
+            "monotonicity": result.monotonicity,
+            "hold_n": result.hold_n,
+            "hold_mean_excess_pct": result.hold_mean_excess_pct,
+            "confidence_spread": result.confidence_spread,
+            "benchmark_labels": result.benchmark_labels,
+            "benchmark_fallback_n": result.benchmark_fallback_n,
         },
+        "horizons": [h.to_dict() for h in result.horizons],
+        "rating_buckets": [b.to_dict() for b in result.buckets],
+        "confidence_calibration": [c.to_dict() for c in result.confidence_calibration],
         "confusion_matrix": result.confusion_matrix,
         "records": [
             {
@@ -375,6 +411,12 @@ def validate(
                 "excess_return_pct": r.excess_return_pct,
                 "hold_days": r.hold_days,
                 "fetch_error": r.fetch_error,
+                "benchmark_code": r.benchmark_code,
+                "benchmark_label": r.benchmark_label,
+                "benchmark_source": r.benchmark_source,
+                "returns_by_horizon": {str(k): v for k, v in r.returns_by_horizon.items()},
+                "excess_by_horizon": {str(k): v for k, v in r.excess_by_horizon.items()},
+                "horizon_errors": {str(k): v for k, v in r.horizon_errors.items()},
             }
             for r in result.records
         ],

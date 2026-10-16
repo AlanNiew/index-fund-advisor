@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import math
+from datetime import datetime, timedelta
+from typing import Any
+
 import akshare as ak
 import pandas as pd
 
@@ -19,6 +23,8 @@ from .a_share_common import (
     safe_display_symbol,
     safe_plain_code,
 )
+from .a_share_macro import csindex_codes
+from .asset_type import AssetType, detect_asset_type
 
 # ── ETF 行情数据 ─────────────────────────────────────────────
 
@@ -365,3 +371,323 @@ def get_stock_daily(symbol: str, start_date: str, end_date: str) -> str:
     header = f"# Stock price data for {display} from {start_date} to {end_date}\n"
     header += f"# Records: {len(output)}\n\n"
     return header + str(output.to_csv(index=False))
+
+
+# ── 跟踪误差 / 跟踪偏离度 ─────────────────────────────────────
+
+_TRADING_DAYS = 252
+
+
+def compute_tracking_stats(fund: pd.Series, index: pd.Series) -> dict[str, Any]:
+    """
+    对齐基金与指数两条序列并计算跟踪误差指标（纯计算，不发网络请求）。
+
+    参数：
+        fund: 基金净值或价格序列（索引为日期）。
+        index: 指数收盘价序列（索引为日期）。
+
+    返回：
+        dict: 共同交易日数、年化跟踪误差、年化跟踪偏离度、日均绝对偏离、
+            日收益率相关系数、区间累计收益与超额。样本不足时相应值为 None。
+    """
+    f = pd.to_numeric(fund, errors="coerce")
+    i = pd.to_numeric(index, errors="coerce")
+    aligned = pd.concat([f.rename("fund"), i.rename("index")], axis=1, join="inner")
+    aligned = aligned.apply(pd.to_numeric, errors="coerce").dropna()
+    aligned = aligned[~aligned.index.duplicated(keep="last")].sort_index()
+
+    stats: dict[str, Any] = {
+        "observations": int(len(aligned)),
+        "start": str(aligned.index[0].date()) if len(aligned) else None,
+        "end": str(aligned.index[-1].date()) if len(aligned) else None,
+        "tracking_error_pct": None,
+        "tracking_difference_pct": None,
+        "mean_abs_deviation_pct": None,
+        "correlation": None,
+        "fund_return_pct": None,
+        "index_return_pct": None,
+        "cumulative_excess_pct": None,
+    }
+    if len(aligned) < 3:
+        return stats
+
+    fund_ret = aligned["fund"].pct_change().dropna()
+    index_ret = aligned["index"].pct_change().dropna()
+    diff = (fund_ret - index_ret).dropna()
+    if len(diff) >= 2:
+        stats["tracking_error_pct"] = round(float(diff.std(ddof=1)) * math.sqrt(_TRADING_DAYS) * 100, 4)
+        stats["tracking_difference_pct"] = round(float(diff.mean()) * _TRADING_DAYS * 100, 4)
+        stats["mean_abs_deviation_pct"] = round(float(diff.abs().mean()) * 100, 4)
+    if len(fund_ret) >= 3 and float(index_ret.std()) > 0:
+        stats["correlation"] = round(float(fund_ret.corr(index_ret)), 4)
+
+    first_fund = float(aligned["fund"].iloc[0])
+    first_index = float(aligned["index"].iloc[0])
+    if first_fund > 0 and first_index > 0:
+        fund_cum = (float(aligned["fund"].iloc[-1]) / first_fund - 1) * 100
+        index_cum = (float(aligned["index"].iloc[-1]) / first_index - 1) * 100
+        stats["fund_return_pct"] = round(fund_cum, 2)
+        stats["index_return_pct"] = round(index_cum, 2)
+        stats["cumulative_excess_pct"] = round(fund_cum - index_cum, 2)
+    return stats
+
+
+def _close_series(df: pd.DataFrame | None) -> pd.Series | None:
+    """从行情/净值表里抽出按日期排序的收盘价或净值序列。"""
+    if df is None or df.empty:
+        return None
+    value_col = find_column(df, "收盘", "收盘价", "累计净值", "单位净值", "净值")
+    date_col = find_column(df, "日期", "净值日期")
+    if value_col is None or date_col is None:
+        return None
+    frame = pd.DataFrame(
+        {
+            "date": pd.to_datetime(df[date_col], errors="coerce"),
+            "value": pd.to_numeric(df[value_col], errors="coerce"),
+        }
+    ).dropna()
+    if frame.empty:
+        return None
+    series = frame.set_index("date")["value"]
+    return series[~series.index.duplicated(keep="last")].sort_index()
+
+
+def _etf_price_series(symbol: str, start_date: str, end_date: str) -> tuple[pd.Series | None, str]:
+    """取 ETF/LOF 场内前复权收盘价序列。"""
+    try:
+        etf_df = _call_akshare_api(
+            ak.fund_etf_hist_em,
+            symbol=safe_plain_code(symbol),
+            period="daily",
+            start_date=format_date_for_api(start_date),
+            end_date=format_date_for_api(end_date),
+            adjust="qfq",
+        )
+    except Exception:  # noqa: BLE001
+        return None, ""
+    series = _close_series(etf_df)
+    if series is None or len(series) < 3:
+        return None, ""
+    return series, "ETF 前复权收盘价（分红已还原）"
+
+
+def _nav_pair(symbol: str) -> tuple[pd.Series | None, pd.Series | None]:
+    """取公募基金的（累计净值, 单位净值）两条序列。"""
+    try:
+        cum_df = _call_akshare_api(ak.fund_open_fund_info_em, symbol=safe_plain_code(symbol), indicator="累计净值走势")
+        unit_df = _call_akshare_api(ak.fund_open_fund_info_em, symbol=safe_plain_code(symbol), indicator="单位净值走势")
+    except Exception:  # noqa: BLE001
+        return None, None
+    return _close_series(cum_df), _close_series(unit_df)
+
+
+def cum_nav_is_comparable(unit: pd.Series | None, cum: pd.Series | None) -> bool:
+    """
+    判断累计净值序列能否直接用于计算收益率。
+
+    份额折算会把单位净值重置为 1.0（累计净值不重置），此后累计净值与收益率不再
+    可比：拿它算收益会把真实亏损算小。判据是累计净值/单位净值比值是否出现过
+    跳变；单纯分红只会让比值缓慢上升（每年 2% 到 3% 量级），折算会一步跳 0.2 以上。
+    """
+    if unit is None or cum is None or len(unit) < 3 or len(cum) < 3:
+        return True
+    ratio = (cum / unit.replace(0, pd.NA)).dropna()
+    if len(ratio) < 3:
+        return True
+    return bool(float(ratio.diff().abs().max()) < 0.05)
+
+
+def fetch_fund_return_series(symbol: str, start_date: str, end_date: str) -> tuple[pd.Series | None, str]:
+    """
+    取可用于计算收益率的基金序列，并返回口径标签。
+
+    优先级：
+    1. 场内 ETF/LOF 前复权收盘价（分红与份额折算都已还原）；
+    2. 公募基金累计净值（分红再投已计入）—— 仅当没有发生过份额折算时；
+    3. 公募基金单位净值（未计分红，收益被低估）—— 发生折算时的兜底。
+
+    参数：
+        symbol: 基金代码。
+        start_date: 起始日期 YYYY-MM-DD。
+        end_date: 结束日期 YYYY-MM-DD。
+
+    返回：
+        tuple: (按日期排序的序列或 None, 口径说明)。
+    """
+    lower = pd.Timestamp(start_date)
+    upper = pd.Timestamp(end_date)
+    plain = safe_plain_code(symbol)
+    try:
+        asset = detect_asset_type(plain)
+    except Exception:  # noqa: BLE001
+        asset = None
+
+    def _window(series: pd.Series | None) -> pd.Series | None:
+        if series is None:
+            return None
+        windowed = series[(series.index >= lower) & (series.index <= upper)]
+        return windowed if len(windowed) >= 3 else None
+
+    price_series, price_basis = _etf_price_series(symbol, start_date, end_date)
+    price_series = _window(price_series)
+    cum, unit = _nav_pair(symbol)
+    cum_window = _window(cum)
+    unit_window = _window(unit)
+
+    if asset in (AssetType.ETF, AssetType.INDEX):
+        if price_series is not None:
+            return price_series, price_basis
+        if cum_window is not None and cum_nav_is_comparable(unit, cum):
+            return cum_window, "基金累计净值（分红再投已计入）"
+
+    if cum_window is not None and cum_nav_is_comparable(unit, cum):
+        return cum_window, "基金累计净值（分红再投已计入）"
+    if price_series is not None:
+        return price_series, "ETF/LOF 前复权收盘价（分红与份额折算已还原）"
+    if unit_window is not None:
+        return unit_window, "基金单位净值（发生过份额折算，累计净值不可比；分红未计入，收益被低估）"
+    return None, ""
+
+
+def _fund_close_series(symbol: str, start_date: str, end_date: str) -> tuple[pd.Series | None, str]:
+    """取基金序列（见 fetch_fund_return_series 的口径优先级）。"""
+    return fetch_fund_return_series(symbol, start_date, end_date)
+
+
+def _index_close_series(index_code: str, start_date: str, end_date: str) -> pd.Series | None:
+    """取 A 股指数日线收盘价序列。"""
+    try:
+        df = _call_akshare_api(
+            ak.index_zh_a_hist,
+            symbol=safe_plain_code(index_code),
+            period="daily",
+            start_date=format_date_for_api(start_date),
+            end_date=format_date_for_api(end_date),
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    return _close_series(df)
+
+
+def _name_from_frame(df: pd.DataFrame | None, code: str) -> str:
+    """在代码/名称表里按代码查名称。"""
+    if df is None or df.empty or not code:
+        return ""
+    code_col = find_column(df, "代码", "基金代码")
+    name_col = find_column(df, "名称", "基金简称")
+    if code_col is None or name_col is None:
+        return ""
+    hit = df[df[code_col].astype(str).str.contains(code, regex=False, na=False)]
+    if hit.empty:
+        return ""
+    return str(hit.iloc[0][name_col])
+
+
+def _lookup_fund_name(symbol: str) -> str:
+    """按代码查基金名称（先查 ETF 实时行情，再查全部基金列表）。"""
+    code = safe_plain_code(symbol)
+    try:
+        spot = _call_akshare_api(ak.fund_etf_spot_em)
+    except Exception:  # noqa: BLE001
+        spot = None
+    name = _name_from_frame(spot, code)
+    if name:
+        return name
+    try:
+        all_funds = _call_akshare_api(ak.fund_name_em)
+    except Exception:  # noqa: BLE001
+        return ""
+    return _name_from_frame(all_funds, code)
+
+
+def _resolve_index_code(symbol: str) -> tuple[str, str, str]:
+    """由基金名称识别跟踪指数，返回 (指数代码, 指数名称, 来源说明)。"""
+    name = _lookup_fund_name(symbol)
+    if not name:
+        return "", "", "未能取到基金名称"
+    codes = csindex_codes()
+    for index_name in sorted(codes, key=len, reverse=True):
+        if index_name in name:
+            return codes[index_name], index_name, f"由基金名称识别（{name}）"
+    return "", "", f"基金名称未匹配到已知 A 股指数（{name}）"
+
+
+def get_tracking_error(symbol: str, index_code: str = "", days: int = 252) -> str:
+    """
+    计算指数基金相对其跟踪指数的年化跟踪误差（TE）与跟踪偏离度（TD）。
+
+    基金序列优先取 ETF 前复权行情，取不到时退到公募基金累计净值；指数序列取
+    A 股指数日线收盘价。指数代码留空时按基金名称自动识别，识别不到会明确报错
+    而不是拿别的指数顶替。海外指数（纳斯达克100、标普500 等）没有 A 股行情
+    数据源，本工具无法计算。
+
+    参数：
+        symbol: 基金代码（如 510300、161725）。
+        index_code: 可选，跟踪指数代码（如 000300、399997）。
+        days: 回溯天数，默认 252，限制在 20 到 1250 之间。
+
+    返回：
+        str: 跟踪误差指标 + 口径说明；样本不足时明确说明不做结论。
+    """
+    lookback = max(20, min(int(days or 252), 1250))
+    end = datetime.now()
+    start_date = (end - timedelta(days=int(lookback * 1.7) + 15)).strftime("%Y-%m-%d")
+    end_date = end.strftime("%Y-%m-%d")
+
+    if index_code:
+        code = safe_plain_code(index_code)
+        label = code
+        source = "调用方显式指定"
+    else:
+        code, index_name, note = _resolve_index_code(symbol)
+        if not code:
+            supported = "、".join(f"{name}({value})" for name, value in csindex_codes().items())
+            return (
+                f"未能确定 {safe_display_symbol(symbol)} 的跟踪指数：{note}。"
+                f"请显式传入 index_code。已知 A 股指数：{supported}。"
+                "注意：纳斯达克100、标普500 等海外指数没有 A 股行情数据源，无法计算跟踪误差。"
+            )
+        label = f"{index_name}({code})"
+        source = note
+
+    fund_series, basis = _fund_close_series(symbol, start_date, end_date)
+    if fund_series is None:
+        return f"未取到 {safe_display_symbol(symbol)} 在 {start_date} ~ {end_date} 的净值或价格序列，无法计算跟踪误差。"
+    index_series = _index_close_series(code, start_date, end_date)
+    if index_series is None:
+        return f"未取到指数 {label} 在 {start_date} ~ {end_date} 的行情序列，无法计算跟踪误差。"
+
+    stats = compute_tracking_stats(fund_series, index_series)
+    if stats["tracking_error_pct"] is None or stats["observations"] < 3:
+        return (
+            f"{safe_display_symbol(symbol)} 与 {label} 在 {start_date} ~ {end_date} 的共同交易日仅 "
+            f"{stats['observations']} 天，样本不足，不做跟踪误差结论。"
+        )
+
+    lines = [
+        f"# 跟踪误差分析：{safe_display_symbol(symbol)} vs {label}",
+        f"# 样本区间：{stats['start']} ~ {stats['end']}（共同交易日 {stats['observations']} 天）",
+        f"# 基金口径：{basis}；指数口径：指数收盘价（价格指数，不含分红）",
+        f"# 指数确定方式：{source}",
+        "",
+        f"- 年化跟踪误差（TE）：{stats['tracking_error_pct']:.2f}%",
+        f"- 年化跟踪偏离度（TD，基金减指数）：{stats['tracking_difference_pct']:+.2f}%",
+        f"- 日均绝对偏离（单日）：{stats['mean_abs_deviation_pct']:.2f}%",
+    ]
+    if stats["correlation"] is not None:
+        lines.append(f"- 日收益率相关系数：{stats['correlation']:.4f}")
+    if stats["cumulative_excess_pct"] is not None:
+        lines.append(
+            f"- 区间累计收益：基金 {stats['fund_return_pct']:+.2f}% / 指数 {stats['index_return_pct']:+.2f}%"
+            f" / 超额 {stats['cumulative_excess_pct']:+.2f}%"
+        )
+    lines += [
+        "",
+        "## 口径说明",
+        "- 年化跟踪误差 = 日超额收益标准差 * sqrt(252)，衡量跟踪稳定性，越小越贴合指数。",
+        "- 年化跟踪偏离度 = 日超额收益均值 * 252，衡量系统性偏离（含费率与现金拖累）。",
+        "- 日均绝对偏离是单日超额收益绝对值的均值，不年化，用来直观看每天偏离多大。",
+        "- 指数口径不含分红而基金累计净值含分红时，偏离度为正属口径差异，不是管理能力。",
+        "- 共同交易日少于 60 天时结论不稳定，本工具只给数值不做判断。",
+    ]
+    return "\n".join(lines)

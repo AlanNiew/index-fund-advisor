@@ -109,6 +109,8 @@ ifa backtest <基金代码> --start <YYYY-MM-DD> --end <YYYY-MM-DD>
 | `get_index_constituents_raw` | `symbol` | 指数成分股原始数据工具 |
 | `get_stock_daily` | `symbol, start_date, end_date` | A 股个股日线行情工具 |
 | `get_fund_nav` | `symbol` | 场外基金净值工具 |
+| `get_etf_premium_discount` | `symbol='', top_n=10` | ETF 折溢价率工具（溢价率 = 折价率取反） |
+| `get_tracking_error` | `symbol, index_code='', days=252` | 指数基金跟踪误差 / 跟踪偏离度工具 |
 | `get_fund_list` | `—` | 公募基金列表查询工具 |
 | `search_funds` | `query='', limit=20` | 公募基金搜索工具（按关键词过滤全部基金） |
 | `get_fund_basic_info` | `symbol` | 公募基金基本信息工具 |
@@ -138,6 +140,7 @@ ifa backtest <基金代码> --start <YYYY-MM-DD> --end <YYYY-MM-DD>
 | `get_market_valuation` | `indicator='上证PE'` | 市场估值数据工具 |
 | `get_index_valuation` | `index_name='沪深300'` | 指数综合估值分析工具 |
 | `get_valuation_signal` | `index_name='沪深300'` | 指数估值信号分析工具 |
+| `get_fx_rate` | `currency='美元', days=30` | 人民币汇率工具（中国银行牌价口径） |
 <!-- END GENERATED TOOL TABLE -->
 
 上表由 `ifa tools --markdown` 从注册表生成，`tests/test_skill_doc.py` 会校验它与代码一致，请勿手改。

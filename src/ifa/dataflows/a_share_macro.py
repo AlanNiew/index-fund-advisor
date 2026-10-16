@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import akshare as ak
@@ -375,6 +375,11 @@ def csindex_code(index_name: str) -> str | None:
         str | None: 中证指数代码；未登记或空名称返回 None。
     """
     return _CSINDEX_CODES.get((index_name or "").strip())
+
+
+def csindex_codes() -> dict[str, str]:
+    """返回「指数名称 -> 中证指数代码」映射的副本。"""
+    return dict(_CSINDEX_CODES)
 
 
 def fetch_index_dividend_yield(index_name: str) -> dict:
@@ -886,4 +891,114 @@ def get_valuation_signal(index_name: str = "沪深300") -> str:
         "博格公式PE版适用于大部分指数；博格公式PB版适用于资产驱动型指数。*"
     )
 
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+#  P2 — 人民币汇率（中行口径）
+# ---------------------------------------------------------------------------
+
+_FX_SUPPORTED = (
+    "美元",
+    "欧元",
+    "日元",
+    "港币",
+    "英镑",
+    "澳大利亚元",
+    "加拿大元",
+    "新加坡元",
+    "瑞士法郎",
+    "澳门元",
+    "新西兰元",
+    "韩元",
+    "泰铢",
+    "卢布",
+)
+_FX_MIN_DAYS = 5
+_FX_MAX_DAYS = 90
+
+
+def get_fx_rate(currency: str = "美元", days: int = 30) -> str:
+    """
+    获取人民币兑指定外币的中国银行牌价与区间变动。
+
+    数据源按「人民币元 / 100 外币」报价。央行中间价在周末与节假日为空，中行折算价
+    每个交易日都有值，因此区间变动以折算价为准、中间价只作参考。该接口按月循环
+    请求，窗口被限制在 5 到 90 天以免拖慢分析。
+
+    参数：
+        currency: 外币名称，如 美元、欧元、日元、港币（默认美元）。
+        days: 回溯天数，默认 30，限制在 5 到 90 之间。
+
+    返回：
+        str: 最新牌价 + 区间变动 + 口径说明。
+    """
+    symbol = (currency or "美元").strip()
+    lookback = max(_FX_MIN_DAYS, min(int(days or 30), _FX_MAX_DAYS))
+    end = datetime.now()
+    start_date = (end - timedelta(days=lookback)).strftime("%Y%m%d")
+    end_date = end.strftime("%Y%m%d")
+
+    try:
+        df = _call_akshare_api(ak.currency_boc_sina, symbol=symbol, start_date=start_date, end_date=end_date)
+    except Exception as exc:  # noqa: BLE001
+        return _format_data_error(f"# FX Rate ({symbol})", exc)
+
+    if df is None or df.empty:
+        return f"未获取到「{symbol}」的汇率数据。可用币种：{'、'.join(_FX_SUPPORTED)}。"
+
+    date_col = "日期" if "日期" in df.columns else df.columns[0]
+    mid_col = "央行中间价" if "央行中间价" in df.columns else None
+    conv_col = "中行折算价" if "中行折算价" in df.columns else None
+    if mid_col is None and conv_col is None:
+        return "汇率数据缺少央行中间价与中行折算价列，无法计算。"
+
+    frame = pd.DataFrame({"date": pd.to_datetime(df[date_col], errors="coerce")})
+    if mid_col is not None:
+        frame["mid"] = pd.to_numeric(df[mid_col], errors="coerce")
+    if conv_col is not None:
+        frame["conv"] = pd.to_numeric(df[conv_col], errors="coerce")
+    frame = frame.dropna(subset=["date"]).sort_values("date")
+    if frame.empty:
+        return f"「{symbol}」汇率数据没有可用日期，无法计算。"
+
+    def _series_stats(column: str) -> tuple[float, str, float, str, float] | None:
+        if column not in frame.columns:
+            return None
+        valid = frame[["date", column]].dropna()
+        if valid.empty:
+            return None
+        first = float(valid[column].iloc[0])
+        last = float(valid[column].iloc[-1])
+        first_date = str(valid["date"].iloc[0].date())
+        last_date = str(valid["date"].iloc[-1].date())
+        change = (last / first - 1) * 100 if first else 0.0
+        return last, last_date, first, first_date, change
+
+    conv = _series_stats("conv")
+    mid = _series_stats("mid")
+    if conv is None and mid is None:
+        return f"「{symbol}」汇率数据全部为空，无法计算。"
+
+    span_start = str(frame["date"].iloc[0].date())
+    span_end = str(frame["date"].iloc[-1].date())
+    lines = [
+        f"# 人民币汇率：{symbol}（中国银行牌价口径）",
+        f"# 区间：{span_start} ~ {span_end}（{len(frame)} 个报价日）",
+        "# 单位：人民币元 / 100 外币",
+        "",
+    ]
+    if conv is not None:
+        lines.append(f"- 最新中行折算价（{conv[1]}）：{conv[0]:.4f}")
+        lines.append(f"- 折算价区间变动：{conv[4]:+.2f}%（{conv[3]} 的 {conv[2]:.4f} -> {conv[1]} 的 {conv[0]:.4f}）")
+    if mid is not None:
+        lines.append(f"- 最新央行中间价（{mid[1]}）：{mid[0]:.4f}")
+        lines.append(f"- 中间价区间变动：{mid[4]:+.2f}%")
+    lines += [
+        "",
+        "## 口径说明",
+        "- 央行中间价在周末与节假日为空，中行折算价每个报价日都有值，区间变动以折算价为准。",
+        "- QDII 基金的人民币净值已经包含汇率变动，汇率本身不是买卖 QDII 的择时依据。",
+        f"- 该接口按月循环请求，窗口已限制在 {_FX_MIN_DAYS} 到 {_FX_MAX_DAYS} 天。",
+    ]
     return "\n".join(lines)

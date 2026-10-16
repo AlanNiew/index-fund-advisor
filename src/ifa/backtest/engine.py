@@ -118,44 +118,88 @@ def _fetch_etf_index_data(
     return df
 
 
+def _nav_frame(raw_df: pd.DataFrame | None, column: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame | None:
+    """把净值原始表裁剪成 date/close 两列的窗口数据（不足 2 行返回 None）。"""
+    if raw_df is None or raw_df.empty:
+        return None
+    date_col = _find_column(raw_df, "净值日期", "date", "日期")
+    close_col = _find_column(raw_df, column, "nav", "close")
+    if date_col is None or close_col is None:
+        return None
+    picked = raw_df[[date_col, close_col]].copy()
+    picked.columns = ["date", "close"]
+    picked["date"] = pd.to_datetime(picked["date"], errors="coerce")
+    picked["close"] = pd.to_numeric(picked["close"], errors="coerce")
+    picked = picked.dropna(subset=["date", "close"])
+    picked = picked[(picked["date"] >= start) & (picked["date"] <= end)]
+    picked = picked.sort_values("date").reset_index(drop=True)
+    if len(picked) < 2:
+        return None
+    return picked
+
+
+def _nav_series_of(frame: pd.DataFrame | None) -> pd.Series | None:
+    """把 date/close 帧转成以日期为索引的序列（供折算检测用）。"""
+    if frame is None:
+        return None
+    return pd.Series(frame["close"].to_numpy(), index=pd.DatetimeIndex(frame["date"].to_numpy()))
+
+
 def _fetch_fund_data(symbol: str, start_date: str, end_date: str) -> pd.DataFrame | None:
-    """获取公募基金/场外基金净值数据（优先**累计净值**，完整历史）。
+    """获取公募基金/场外基金的收益可比序列（完整历史）。
 
-    两个必须避开的坑：
+    三个必须避开的坑：
 
-    1. **单位净值 ≠ 收益**。分红除权日单位净值会向下跳空，直接拿单位净值算收益会把
+    1. **单位净值 != 收益**。分红除权日单位净值会向下跳空，直接拿单位净值算收益会把
        分红记成亏损。累计净值把分红再投计入，才是投资者真实收益口径。
-    2. get_fund_history_nav 这个 Agent 工具取的是 tail(120) —— 只有半年，
-       回测三年会静默截断成半年。所以这里改用 fetch_fund_nav_series（完整历史）。
+    2. **份额折算之后累计净值也不可比**。份额折算会把单位净值重置为 1.0，而累计净值
+       继续累计，两者比值一步跳变，此后累计净值不再与收益率可比 —— 用它算收益会把
+       真实亏损算小。实测 161725 在 2017/2019/2020/2024/2026 五次折算后，同一区间
+       累计净值口径 -25.91%，而含折算还原的口径约 -59.61%。判据见
+       a_share_index_fund.cum_nav_is_comparable（比值单日跳变 < 5% 才算可比）。
+    3. get_fund_history_nav 这个 Agent 工具取的是 tail(120) —— 只有半年，
+       回测三年会静默截断成半年。所以这里用 fetch_fund_nav_series（完整历史）。
 
-    累计净值取不到时退回单位净值，并把口径写进 df.attrs["price_basis"]，报告里可见。
+    折算不可比时退到 ETF/LOF 前复权收盘价（分红与份额折算都已还原），再退到单位净值，
+    并把实际口径写进 df.attrs["price_basis"]，报告里可见。
     """
+    from ifa.dataflows.a_share_index_fund import _etf_price_series, cum_nav_is_comparable
     from ifa.dataflows.a_share_public_fund import fetch_fund_nav_series
 
     start = pd.to_datetime(start_date)
     end = pd.to_datetime(end_date)
-    attempts = (
-        ("累计净值走势", "累计净值", "基金累计净值（分红再投已计入）"),
-        ("单位净值走势", "单位净值", "基金单位净值（**未计分红**，收益被低估）"),
-    )
-    for indicator, column, basis in attempts:
-        raw_df = fetch_fund_nav_series(symbol, indicator)
-        if raw_df is None or raw_df.empty:
-            continue
-        date_col = _find_column(raw_df, "净值日期", "date", "日期")
-        close_col = _find_column(raw_df, column, "nav", "close")
-        if date_col is None or close_col is None:
-            continue
-        picked = raw_df[[date_col, close_col]].copy()
-        picked.columns = ["date", "close"]
-        picked["date"] = pd.to_datetime(picked["date"], errors="coerce")
-        picked["close"] = pd.to_numeric(picked["close"], errors="coerce")
-        picked = picked.dropna(subset=["date", "close"])
-        picked = picked[(picked["date"] >= start) & (picked["date"] <= end)]
-        picked = picked.sort_values("date").reset_index(drop=True)
-        if len(picked) >= 2:
-            picked.attrs["price_basis"] = basis
-            return picked
+
+    cum_raw = fetch_fund_nav_series(symbol, "累计净值走势")
+    cum = _nav_frame(cum_raw, "累计净值", start, end)
+    try:
+        unit_raw = fetch_fund_nav_series(symbol, "单位净值走势")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("单位净值取数失败，仅用于折算检测，忽略 (%s): %s", symbol, exc)
+        unit_raw = None
+    unit = _nav_frame(unit_raw, "单位净值", start, end)
+
+    if cum is not None and cum_nav_is_comparable(_nav_series_of(unit), _nav_series_of(cum)):
+        cum.attrs["price_basis"] = "基金累计净值（分红再投已计入）"
+        return cum
+
+    if cum is not None:
+        price_series, price_basis = _etf_price_series(symbol, start_date, end_date)
+        if price_series is not None and len(price_series) >= 2:
+            frame = price_series.rename("close").reset_index()
+            frame.columns = ["date", "close"]
+            frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+            frame = frame.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
+            if len(frame) >= 2:
+                frame.attrs["price_basis"] = f"{price_basis}（原累计净值口径受份额折算影响，已改用前复权价）"
+                return frame
+        if unit is not None:
+            unit.attrs["price_basis"] = "基金单位净值（发生过份额折算，累计净值不可比；分红未计入，收益被低估）"
+            return unit
+        return None
+
+    if unit is not None:
+        unit.attrs["price_basis"] = "基金单位净值（**未计分红**，收益被低估）"
+        return unit
     return None
 
 
@@ -188,7 +232,9 @@ def _fetch_price_data(symbol: str, start_date: str, end_date: str) -> pd.DataFra
     elif asset_type in (AssetType.PUBLIC_FUND, AssetType.OFFSHORE_FUND):
         df = _fetch_fund_data(symbol, start_date, end_date)
     else:
-        return None
+        # 兜底：部分 ETF 联接 / LOF 会被资产类型判定误分类成股票（实测 000834 被判为 STOCK），
+        # 直接返回 None 会得到「0 个交易日」的空回测，所以再按基金净值取一次。
+        df = _fetch_fund_data(symbol, start_date, end_date)
 
     if df is None:
         return None

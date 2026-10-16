@@ -20,7 +20,7 @@ ifa search 沪深300                       # 快速搜索（不经过 LLM）
 ifa info 510300                          # 基金基本信息（不经过 LLM）
 ifa config                               # 查看当前配置
 ifa backtest 510300                      # 买入-持有回测（不经过 LLM）
-ifa tools                                # 列出全部数据工具与参数（36 个，由注册表生成）
+ifa tools                                # 列出全部数据工具与参数（39 个，由注册表生成）
 ifa tool get_index_valuation -p index_name=沪深300   # 直接调用一个数据工具
 ifa skill                                # 把内置 skill 安装到用户级目录（任意项目可用）
 python scripts/daily_analysis.py --email  # 批量分析 + 邮件报告（HTML 摘要正文 + .md 附件；cron 定时用；--mode deep_simple 跳过辩论）
@@ -35,7 +35,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（933 个，覆盖 39 个模块）
+pytest                # 全部测试（969 个，覆盖 40 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -70,11 +70,11 @@ CLI / Web / API 三个接口层共用四个函数：
 ### 分层结构
 
 - **Agent 层** (`src/ifa/agents/`) — LangGraph ReAct Agent，每个 Agent 拥有独立的 ToolNode
-  - `analysts/` — fund_analyst（19 个数据工具）、index_analyst（11 个工具）、fund_screener（5 个工具）
+  - `analysts/` — fund_analyst（23 个数据工具）、index_analyst（11 个工具）、fund_screener（5 个工具）
   - `researchers/` — bull_researcher（看涨研究员）、bear_researcher（看跌研究员），带记忆的对抗辩论
   - `managers/` — portfolio_advisor、research_manager（研究经理裁决）、portfolio_manager（最终决策）、report_generator（整合辩论裁决生成报告）
   - `risk_mgmt/` — aggressive_debator（积极）、conservative_debator（保守）、neutral_debator（中立），三方风险辩论
-  - `tools/` — 四类数据工具：`public_fund_tools`（20）、`macro_tools`（8）、`etf_index_tools`（5）、`constituent_tools`（3）
+  - `tools/` — 四类数据工具：`public_fund_tools`（20）、`macro_tools`（8）、`etf_index_tools`（8）、`constituent_tools`（3）
   - `memory.py` — 基于 BM25 的金融情景记忆模块，中英混合分词（中文按字/英文按词），FIFO 淘汰（默认上限 1000 条），支持 JSON 落盘 + 启动载入
   - `prompts/` — Agent prompt 模板，分离自 Agent 实现代码
 - **图编排层** (`src/ifa/graph/`) — 模块化图编排（借鉴 TradingAgents）
@@ -84,12 +84,13 @@ CLI / Web / API 三个接口层共用四个函数：
   - `reflection.py` — 决策反思模块 (`Reflector`)，基于实际收益更新记忆
   - `signal_processing.py` — 信号处理 (`SignalProcessor`)。`parse_decision_signals()` 先做**确定性正则解析**（管理层裁决/最终报告里机器可读的 `Rating: X` / `Confidence: Y` 行，零 LLM 调用），解析不到才回退到 LLM 抽取；两条路径都经 `_normalize_rating()` / `_normalize_confidence()` 校验 + 模糊匹配，非法值 fallback 到 `HOLD` / `Medium`。合法评级固定 5 级：`STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL`（`REDEEM` 之类的词不在词表内）
 - **数据工具层** (`src/ifa/data_tools/`) — 声明式注册表模式
-  - `builtin.py` 定义 `_TOOL_SPECS` 列表（36 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
+  - `builtin.py` 定义 `_TOOL_SPECS` 列表（39 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
   - `search_funds`（`search_funds_tool`）在**完整**基金列表上过滤：CLI / REST / MCP 的搜索必须走它，`get_fund_list()` 只返回前 30 行，**不能**用于搜索
   - `executor.py` 的 `CachedDataToolExecutor` 提供缓存（SHA1 键含参数哈希 + `storage.CACHE_SCHEMA_VERSION`）和快照；改动任何数据工具的输出契约都要递增该版本号，否则旧载荷会永久遮蔽新实现
   - 所有工具通过 `route_to_vendor()` 路由到具体数据源
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
   - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
+  - **市场指标（P2）**：`get_etf_premium_discount()` 用东财场内行情算折溢价率（**溢价率 = -「基金折价率」列**，该列是折价口径；缺列时退到 `最新价 / IOPV实时估值 - 1`），|溢价率| ≥ 1% 会告警；`get_tracking_error()` 算年化 TE/TD/日均绝对偏离/相关系数，指数代码留空时按基金名识别，识别不到**明确报错而不是拿别的指数顶替**（纳指/标普等海外指数没有 A 股行情数据源）；`get_fx_rate()` 取中国银行牌价，窗口限 5~90 天（该接口按月循环请求），区间变动以「中行折算价」为准（央行中间价周末为空，只作参考）
   - **数据源能力边界（易踩）**：ETF 基本信息（`get_fund_basic_info` / `get_etf_fund_info`）必须走东财场内行情表 `fund_etf_fund_daily_em` —— 蛋卷 `fund_individual_basic_info_xq` 只有场外基金库，对 510300 直接 `KeyError: 'data'`；`fund_etf_fund_info_em` 是上游坏接口（14/13 列长度不匹配，默认日期区间下要跑约 2 分钟才失败）。中证成分股（`get_index_constituents*`）按**指数代码**寻址，ETF 代码（510300）与深证指数代码（399006）在该站点返回 404（响应体是 JPEG，pandas 只报 "Excel file format cannot be determined"），故取数失败时抛带可操作说明的 `ValueError`，原始异常留在 `__cause__`
 - **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode/**custom**），另有 Anthropic/Google 独立客户端
   - 提供方清单是单一事实来源：`src/ifa/providers.py` 的 `PROVIDER_CONFIG`（base_url / api_key_env / 展示名）与 `OPENAI_COMPATIBLE_PROVIDERS`。该模块**零依赖**且位于包顶层，`default_config` 只能从它取提供方信息 —— 若放进 `llm_clients/` 会让 `ifa config` / `search` / `info` 连带拉起 langchain 全栈
@@ -186,7 +187,7 @@ CLI / Web / API 三个接口层共用四个函数：
   - 解析取舍：同一基金代码多次出现取**最大值**而非累加（真实报告常在明细表后用「宽基小计：510300（20%）…」复述一遍，累加会把合规组合算成 200%）；行内有 `+` 或「小计/合计」时跳过 `= 45%` 这种组内合计；支持 markdown 表格行（名字里的 `|` 会被剥掉）；「合计」行不会被当成一个 100% 的类别
 - **估值数据缺失必须显式标注** — 乐咕乐股只覆盖 12 个指数，其余（中证白酒、纳斯达克100、标普500 等）PE/PB/ERP 全为空。`notify/email.py` 的 `_valuation_anchor_note()` 与 `daily_analysis.py` 的 `fetch_valuations()` 会在邮件正文、估值表与日志里标注「本次无估值锚」，避免「依据估值百分位给出评级」这种没有锚的宣称看不出来
 - **股息率必须用指数自身口径** — `fetch_index_dividend_yield()` 走中证指数官方 `stock_zh_index_value_csindex`（列名被上游固定重命名为 `市盈率1/2`、`股息率1/2`，须先按日期取最新、忽略倒序与表头 NaN 行），`dividend_yield_source` 记录来源（如 `csindex:000300`）；未登记的指数返回 `available=False`，**绝不退回全市场 `stock_a_gxl_lg` 顶替**（历史上 5 只基金全显 2.73% 就是这么来的）。全市场值只作 `dividend_yield_reference` 参考
-- **回测必须标明价格口径与费用假设** — ETF 走前复权价、公募基金优先取「累计净值走势」（分红再投已计入；单位净值会把分红记成亏损），且**不再截断历史**（旧实现 `tail(120)` 把三年回测压成半年）。价格口径（可与指数基准直接比较）与投资者口径（扣申购费/赎回费/券商佣金）同时给出，差额即费用拖累；管理费/托管费只作说明，**不从净值里再扣一次**。取不到费率时用保守默认值（申购 0.15% / 赎回 0.50% / 佣金 0.03% 单边）并写进 `notes`，绝不静默按 0 计；`ifa backtest --no-fees` 可回到纯价格口径
+- **回测必须标明价格口径与费用假设** — ETF 走前复权价、公募基金优先取「累计净值走势」（分红再投已计入；单位净值会把分红记成亏损），且**不再截断历史**（旧实现 `tail(120)` 把三年回测压成半年）；**发生过份额折算的基金**（如 161725）累计净值会一步跳变、不再可比，`cum_nav_is_comparable()` 检测到后改用前复权价（再退单位净值并显式标注），避免把折算当成收益。另外部分 ETF 联接/LOF 会被资产类型判定误分类成 STOCK（实测 000834），`_fetch_price_data` 对未知类型兜底走基金净值路径而不是返回空数据。价格口径（可与指数基准直接比较）与投资者口径（扣申购费/赎回费/券商佣金）同时给出，差额即费用拖累；管理费/托管费只作说明，**不从净值里再扣一次**。取不到费率时用保守默认值（申购 0.15% / 赎回 0.50% / 佣金 0.03% 单边）并写进 `notes`，绝不静默按 0 计；`ifa backtest --no-fees` 可回到纯价格口径
 - **评级验证必须看超额、多视界、逐基金基准** — 绝对命中率主要反映 beta，可证伪的是**超额命中率**；每个视界（默认 20/60/120 交易日）各自取数，**只有主视界允许回退到扁平字段**（60 日收益绝不许冒充 120 日）；基准逐基金解析（显式 override > 基金名识别 > 回退沪深300 并写清原因），报告里列明回退条数；另给 rank IC、5 档分档平均超额、单调性、置信度分档校准。多视界/多指标属多重比较，**只有主视界可当确认性结论**（免责声明里写明）
 - **Analyst 报告 fallback** — 当 Agent 有 tool_calls 但同时返回文本内容时，使用文本内容作为报告
 
@@ -195,9 +196,9 @@ CLI / Web / API 三个接口层共用四个函数：
 - 包布局：`pyproject.toml` 的 `packages.find` 配置 `where=["src"]`、`include=["ifa*"]`，`src/ifa` 是唯一主包（CLI 入口在 `ifa.cli` 子包内）；`api/`、`web/` 位于项目顶层，由 CLI 入口模块运行时注入 sys.path
 - 入口点：`ifa`（`ifa.cli.main:app`）和 `ifa-web`（`ifa.cli.web_entry:main`）注册在 `[project.scripts]`；API 服务无注册脚本，需直接用 `uvicorn api.main:app` 启动
 - 全局安装：`uv tool install --from git+https://github.com/AlanNiew/index-fund-advisor.git index-fund-advisor`（`--from` 写仓库地址，**最后一个参数必须是包名**，写成 `ifa` 会被 uv 拒绝）—— 不克隆仓库、不激活 venv，任意目录可用（Key 放用户级 `.env`），详见 README「全局安装」
-- 数据工具的数量与参数是**生成的**：`ifa tools` / `ifa tools --markdown` 渲染 `_TOOL_SPECS`，skill 文档与 README 的数字都从它核对（历史上漂移过四次：25 → 33 → 35 → 36）
+- 数据工具的数量与参数是**生成的**：`ifa tools` / `ifa tools --markdown` 渲染 `_TOOL_SPECS`，skill 文档与 README 的数字都从它核对（历史上漂移过五次：25 → 33 → 35 → 36 → 39）
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：933 个测试覆盖 39 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
+- 测试：969 个测试覆盖 40 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

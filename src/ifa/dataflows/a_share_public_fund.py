@@ -401,6 +401,108 @@ def get_etf_spot_data() -> str:
     return header + str(output.to_csv(index=False))
 
 
+# ── 9b. ETF 折溢价率 ──────────────────────────────────────────
+
+_PREMIUM_WARN_PCT = 1.0
+_PREMIUM_ALERT_PCT = 3.0
+
+
+def get_etf_premium_discount(symbol: str = "", top_n: int = 10) -> str:
+    """
+    获取 ETF 场内价格相对 IOPV（基金份额参考净值）的折溢价率。
+
+    溢价率 = (最新价 / IOPV - 1) * 100%，优先取东财「基金折价率」列并取反
+    （该列是折价口径，负数即溢价）。跨境/QDII ETF 常年溢价，溢价过高时买入
+    会额外承担溢价回落的风险，本工具对此显式告警。
+
+    参数：
+        symbol: 可选，ETF 代码（如 513100）。留空则按溢价率绝对值从大到小列出前 top_n 只。
+        top_n: 留空 symbol 时返回的条数，默认 10，最多 50。
+
+    返回：
+        str: 折溢价率表格 + 口径说明 + 高溢价告警。
+    """
+    try:
+        df = _call_akshare_api(ak.fund_etf_spot_em)
+    except Exception as exc:  # noqa: BLE001
+        return _format_data_error("# ETF Premium / Discount", exc)
+
+    if df is None or df.empty:
+        return "未获取到 ETF 实时行情数据。"
+
+    code_col = find_column(df, "代码", "基金代码")
+    name_col = find_column(df, "名称", "基金简称")
+    price_col = find_column(df, "最新价")
+    iopv_col = find_column(df, "IOPV实时估值", "IOPV")
+    discount_col = find_column(df, "基金折价率", "折价率")
+    date_col = find_column(df, "数据日期", "更新时间")
+
+    if code_col is None or name_col is None:
+        return "ETF 实时行情缺少代码/名称列，无法计算折溢价率。"
+
+    price = pd.to_numeric(df[price_col], errors="coerce") if price_col else None
+    iopv = pd.to_numeric(df[iopv_col], errors="coerce") if iopv_col else None
+    discount = pd.to_numeric(df[discount_col], errors="coerce") if discount_col else None
+
+    frame = pd.DataFrame(
+        {
+            "代码": df[code_col].astype(str),
+            "名称": df[name_col].astype(str),
+        }
+    )
+    if discount is not None and discount.notna().any():
+        # 东财该列是折价口径：折价率为负即溢价
+        frame["溢价率%"] = (-discount).round(2)
+        basis = "东财基金折价率列取反（折价率为负即溢价）"
+    elif price is not None and iopv is not None and iopv.gt(0).any():
+        frame["溢价率%"] = ((price / iopv - 1) * 100).round(2)
+        basis = "由最新价与 IOPV 实时估值计算"
+    else:
+        return "ETF 实时行情缺少折价率与 IOPV 列，无法计算折溢价率。"
+
+    if price is not None:
+        frame["最新价"] = price
+    if iopv is not None:
+        frame["IOPV"] = iopv
+    if date_col is not None:
+        frame["数据日期"] = df[date_col].astype(str)
+
+    frame = frame[frame["溢价率%"].notna()]
+    if frame.empty:
+        return "未获取到有效的 ETF 折溢价率数据。"
+
+    target = safe_plain_code(symbol) if symbol else ""
+    if target:
+        hit = frame[frame["代码"].str.contains(target, regex=False, na=False)]
+        if hit.empty:
+            return f"未在 ETF 实时行情中找到代码 {target}（该代码可能不是场内 ETF）。"
+        frame = hit
+    else:
+        limit = max(1, min(int(top_n or 10), 50))
+        frame = frame.loc[frame["溢价率%"].abs().sort_values(ascending=False).index].head(limit)
+
+    lines = [
+        f"# ETF 折溢价率（口径：{basis}）",
+        f"# 记录数：{len(frame)}",
+        "",
+        frame.to_string(index=False),
+        "",
+        "## 口径与含义",
+        "- 溢价率 > 0：场内价格高于基金参考净值（溢价买入，相当于多付钱）。",
+        "- 溢价率 < 0：场内价格低于基金参考净值（折价买入，相当于打折）。",
+        "- 折溢价会随申购额度与市场情绪变化，不是无风险套利机会；暂停申购的跨境 ETF 溢价可能长期存在。",
+    ]
+    warn = frame[frame["溢价率%"].abs() >= _PREMIUM_WARN_PCT]
+    if not warn.empty:
+        lines.append("")
+        lines.append(f"## 告警（|溢价率| >= {_PREMIUM_WARN_PCT:.1f}%）")
+        for _, row in warn.iterrows():
+            level = "高溢价/高折价" if abs(float(row["溢价率%"])) >= _PREMIUM_ALERT_PCT else "折溢价偏高"
+            lines.append(f"- {row['代码']} {row['名称']}：{row['溢价率%']:+.2f}%（{level}）")
+        lines.append("- 买入高溢价品种时，即使指数不跌，溢价回落也会造成亏损；建议等待溢价收敛或改用场外联接基金。")
+    return "\n".join(lines)
+
+
 # ── 10. 基金历史净值 / 累计收益率 / 排名走势 ──────────────────
 
 

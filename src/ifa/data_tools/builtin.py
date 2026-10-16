@@ -206,6 +206,21 @@ def get_valuation_signal_tool(index_name: str = "沪深300"):
     return route_to_vendor("get_valuation_signal", index_name)
 
 
+def get_etf_premium_discount_tool(symbol: str = "", top_n: int = 10):
+    """执行 ETF 折溢价率工具。"""
+    return route_to_vendor("get_etf_premium_discount", symbol, top_n)
+
+
+def get_tracking_error_tool(symbol: str, index_code: str = "", days: int = 252):
+    """执行跟踪误差 / 跟踪偏离度工具。"""
+    return route_to_vendor("get_tracking_error", symbol, index_code, days)
+
+
+def get_fx_rate_tool(currency: str = "美元", days: int = 30):
+    """执行人民币汇率工具。"""
+    return route_to_vendor("get_fx_rate", currency, days)
+
+
 # ── 声明式工具注册表（name, handler, description） ──
 _TOOL_SPECS: list[tuple[str, Callable[..., Any], str]] = [
     # ETF / 指数 / 场外基金
@@ -216,6 +231,8 @@ _TOOL_SPECS: list[tuple[str, Callable[..., Any], str]] = [
     ("get_index_constituents_raw", get_index_constituents_raw_tool, "指数成分股原始数据工具"),
     ("get_stock_daily", get_stock_daily_tool, "A 股个股日线行情工具"),
     ("get_fund_nav", get_fund_nav_tool, "场外基金净值工具"),
+    ("get_etf_premium_discount", get_etf_premium_discount_tool, "ETF 折溢价率工具（溢价率 = 折价率取反）"),
+    ("get_tracking_error", get_tracking_error_tool, "指数基金跟踪误差 / 跟踪偏离度工具"),
     # 公募基金
     ("get_fund_list", get_fund_list_tool, "公募基金列表查询工具"),
     ("search_funds", search_funds_tool, "公募基金搜索工具（按关键词过滤全部基金）"),
@@ -249,6 +266,7 @@ _TOOL_SPECS: list[tuple[str, Callable[..., Any], str]] = [
     ("get_market_valuation", get_market_valuation_tool, "市场估值数据工具"),
     ("get_index_valuation", get_index_valuation_tool, "指数综合估值分析工具"),
     ("get_valuation_signal", get_valuation_signal_tool, "指数估值信号分析工具"),
+    ("get_fx_rate", get_fx_rate_tool, "人民币汇率工具（中国银行牌价口径）"),
 ]
 
 

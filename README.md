@@ -197,7 +197,7 @@ ifa search 沪深300                       # 关键词模糊匹配基金列表
 ifa search "300" --limit 5
 ifa info 510300                         # 单只基金基本信息
 ifa backtest 510300                     # 买入-持有回测（默认近 3 年、初始 10 万；默认计入申赎费）
-ifa tools                               # 列出全部数据工具与参数（36 个）
+ifa tools                               # 列出全部数据工具与参数（39 个）
 ifa tool get_fund_achievement -p symbol=000834   # 直接调用一个数据工具
 ifa skill                               # 安装内置 skill 到用户级目录
 ifa config                              # 查看当前运行时配置
@@ -412,13 +412,13 @@ START → Portfolio Advisor (R1) → Fund Screener → Fund Analyst →
 
 ### 数据工具
 
-Agent 可使用 **36 个数据工具**（`src/ifa/agents/tools/`），全部来自 AkShare（底层：东方财富、雪球、中证指数公司、中国债券信息网）：
+Agent 可使用 **39 个数据工具**（`src/ifa/agents/tools/`），全部来自 AkShare（底层：东方财富、雪球、中证指数公司、中国债券信息网）：
 
 | 类别 | 数量 | 文件 | 代表工具 |
 |------|:---:|------|---------|
 | 公募基金 | 20 | `public_fund_tools.py` | 基金列表、持仓、风险分析、业绩、费率、盈利概率、资产配置 |
 | 宏观经济 | 8 | `macro_tools.py` | CPI/PPI/PMI/GDP/LPR/SHIBOR、北向资金、融资融券、估值信号 |
-| ETF / 指数 | 5 | `etf_index_tools.py` | ETF 行情、指数行情、基金净值、成份股 |
+| ETF / 指数 | 8 | `etf_index_tools.py` | ETF 行情、指数行情、基金净值、成份股、**ETF 折溢价率**、**跟踪误差**、**人民币汇率** |
 | 成分股 | 3 | `constituent_tools.py` | 成份股概览、行业分布、成份股表现 |
 
 此外，CLI `ifa search` / REST `GET /funds/search` / MCP `search_funds` 共用数据工具 `search_funds`：它在**完整**基金列表（约 2.8 万只）上按代码/简称/类型/拼音过滤后再分页，不依赖 `get_fund_list()` 的前 30 行。取数失败时 CLI 以非零退出码结束、REST 返回 502，不会伪装成「查无结果」。
@@ -426,7 +426,7 @@ Agent 可使用 **36 个数据工具**（`src/ifa/agents/tools/`），全部来�
 CLI 侧对应 `ifa tools`（列出全部工具与参数）与 `ifa tool <名字> -p key=value`（直接调用，失败非零退出码）：
 不写 Python、不激活 venv 就能取到同一批数据。内置 skill `src/ifa/skills/fund.md` 里的工具表
 由 `ifa tools --markdown` 生成，`tests/test_skill_doc.py` 会校验它与注册表一致（历史上工具数
-漂移过四次：25 → 33 → 35 → 36）。
+漂移过五次：25 → 33 → 35 → 36 → 39）。
 
 ### 记忆与反思
 
@@ -455,7 +455,7 @@ result = run_backtest(
 print(format_backtest_report(result))
 ```
 
-**取价口径**：ETF 用**前复权收盘价**（分红已还原）；公募基金优先取**累计净值走势**（分红再投已计入，且不再截断历史 —— 旧实现取单位净值并 `tail(120)`，会把分红记成亏损、把三年回测压成半年）；指数用价格指数（**不含分红**）。
+**取价口径**：ETF 用**前复权收盘价**（分红已还原）；公募基金优先取**累计净值走势**（分红再投已计入，且不再截断历史 —— 旧实现取单位净值并 `tail(120)`，会把分红记成亏损、把三年回测压成半年）；但**发生过份额折算的基金**（如 161725）累计净值会一步跳变、不再可比，此时自动改用它自己的**前复权价**（再退单位净值并显式标注），口径会写进报告；指数用价格指数（**不含分红**）。
 
 输出**两套收益**：价格口径（`total_return_pct`，与指数基准同口径，便于算超额）与投资者口径（`net_*`，扣申购费/赎回费/券商佣金），差额即**费用拖累** `fee_impact_pct`。管理费/托管费**已含在净值里，不重复扣除**，只作说明。无风险利率取中债 10 年期国债收益率（取不到才退 2%），取数来源在报告里标注。另有最大回撤、年化波动率、交易天数、月度收益、净值曲线（采样到最多 120 点）。数据不足 2 条直接返回带 `error` 的空结果；`--no-fees` 可只看价格口径。
 
@@ -566,7 +566,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（933 个测试，覆盖 39 个模块）
+# 测试（969 个测试，覆盖 40 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -619,7 +619,7 @@ index-fund-advisor/
 │   │   ├── researchers/      # bull / bear（带记忆对抗辩论）
 │   │   ├── managers/         # portfolio / research / report
 │   │   ├── risk_mgmt/        # aggressive / conservative / neutral
-│   │   ├── tools/            # 36 个数据工具（4 类）
+│   │   ├── tools/            # 39 个数据工具（4 类）
 │   │   ├── prompts/          # Agent prompt 模板
 │   │   └── memory.py         # BM25 情景记忆
 │   ├── graph/                # LangGraph 编排 + 反思 + 信号处理
@@ -637,7 +637,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 933 个测试（39 个模块）
+├── tests/                    # 969 个测试（40 个模块）
 ├── scripts/                  # 每日分析脚本（含 --email 定时邮件报告）
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml

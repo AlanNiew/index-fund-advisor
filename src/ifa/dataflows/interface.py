@@ -23,6 +23,12 @@ from .a_share_index_fund import (
 from .a_share_index_fund import (
     get_stock_daily as get_akshare_stock_daily,
 )
+from .a_share_index_fund import (
+    get_tracking_error as get_akshare_tracking_error,
+)
+from .a_share_macro import (
+    get_fx_rate as get_akshare_fx_rate,
+)
 from .a_share_macro import (
     get_index_valuation as get_akshare_index_valuation,
 )
@@ -49,6 +55,9 @@ from .a_share_macro import (
 )
 from .a_share_public_fund import (
     get_etf_intraday as get_akshare_etf_intraday,
+)
+from .a_share_public_fund import (
+    get_etf_premium_discount as get_akshare_etf_premium_discount,
 )
 from .a_share_public_fund import (
     get_etf_spot_data as get_akshare_etf_spot_data,
@@ -125,6 +134,8 @@ TOOLS_CATEGORIES = {
             "get_index_constituents_raw",
             "get_stock_daily",
             "get_fund_nav",
+            "get_etf_premium_discount",
+            "get_tracking_error",
         ],
     },
     "public_fund": {
@@ -166,6 +177,7 @@ TOOLS_CATEGORIES = {
             "get_market_valuation",
             "get_index_valuation",
             "get_valuation_signal",
+            "get_fx_rate",
         ],
     },
 }
@@ -229,6 +241,12 @@ VENDOR_METHODS: dict[str, dict[str, Callable[..., Any]]] = {
     "get_fund_history_nav": {
         "akshare": get_akshare_fund_history_nav,
     },
+    "get_etf_premium_discount": {
+        "akshare": get_akshare_etf_premium_discount,
+    },
+    "get_tracking_error": {
+        "akshare": get_akshare_tracking_error,
+    },
     # ── 公募基金（增强） ──
     "get_fund_value_estimation": {
         "akshare": get_akshare_fund_value_estimation,
@@ -262,6 +280,9 @@ VENDOR_METHODS: dict[str, dict[str, Callable[..., Any]]] = {
         "akshare": get_akshare_lof_spot_data,
     },
     # ── 宏观经济 / 市场情绪 / 行业估值 ──
+    "get_fx_rate": {
+        "akshare": get_akshare_fx_rate,
+    },
     "get_macro_indicator": {
         "akshare": get_akshare_macro_indicator,
     },

@@ -3,6 +3,11 @@
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from ifa.agents.tools.etf_index_tools import (
+    get_etf_premium_discount,
+    get_fx_rate,
+    get_tracking_error,
+)
 from ifa.agents.tools.macro_tools import (
     get_index_valuation,
     get_macro_indicator,
@@ -100,6 +105,10 @@ def create_fund_analyst(llm):
             get_margin_data,
             get_index_valuation,
             get_valuation_signal,
+            # 折溢价 / 跟踪误差 / 汇率（P2）
+            get_etf_premium_discount,
+            get_tracking_error,
+            get_fx_rate,
         ]
 
         system_message = _FUND_ANALYST_SYSTEM_MESSAGE + get_internal_language_instruction()

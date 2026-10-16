@@ -277,7 +277,7 @@ class TestFundNavBasis:
         monkeypatch.setattr("ifa.dataflows.a_share_public_fund.fetch_fund_nav_series", fake)
         df = engine._fetch_fund_data("161725", "2024-01-01", "2024-12-31")
         assert df is not None
-        assert calls == ["累计净值走势"]
+        assert calls == ["累计净值走势", "单位净值走势"]
         assert "累计净值" in df.attrs["price_basis"]
         assert df["close"].tolist() == [1.0, 1.2]
 
@@ -300,6 +300,58 @@ class TestFundNavBasis:
         result = engine.run_backtest("161725", "2024-01-01", "2024-12-31")
         assert "数据获取失败" in result.error
         assert "ConnectionError: boom" in result.error
+
+    def test_split_nav_falls_back_to_adjusted_price(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """份额折算后累计净值不可比，必须改用前复权价（含分红与折算还原）。"""
+
+        def fake(symbol: str, indicator: str = "累计净值走势") -> pd.DataFrame:
+            if indicator == "累计净值走势":
+                return pd.DataFrame(
+                    {"净值日期": ["2024-01-01", "2024-06-30", "2024-12-31"], "累计净值": [1.0, 1.2, 1.44]}
+                )
+            return pd.DataFrame({"净值日期": ["2024-01-01", "2024-06-30", "2024-12-31"], "单位净值": [1.0, 1.0, 0.6]})
+
+        def fake_price(symbol: str, start_date: str, end_date: str):
+            idx = pd.to_datetime(["2024-01-01", "2024-06-30", "2024-12-31"])
+            return pd.Series([1.0, 0.7, 0.4], index=idx), "ETF/LOF 前复权收盘价（分红与份额折算已还原）"
+
+        monkeypatch.setattr("ifa.dataflows.a_share_public_fund.fetch_fund_nav_series", fake)
+        monkeypatch.setattr("ifa.dataflows.a_share_index_fund._etf_price_series", fake_price)
+        df = engine._fetch_fund_data("161725", "2024-01-01", "2024-12-31")
+        assert df is not None
+        assert "份额折算" in df.attrs["price_basis"]
+        assert "前复权价" in df.attrs["price_basis"]
+        assert df["close"].tolist() == [1.0, 0.7, 0.4]
+
+    def test_split_nav_without_market_price_labels_unit_nav(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """没有场内价可退时只能退回单位净值，并且必须写明原因与代价。"""
+
+        def fake(symbol: str, indicator: str = "累计净值走势") -> pd.DataFrame:
+            if indicator == "累计净值走势":
+                return pd.DataFrame(
+                    {"净值日期": ["2024-01-01", "2024-06-30", "2024-12-31"], "累计净值": [1.0, 1.2, 1.44]}
+                )
+            return pd.DataFrame({"净值日期": ["2024-01-01", "2024-06-30", "2024-12-31"], "单位净值": [1.0, 1.0, 0.6]})
+
+        monkeypatch.setattr("ifa.dataflows.a_share_public_fund.fetch_fund_nav_series", fake)
+        monkeypatch.setattr("ifa.dataflows.a_share_index_fund._etf_price_series", lambda *a, **k: (None, ""))
+        df = engine._fetch_fund_data("161725", "2024-01-01", "2024-12-31")
+        assert df is not None
+        assert "份额折算" in df.attrs["price_basis"]
+        assert "分红未计入" in df.attrs["price_basis"]
+        assert df["close"].tolist() == [1.0, 1.0, 0.6]
+
+    def test_misclassified_fund_still_fetches_nav(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """资产类型被判成股票（实测 000834）时不能直接放弃，否则回测是 0 天。"""
+        from ifa.dataflows.asset_type import AssetType
+
+        frame = pd.DataFrame({"date": pd.to_datetime(["2024-01-01", "2024-12-31"]), "close": [1.0, 1.1]})
+        frame.attrs["price_basis"] = "基金累计净值（分红再投已计入）"
+        monkeypatch.setattr("ifa.dataflows.asset_type.detect_asset_type", lambda symbol: AssetType.STOCK)
+        monkeypatch.setattr(engine, "_fetch_fund_data", lambda *a, **k: frame.copy())
+        df = engine._fetch_price_data("000834", "2024-01-01", "2024-12-31")
+        assert df is not None
+        assert df.attrs["price_basis"] == "基金累计净值（分红再投已计入）"
 
     def test_short_window_still_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def fake(symbol: str, indicator: str = "累计净值走势") -> pd.DataFrame:

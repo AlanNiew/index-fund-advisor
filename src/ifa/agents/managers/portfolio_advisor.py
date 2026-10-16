@@ -8,6 +8,7 @@ from ifa.agents.utils import (
     get_internal_language_instruction,
     invoke_llm_safely,
 )
+from ifa.portfolio.analytics import analyze_portfolio, format_portfolio_analytics
 from ifa.portfolio.models import RISK_PROFILES
 from ifa.portfolio.strategies import STRATEGY_DESCRIPTIONS
 from ifa.portfolio.weights import format_weight_check, validate_portfolio_weights
@@ -94,6 +95,21 @@ def create_portfolio_advisor(llm, memory=None):
             appendix = format_weight_check(weight_report, profile)
             if appendix:
                 advice = f"{advice}\n{appendix}"
+
+        # 组合数学由代码计算：相关性/协方差/风险贡献不能只靠 LLM 自述。
+        # 只在基金筛选结果已就绪（R2）且能解析出 >= 2 只基金权重时计算；
+        # 任何取数或计算异常都降级为「不打这块」，绝不中断组合分析。
+        analytics_weights = weight_report.corrected_funds or weight_report.funds
+        if screen_results and len(analytics_weights) >= 2:
+            try:
+                analytics = analyze_portfolio(dict(analytics_weights))
+            except Exception:
+                logger.warning("组合数学分析失败，已跳过", exc_info=True)
+                analytics = None
+            if analytics is not None:
+                block = format_portfolio_analytics(analytics)
+                if block:
+                    advice = f"{advice}\n{block}"
 
         return {
             "messages": [response],

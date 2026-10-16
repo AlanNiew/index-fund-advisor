@@ -370,6 +370,8 @@ START → Portfolio Advisor (R1) → Fund Screener → Fund Analyst →
 
 
 > **权重硬约束由代码校验**：`Portfolio Advisor` 之后会解析资产类别/单基金权重，校验合计 100%、单基金 ≤ 风险偏好上限、债券 ≥ 下限、海外/QDII ≤ 上限。违规时在建议末尾追加 `## WEIGHT CHECK（代码校验，非 LLM 自述）`（违规项 + 按约束重排后的权重 + 告警），CLI / Web / API 三处都会看到；约束不可行时明确写「无法满足」而不是硬凑一组数字。
+
+> **组合风险由代码计算**：R2 之后若解析出 ≥2 只基金权重，会用与回测同一取价层拉取真实历史序列（共同交易日对齐），算出年化波动率、相关系数矩阵、分散化比率与每只基金的风险贡献（`w_i(Σw)_i/(w'Σw)`），以 `## PORTFOLIO ANALYTICS（代码计算，非 LLM 自述）` 追加到建议末尾。样本不足或取数失败只剔除该基金并注明，绝不猜测、绝不中断分析。
 ### 整体架构
 
 ```
@@ -564,7 +566,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（909 个测试，覆盖 38 个模块）
+# 测试（933 个测试，覆盖 39 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -580,6 +582,7 @@ pytest -x                                                          # 遇到第�
 - 评级/置信度优先从管理层输出的机器可读 `Rating:` / `Confidence:` 行**确定性解析**（零额外 LLM 调用），取不到才回退到 LLM 抽取；词表固定 5 级 `STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL`
 - `SignalProcessor` 对 LLM 输出做合法性校验 + 模糊匹配，非法值 fallback 到 `HOLD` / `Medium`
 - 组合权重由 `src/ifa/portfolio/weights.py` 代码校验（合计 100% / 单基金上限 / 债券下限 / QDII 上限），违规时追加 `WEIGHT CHECK` 并告警
+- 组合风险指标（相关性 / 波动率 / 风险贡献）由 `src/ifa/portfolio/analytics.py` 从真实历史序列计算，取数失败或样本不足只剔除并注明，不中断分析
 - 估值数据缺失（乐咕乐股只覆盖 12 个指数）与股息率口径在报告、邮件与日志里显式标注，不静默留空
 - 回测同时给出价格口径与投资者口径收益，标明取价口径与费用假设；管理费/托管费不重复扣除，取不到费率用保守默认值并写入 notes
 - 评级验证以**超额命中率**为主、逐基金解析基准（回退须写明原因）；多视界各自取数，只有主视界可当确认性结论
@@ -625,7 +628,7 @@ index-fund-advisor/
 │   ├── llm_clients/          # 多提供方 LLM 客户端工厂
 │   ├── backtest/             # 买入持有回测引擎（含费用建模）+ 评级验证（统计层 / 基准解析）
 │   ├── observability/        # per-request tracing
-│   ├── portfolio/            # 风险偏好模型 + 配置策略
+│   ├── portfolio/            # 风险偏好模型 + 配置策略 + 组合数学分析
 │   ├── notify/               # SMTP 邮件通知 + Markdown→HTML 渲染（纯标准库，摘要正文 + .md 附件）
 │   ├── mcp/                  # FastMCP server（9 个工具）
 │   ├── cli/                  # Typer CLI 入口（ifa / ifa-web）+ tools_cmd（tool/tools/skill）
@@ -634,7 +637,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 909 个测试（38 个模块）
+├── tests/                    # 933 个测试（39 个模块）
 ├── scripts/                  # 每日分析脚本（含 --email 定时邮件报告）
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml

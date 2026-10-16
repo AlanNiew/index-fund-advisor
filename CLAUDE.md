@@ -35,7 +35,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（909 个，覆盖 38 个模块）
+pytest                # 全部测试（933 个，覆盖 39 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -101,7 +101,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **环境加载** (`src/ifa/env_loader.py`) — `user_config_dir()`（`IFA_CONFIG_DIR` → `%APPDATA%\ifa` → `~/.config/ifa`）与 `load_env_files()`（工作目录向上 6 层 + 用户级 `.env`，`override=False`）。四个入口都用它取代裸 `load_dotenv()`：否则全局安装后从任意目录启动会读不到 Key，报错却是 "Missing credentials"
 - **回测引擎** (`src/ifa/backtest/`) — 买入-持有（**只支持一次性投资，不定投**）策略回测。`engine.py` 的 `run_backtest()` 输出价格口径与投资者口径两套收益、真实无风险利率（中债 10 年期国债，取不到才退 2%）、最大回撤、Sharpe、月度收益与净值曲线；`fees.py` 解析真实申赎费率并显式建模交易成本（管理费/托管费已含在净值里，**绝不重复扣**）；`rating_validator.py` 做评级 vs 实际收益验证，`rating_stats.py` 是纯统计层（多视界/超额/rank IC/分档/置信度校准），`benchmarks.py` 逐基金解析基准指数
 - **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
-- **组合模型** (`src/ifa/portfolio/`) — `RiskProfile` 数据模型（4 种风险偏好）+ 资产配置策略描述 + `weights.py`（权重的确定性解析与校验）
+- **组合模型** (`src/ifa/portfolio/`) — `RiskProfile` 数据模型（4 种风险偏好）+ 资产配置策略描述 + `weights.py`（权重的确定性解析与校验）+ `analytics.py`（相关性/协方差/风险贡献，从真实历史序列计算）
 
 ### 状态模型
 
@@ -182,6 +182,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **Prompt 长度限制** — Agent 中输入的分析报告通过 `truncate_report(report, max_chars=3000)` 截断，防止 token 溢出
 - **信号处理优先确定性解析** — `AdvisorGraph.run()` 在图执行成功后调 `resolve_decision_signals()`：先取管理层裁决/最终报告里的 `Rating:` / `Confidence:` 行（正则，零 LLM 调用），只有取不到才让 `SignalProcessor.process_signal()` 再发一次 LLM 抽取。报告生成器的 prompt 被约束为 5 级词表（`STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL`），不要引入 `REDEEM` 等词表外的词。`_normalize_rating()` / `_normalize_confidence()` 仍做合法性校验 + 模糊匹配，非法值 fallback 到 `HOLD` / `Medium`
 - **组合权重必须由代码校验，不能只写在 prompt 里** — `validate_portfolio_weights()`（`src/ifa/portfolio/weights.py`）解析 `ASSET ALLOCATION` / `FUND SELECTIONS` 段的权重，校验合计 100%（±1%）、单基金 ≤ `max_single_fund_pct`、债券 ≥ `min_bond_pct`、海外/QDII ≤ `max_international_pct`；违规时算出**确定性重排结果**，把 `## WEIGHT CHECK（代码校验，非 LLM 自述）` 追加到 `portfolio_advice` 并 `logger.warning`。约束不可行（如基金数 × 单基金上限 < 100%）时显式写「无法满足」，不硬凑
+- **组合风险指标必须由代码从历史数据计算** — `analyze_portfolio()`（`src/ifa/portfolio/analytics.py`）用与回测同一取价层取各基金净值/收盘序列，在共同交易日上算年化波动率、相关系数矩阵、分散化比率与每只基金的风险贡献（`w_i(Σw)_i/(w'Σw)`），渲染成 `## PORTFOLIO ANALYTICS（代码计算，非 LLM 自述）` 追加到 `portfolio_advice`（仅在 R2、且解析出 ≥2 只基金时）。取数失败或样本不足只剔除该基金并写 note，绝不中断组合分析
   - 解析取舍：同一基金代码多次出现取**最大值**而非累加（真实报告常在明细表后用「宽基小计：510300（20%）…」复述一遍，累加会把合规组合算成 200%）；行内有 `+` 或「小计/合计」时跳过 `= 45%` 这种组内合计；支持 markdown 表格行（名字里的 `|` 会被剥掉）；「合计」行不会被当成一个 100% 的类别
 - **估值数据缺失必须显式标注** — 乐咕乐股只覆盖 12 个指数，其余（中证白酒、纳斯达克100、标普500 等）PE/PB/ERP 全为空。`notify/email.py` 的 `_valuation_anchor_note()` 与 `daily_analysis.py` 的 `fetch_valuations()` 会在邮件正文、估值表与日志里标注「本次无估值锚」，避免「依据估值百分位给出评级」这种没有锚的宣称看不出来
 - **股息率必须用指数自身口径** — `fetch_index_dividend_yield()` 走中证指数官方 `stock_zh_index_value_csindex`（列名被上游固定重命名为 `市盈率1/2`、`股息率1/2`，须先按日期取最新、忽略倒序与表头 NaN 行），`dividend_yield_source` 记录来源（如 `csindex:000300`）；未登记的指数返回 `available=False`，**绝不退回全市场 `stock_a_gxl_lg` 顶替**（历史上 5 只基金全显 2.73% 就是这么来的）。全市场值只作 `dividend_yield_reference` 参考
@@ -198,5 +199,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：909 个测试覆盖 38 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
+- 测试：933 个测试覆盖 39 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
 - 优化路线图见 `TODO.md`：P0-P3 全部完成

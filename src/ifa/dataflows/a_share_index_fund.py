@@ -26,6 +26,190 @@ from .a_share_common import (
 from .a_share_macro import csindex_codes
 from .asset_type import AssetType, detect_asset_type
 
+# ── 行情源回退（东财行情接口不可用时的备用源）────────────────────
+# 背景：2026-10 在华为云服务器上实测，东财的 push2his / push2 / push2delay 行情域名
+# 全部在 TLS 握手完成后被服务端立刻断开（curl 报 52 Empty reply，requests 报
+# RemoteDisconnected），同一台机器上新浪、腾讯的行情接口正常；同一时刻本机（家宽 IP）
+# 访问东财正常 —— 即东财对机房 IP 有限流/封锁，与代码和网络配置无关。
+#
+# 后果：ETF/指数行情取不到 → 回测、评级结算的基准收益、ETF 分析全部静默降级。
+# 所以行情取数改为「东财优先，失败回退」：
+#   ETF  → 腾讯前复权日线（实测与东财 qfq 逐日完全一致：510300 共 2867 行 diff 0.0000%）
+#   指数 → 新浪指数日线（同为价格指数口径，与腾讯指数交叉验证一致）
+#
+# 注意两点：
+# 1. ETF 的备用源**必须是前复权**。新浪 fund_etf_hist_sina 是不复权原始价，与东财 qfq
+#    在 510300 上最大差 21.66%（分红未还原），拿它算收益会把分红算成亏损。
+# 2. 备用源只回填 OHLC：腾讯的 amount 与东财的「成交量（手）/成交额（元）」口径不同，
+#    宁可缺列也不输出错单位的数字（下游收益计算只用收盘价）。
+
+_SOURCE_EASTMONEY = "eastmoney"
+_SOURCE_TENCENT = "tencent"
+_SOURCE_SINA = "sina"
+_SOURCE_NONE = "none"
+
+
+def market_prefixed_code(symbol: str, *, is_index: bool) -> str:
+    """转成新浪/腾讯行情接口需要的「市场前缀 + 6 位代码」（如 sh510300 / sz159919）。
+
+    指数：399xxx 在深市，其余（000xxx / 880xxx 等）按沪市处理。
+    ETF/LOF：5/6 开头为沪市，1 开头（15/16/159）为深市。
+    判断不了返回空串，调用方据此跳过回退 —— 宁可报数据源失败，也不要猜错市场。
+    """
+    plain = safe_plain_code(symbol)
+    if not (len(plain) == 6 and plain.isdigit()):
+        return ""
+    if is_index:
+        return ("sz" if plain.startswith("399") else "sh") + plain
+    if plain[0] in {"5", "6"}:
+        return "sh" + plain
+    if plain[0] == "1":
+        return "sz" + plain
+    return ""
+
+
+def _fallback_note(kind: str) -> str:
+    """回退源生效时写进输出头的说明行（注释行，不参与 CSV 解析）。"""
+    return f"# Source: {kind}（东财行情接口不可用时的备用源；不含成交量/成交额）\n"
+
+
+def _etf_hist_frame_tencent(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame | None, str]:
+    """腾讯前复权日线 → 与东财同构的中文列 DataFrame，附带失败原因。
+
+    只做取数和列名对齐，日期/数值清洗交给上层既有管道（col_map → Date → _round_numeric_frame）。
+    """
+    tx_code = market_prefixed_code(symbol, is_index=False)
+    if not tx_code:
+        return None, "无法识别市场（代码非法）"
+    try:
+        raw = _call_akshare_api(
+            ak.stock_zh_a_hist_tx,
+            symbol=tx_code,
+            start_date=format_date_for_api(start_date),
+            end_date=format_date_for_api(end_date),
+            adjust="qfq",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    if raw is None or raw.empty:
+        return None, "返回空数据"
+    try:
+        frame = pd.DataFrame(
+            {
+                "日期": pd.to_datetime(raw["date"], errors="coerce"),
+                "开盘": pd.to_numeric(raw["open"], errors="coerce"),
+                "最高": pd.to_numeric(raw["high"], errors="coerce"),
+                "最低": pd.to_numeric(raw["low"], errors="coerce"),
+                "收盘": pd.to_numeric(raw["close"], errors="coerce"),
+            }
+        ).dropna(subset=["日期", "收盘"])
+    except KeyError:
+        return None, "缺少 date/open/close 等必需列"
+    if frame.empty:
+        return None, "无有效行情行"
+    mask = (frame["日期"] >= pd.Timestamp(start_date)) & (frame["日期"] <= pd.Timestamp(end_date))
+    frame = frame.loc[mask].sort_values("日期").reset_index(drop=True)
+    return (frame, "") if not frame.empty else (None, "请求区间内无数据")
+
+
+def _index_hist_frame_sina(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame | None, str]:
+    """新浪指数日线 → 与东财同构的中文列 DataFrame，附带失败原因。"""
+    sina_code = market_prefixed_code(symbol, is_index=True)
+    if not sina_code:
+        return None, "无法识别市场（代码非法）"
+    try:
+        raw = _call_akshare_api(ak.stock_zh_index_daily, symbol=sina_code)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    if raw is None or raw.empty:
+        return None, "返回空数据"
+    try:
+        frame = pd.DataFrame(
+            {
+                "日期": pd.to_datetime(raw["date"], errors="coerce"),
+                "开盘": pd.to_numeric(raw["open"], errors="coerce"),
+                "最高": pd.to_numeric(raw["high"], errors="coerce"),
+                "最低": pd.to_numeric(raw["low"], errors="coerce"),
+                "收盘": pd.to_numeric(raw["close"], errors="coerce"),
+            }
+        ).dropna(subset=["日期", "收盘"])
+    except KeyError:
+        return None, "缺少 date/open/close 等必需列"
+    if frame.empty:
+        return None, "无有效行情行"
+    # 新浪返回全历史，必须按请求区间自行裁剪（字符串日期比较更稳，避免时区/精度问题）
+    start_key = pd.Timestamp(start_date).strftime("%Y-%m-%d")
+    end_key = pd.Timestamp(end_date).strftime("%Y-%m-%d")
+    dates = frame["日期"].dt.strftime("%Y-%m-%d")
+    frame = frame.loc[(dates >= start_key) & (dates <= end_key)].sort_values("日期").reset_index(drop=True)
+    return (frame, "") if not frame.empty else (None, "请求区间内无数据")
+
+
+def fetch_etf_hist_frame(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame, str]:
+    """ETF 日线（东财前复权口径）：东财优先，失败回退腾讯前复权。
+
+    返回 (行情表, 来源)，来源取值 eastmoney / tencent / none。
+    东财正常但无数据 → 返回空表 + none，让调用方保持「查无数据」语义；
+    东财异常且回退也拿不到数据 → 抛 RuntimeError，避免把「数据源全挂」误报成「查无数据」。
+    """
+    errors: list[str] = []
+    eastmoney_failed = False
+    try:
+        frame = _call_akshare_api(
+            ak.fund_etf_hist_em,
+            symbol=safe_plain_code(symbol),
+            period="daily",
+            start_date=format_date_for_api(start_date),
+            end_date=format_date_for_api(end_date),
+            adjust="qfq",
+        )
+    except Exception as exc:  # noqa: BLE001
+        eastmoney_failed = True
+        errors.append(f"东财 {type(exc).__name__}: {exc}")
+        frame = None
+    if frame is not None and not frame.empty:
+        return frame, _SOURCE_EASTMONEY
+
+    fallback, reason = _etf_hist_frame_tencent(symbol, start_date, end_date)
+    if fallback is not None and not fallback.empty:
+        return fallback, _SOURCE_TENCENT
+    errors.append(f"腾讯前复权日线: {reason}")
+    if eastmoney_failed:
+        raise RuntimeError("；".join(errors))
+    return pd.DataFrame(), _SOURCE_NONE
+
+
+def fetch_index_hist_frame(symbol: str, start_date: str, end_date: str) -> tuple[pd.DataFrame, str]:
+    """指数日线（价格指数口径）：东财优先，失败回退新浪指数日线。
+
+    返回 (行情表, 来源)，语义与 fetch_etf_hist_frame 一致。
+    """
+    errors: list[str] = []
+    eastmoney_failed = False
+    try:
+        frame = _call_akshare_api(
+            ak.index_zh_a_hist,
+            symbol=safe_plain_code(symbol),
+            period="daily",
+            start_date=format_date_for_api(start_date),
+            end_date=format_date_for_api(end_date),
+        )
+    except Exception as exc:  # noqa: BLE001
+        eastmoney_failed = True
+        errors.append(f"东财 {type(exc).__name__}: {exc}")
+        frame = None
+    if frame is not None and not frame.empty:
+        return frame, _SOURCE_EASTMONEY
+
+    fallback, reason = _index_hist_frame_sina(symbol, start_date, end_date)
+    if fallback is not None and not fallback.empty:
+        return fallback, _SOURCE_SINA
+    errors.append(f"新浪指数日线: {reason}")
+    if eastmoney_failed:
+        raise RuntimeError("；".join(errors))
+    return pd.DataFrame(), _SOURCE_NONE
+
+
 # ── ETF 行情数据 ─────────────────────────────────────────────
 
 
@@ -42,21 +226,11 @@ def get_etf_data(symbol: str, start_date: str, end_date: str) -> str:
         str: CSV 格式的 OHLCV 行情数据。
     """
     display = safe_display_symbol(symbol)
-    plain = safe_plain_code(symbol)
+    title = f"# ETF price data for {display} from {start_date} to {end_date}"
     try:
-        df = _call_akshare_api(
-            ak.fund_etf_hist_em,
-            symbol=plain,
-            period="daily",
-            start_date=format_date_for_api(start_date),
-            end_date=format_date_for_api(end_date),
-            adjust="qfq",
-        )
+        df, source = fetch_etf_hist_frame(symbol, start_date, end_date)
     except Exception as exc:  # noqa: BLE001
-        return _format_data_error(
-            f"# ETF price data for {display} from {start_date} to {end_date}",
-            exc,
-        )
+        return _format_data_error(title, exc)
 
     if df is None or df.empty:
         return f"未找到 {display} 在 {start_date} 到 {end_date} 之间的 ETF 行情数据。"
@@ -85,6 +259,8 @@ def get_etf_data(symbol: str, start_date: str, end_date: str) -> str:
     ]
     output = _round_numeric_frame(renamed.loc[:, selected_columns])
     header = f"# ETF price data for {display} from {start_date} to {end_date}\n"
+    if source != _SOURCE_EASTMONEY:
+        header += _fallback_note("腾讯前复权日线")
     header += f"# Records: {len(output)}\n\n"
     return header + str(output.to_csv(index=False))
 
@@ -105,20 +281,11 @@ def get_index_data(symbol: str, start_date: str, end_date: str) -> str:
         str: CSV 格式的行情数据。
     """
     display = safe_display_symbol(symbol)
-    plain = safe_plain_code(symbol)
+    title = f"# Index data for {display} from {start_date} to {end_date}"
     try:
-        df = _call_akshare_api(
-            ak.index_zh_a_hist,
-            symbol=plain,
-            period="daily",
-            start_date=format_date_for_api(start_date),
-            end_date=format_date_for_api(end_date),
-        )
+        df, source = fetch_index_hist_frame(symbol, start_date, end_date)
     except Exception as exc:  # noqa: BLE001
-        return _format_data_error(
-            f"# Index data for {display} from {start_date} to {end_date}",
-            exc,
-        )
+        return _format_data_error(title, exc)
 
     if df is None or df.empty:
         return f"未找到 {display} 在 {start_date} 到 {end_date} 之间的指数行情数据。"
@@ -144,6 +311,8 @@ def get_index_data(symbol: str, start_date: str, end_date: str) -> str:
     ]
     output = _round_numeric_frame(renamed.loc[:, selected_columns])
     header = f"# Index data for {display} from {start_date} to {end_date}\n"
+    if source != _SOURCE_EASTMONEY:
+        header += _fallback_note("新浪指数日线")
     header += f"# Records: {len(output)}\n\n"
     return header + str(output.to_csv(index=False))
 
@@ -453,16 +622,9 @@ def _close_series(df: pd.DataFrame | None) -> pd.Series | None:
 
 
 def _etf_price_series(symbol: str, start_date: str, end_date: str) -> tuple[pd.Series | None, str]:
-    """取 ETF/LOF 场内前复权收盘价序列。"""
+    """取 ETF/LOF 场内前复权收盘价序列（东财优先，腾讯回退）。"""
     try:
-        etf_df = _call_akshare_api(
-            ak.fund_etf_hist_em,
-            symbol=safe_plain_code(symbol),
-            period="daily",
-            start_date=format_date_for_api(start_date),
-            end_date=format_date_for_api(end_date),
-            adjust="qfq",
-        )
+        etf_df, _source = fetch_etf_hist_frame(symbol, start_date, end_date)
     except Exception:  # noqa: BLE001
         return None, ""
     series = _close_series(etf_df)
@@ -555,18 +717,12 @@ def _fund_close_series(symbol: str, start_date: str, end_date: str) -> tuple[pd.
 
 
 def _index_close_series(index_code: str, start_date: str, end_date: str) -> pd.Series | None:
-    """取 A 股指数日线收盘价序列。"""
+    """取 A 股指数日线收盘价序列（东财优先，新浪指数回退）。"""
     try:
-        df = _call_akshare_api(
-            ak.index_zh_a_hist,
-            symbol=safe_plain_code(index_code),
-            period="daily",
-            start_date=format_date_for_api(start_date),
-            end_date=format_date_for_api(end_date),
-        )
+        frame, _source = fetch_index_hist_frame(index_code, start_date, end_date)
     except Exception:  # noqa: BLE001
         return None
-    return _close_series(df)
+    return _close_series(frame)
 
 
 def _name_from_frame(df: pd.DataFrame | None, code: str) -> str:

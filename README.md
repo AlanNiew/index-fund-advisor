@@ -429,6 +429,8 @@ Agent 可使用 **39 个数据工具**（`src/ifa/agents/tools/`），全部来�
 
 此外，CLI `ifa search` / REST `GET /funds/search` / MCP `search_funds` 共用数据工具 `search_funds`：它在**完整**基金列表（约 2.8 万只）上按代码/简称/类型/拼音过滤后再分页，不依赖 `get_fund_list()` 的前 30 行。取数失败时 CLI 以非零退出码结束、REST 返回 502，不会伪装成「查无结果」。
 
+**行情源回退（2026-10 起）**：ETF / 指数的日线行情默认仍走东方财富，但东财的 `push2his` / `push2` / `push2delay` 行情域名对机房 IP 有限流/封锁（实测华为云：TLS 握手成功后立即被断连，`curl: (52) Empty reply` / `RemoteDisconnected`；同一台机器上腾讯、新浪正常，家宽 IP 访问东财也正常）。因此 `get_etf_data` / `get_index_data` 以及回测、评级结算的取价在失败时自动回退：**ETF → 腾讯前复权日线**（与东财 qfq 逐日完全一致），**指数 → 新浪指数日线**（同为价格指数口径）。回退生效时输出头会多一行 `# Source: …`，且不提供成交量/成交额（单位口径与东财不同，宁可缺列也不输出错单位）；收益计算只用收盘价，不受影响。ETF 的备用源**必须**是前复权 —— 新浪 `fund_etf_hist_sina` 是不复权原始价，510300 上最多差 21.66%，会把分红算成亏损。
+
 CLI 侧对应 `ifa tools`（列出全部工具与参数）与 `ifa tool <名字> -p key=value`（直接调用，失败非零退出码）：
 不写 Python、不激活 venv 就能取到同一批数据。内置 skill `src/ifa/skills/fund.md` 里的工具表
 由 `ifa tools --markdown` 生成，`tests/test_skill_doc.py` 会校验它与注册表一致（历史上工具数
@@ -619,7 +621,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（1027 个测试，覆盖 42 个模块）
+# 测试（1049 个测试，覆盖 43 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -691,7 +693,7 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 1027 个测试（42 个模块）
+├── tests/                    # 1049 个测试（43 个模块）
 ├── scripts/                  # 每日分析（含 --email 定时邮件报告）+ 评级验证 + 评级结算脚本
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml

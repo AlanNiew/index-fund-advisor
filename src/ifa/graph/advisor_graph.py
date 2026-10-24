@@ -70,6 +70,7 @@ from ifa.agents.tools.public_fund_tools import (
 from ifa.agents.types import IFAdvisorState
 from ifa.agents.utils import create_msg_delete
 from ifa.dataflows.asset_type import detect_asset_type
+from ifa.decisions import HistoryEntry, RatingHistoryStore, StabilityConfig, decide
 from ifa.default_config import DEFAULT_MAX_DEBATE_ROUNDS, DEFAULT_MAX_RISK_DISCUSS_ROUNDS
 
 from .conditional_logic import ConditionalLogic
@@ -101,6 +102,41 @@ _SKIP_NODE_PREFIXES = ("Msg Clear ", "tools_")
 def _should_skip_node(name: str) -> bool:
     """判断节点是否应跳过进度报告。"""
     return any(name.startswith(p) for p in _SKIP_NODE_PREFIXES)
+
+
+def _extract_single_fund_code(fund_codes: Any) -> str | None:
+    """取出「唯一的一只基金代码」；多只（screen/portfolio）时返回 None。
+
+    稳定化是按单只基金的历史判定生效评级的，一次分析多只基金时没有「这只基金的
+    上一次评级」可言，故明确跳过而不是拿第一只凑数。
+    """
+    if isinstance(fund_codes, str):
+        parts = [part.strip() for part in fund_codes.replace("/", ",").split(",") if part.strip()]
+        return parts[0] if len(parts) == 1 else None
+    if isinstance(fund_codes, (list, tuple)):
+        items = [str(item).strip() for item in fund_codes if str(item).strip()]
+        return items[0] if len(items) == 1 else None
+    return None
+
+
+def _stability_passthrough(raw_rating: str, confidence: str, status: str, reason: str) -> dict[str, Any]:
+    """未做稳定化时的占位结果，字段与 StabilityDecision.to_dict() 对齐。"""
+    labels = {"disabled": "未稳定化", "skipped": "未稳定化（多基金）", "error": "未稳定化（判定失败）"}
+    return {
+        "raw_rating": raw_rating,
+        "effective_rating": raw_rating,
+        "confidence": confidence,
+        "status": status,
+        "reason": reason,
+        "previous_rating": "",
+        "pending_rating": "",
+        "pending_days": 0,
+        "confirm_runs": 0,
+        "history_days": 0,
+        "changed": False,
+        "held": False,
+        "label": labels.get(status, "未稳定化"),
+    }
 
 
 class AdvisorGraph:
@@ -135,6 +171,13 @@ class AdvisorGraph:
         self.bear_memory = FinancialSituationMemory("bear_memory", self.config)
         self.research_manager_memory = FinancialSituationMemory("research_manager_memory", self.config)
         self.portfolio_manager_memory = FinancialSituationMemory("portfolio_manager_memory", self.config)
+
+        # ── 评级稳定化（记忆 -> 判断）：上次生效评级要跨进程记得住 ──
+        # 未配置 rating_history_dir 时不落盘（与 memory_dir 的语义一致：
+        # 单元测试用的极简 config 因此仍然无副作用），稳定化退化为「恒等于原始评级」。
+        self.stability_config = StabilityConfig.from_config(self.config)
+        history_dir = self.config.get("rating_history_dir")
+        self.rating_history = RatingHistoryStore(history_dir, max_entries=self.stability_config.max_entries)
 
         # ── 工具节点 ──
         self._create_tool_nodes()
@@ -500,7 +543,7 @@ class AdvisorGraph:
     #  运行与日志
     # ════════════════════════════════════════════
 
-    def run(self, mode: str, state: dict, on_progress=None) -> dict:
+    def run(self, mode: str, state: dict, on_progress=None, *, stabilize: bool | None = None) -> dict:
         """执行分析图并返回最终状态。
 
         参数:
@@ -508,6 +551,9 @@ class AdvisorGraph:
             state: 图的初始状态
             on_progress: 可选进度回调，签名为 (node_name, description) -> None。
                          为 None 时使用原 invoke 路径（向后兼容）。
+            stabilize: 是否应用评级稳定化（None = 读配置）。历史回放类调用
+                       （如 rating_validator 重跑过去某天的分析）必须传 False，
+                       否则会把「今天的生效评级」写进历史，污染当天的判定。
 
         顶层异常保护：即使图执行失败，也尝试保存已有日志并返回错误信息。
         """
@@ -604,6 +650,11 @@ class AdvisorGraph:
             except Exception as e:
                 logger.warning("评级提取失败，final_rating/final_confidence 留空: %s", e)
 
+        # ── 评级稳定化：把「当日原始判断」折算成「生效评级」 ──
+        # 放在落日志之前，这样日志里的 final_rating 与用户看到的一致，
+        # final_rating_raw 又保留了原始判断，结算脚本才能做 A/B 对照。
+        self._apply_rating_stability(final_state, stabilize=stabilize)
+
         try:
             self._log_state(final_state)
         except Exception as e:
@@ -611,6 +662,82 @@ class AdvisorGraph:
 
         end_trace(output_dir=results_dir)
         return final_state
+
+    def _apply_rating_stability(self, final_state: dict, *, stabilize: bool | None = None) -> None:
+        """把「当日原始判断」折算成「生效评级」，并写回 state。
+
+        写回的三个字段构成完整的审计链：
+        - `final_rating`    生效评级（下游 CLI/API/MCP/邮件读到的就是它）
+        - `final_rating_raw` 原始评级（结算脚本据此做 A/B 对照）
+        - `rating_stability` 判定细节（状态/理由/待确认次数，用于解释「为什么维持不变」）
+
+        这里任何失败都只降级为「采用原始评级」并警告 —— 稳定化不是分析的一部分，
+        不能成为分析失败的新原因。
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        raw_rating = str(final_state.get("final_rating") or "").strip()
+        if not raw_rating:
+            return  # 没提取到评级（例如分析失败）就没有可稳定化的对象
+
+        confidence = str(final_state.get("final_confidence") or "")
+        final_state["final_rating_raw"] = raw_rating
+        enabled = self.stability_config.enabled if stabilize is None else bool(stabilize)
+
+        if not enabled:
+            final_state["rating_stability"] = _stability_passthrough(
+                raw_rating, confidence, "disabled", "稳定化已关闭，直接采用原始评级"
+            )
+            return
+
+        fund_code = _extract_single_fund_code(final_state.get("fund_codes"))
+        if fund_code is None:
+            final_state["rating_stability"] = _stability_passthrough(
+                raw_rating,
+                confidence,
+                "skipped",
+                "本次分析涉及多只基金，稳定化按单只基金判定，本次跳过",
+            )
+            return
+
+        analysis_date = str(final_state.get("analysis_date") or "").strip()[:10] or datetime.now().strftime("%Y-%m-%d")
+        try:
+            history = self.rating_history.load(fund_code)
+            decision = decide(raw_rating, confidence, history, self.stability_config, as_of_date=analysis_date)
+        except Exception as e:
+            logger.warning("评级稳定化判定失败，采用原始评级: %s", e)
+            final_state["rating_stability"] = _stability_passthrough(
+                raw_rating, confidence, "error", f"稳定化判定失败（{e!s:.60s}），采用原始评级"
+            )
+            return
+
+        final_state["final_rating"] = decision.effective_rating
+        final_state["rating_stability"] = decision.to_dict()
+        if self.rating_history.enabled:
+            self.rating_history.append(
+                fund_code,
+                HistoryEntry(
+                    date=analysis_date,
+                    raw_rating=decision.raw_rating,
+                    effective_rating=decision.effective_rating,
+                    confidence=decision.confidence,
+                    status=decision.status,
+                    reason=decision.reason,
+                    pending_rating=decision.pending_rating,
+                    recorded_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                ),
+            )
+        if decision.held or decision.changed:
+            logger.info(
+                "评级稳定化 %s %s: 生效 %s（原始 %s，状态 %s）",
+                fund_code,
+                analysis_date,
+                decision.effective_rating,
+                decision.raw_rating,
+                decision.status,
+            )
 
     @staticmethod
     def _safe_get_nested(state: dict, *keys, default=""):
@@ -658,6 +785,8 @@ class AdvisorGraph:
             },
             "final_report": final_state.get("final_report", ""),
             "final_rating": final_state.get("final_rating", ""),
+            "final_rating_raw": final_state.get("final_rating_raw", ""),
+            "rating_stability": final_state.get("rating_stability") or {},
             "final_confidence": final_state.get("final_confidence", ""),
             "request_id": final_state.get("request_id", ""),
             "error": final_state.get("error", ""),

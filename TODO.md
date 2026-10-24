@@ -304,3 +304,55 @@
 - [x] **已有充分抽象，无需进一步模板化**
   - 现有辅助方法（`_add_tool_agent`/`_add_tool_loop`/`_add_fund_debate`/`_add_risk_debate`/`_add_to_report`）已提取公共骨架
   - 四种模式拓扑差异大，进一步抽象会降低可读性
+---
+
+## 第四轮：判断质量（判断本身是否可靠） ✅ P-A / P-B 已完成
+
+> 起因：2026-10-16 ~ 10-24 服务器连续 6 个交易日、5 只基金的真实日志复盘。
+> 硬证据：25 个相邻日对里 **11 次评级翻转（44%）**，其中 017641 逐日交替 BUY/UNDERWEIGHT；
+> 30 次评级的置信度 **29 次 Medium、1 次 High、从未 Low**。
+> 这一轮不增加功能，只处理「分析跑得很稳、但结论本身不稳」这件事。
+
+### P-A — 评级稳定化（去抖） ✅ 已完成
+
+- [x] **新增 `src/ifa/decisions/` 决策层（纯函数 + 落盘历史，不调 LLM）**
+  - `stability.py`：`decide(raw_rating, confidence, history, config, *, as_of_date)` — 与上次生效评级不同时要求**连续 `confirm_runs`（默认 2）次同向**才改口；未达门槛维持生效评级并记「待确认 N/M」；`SELL` 属硬红线跳过确认立即生效；无历史直接采用；非法评级原样透传
+  - `history.py`：`RatingHistoryStore` — 每只基金一个 `{rating_history_dir}/{code}.json`，**同一交易日重复跑替换当天那条**（追加会让「连跑两次」冒充「连续两天同向」），`directory=None` 不落盘，读失败按无历史降级
+  - 为什么不按「跨 2 档才允许改」：BUY 与 UNDERWEIGHT 在 5 级词表里本就相差 2 档，压不住逐日交替；也不用置信度做闸门 —— 实测无区分度（见 P-C）
+- [x] **`AdvisorGraph` 集成**：`_apply_rating_stability()` 在信号解析之后执行；生效评级仍写 `final_rating`（报告/邮件/日志统一用它），原始评级写 `final_rating_raw`，判定细节写 `rating_stability`；`run(..., stabilize=False)` 可单次关闭
+- [x] **配置与开关**：`rating_stability_enabled` / `rating_stability_confirm_runs` / `rating_stability_history_max_entries` / `rating_history_dir`；`IFA_RATING_STABILITY` / `IFA_RATING_CONFIRM_RUNS` 环境变量
+- [x] **展示**：`daily_analysis.py` 汇总表与 `notify/email.py` 邮件新增「稳定性」列 + 独立小节（维持/待确认/确认变更/红线生效）
+- [x] **测试**：`tests/test_rating_stability.py`
+
+### P-B — 评级结算（基于已有日志，零重跑） ✅ 已完成
+
+- [x] **新增 `src/ifa/backtest/settlement.py`**
+  - `scan_rating_logs()` 扫 `results/logs/**/*.json`，取 `final_rating` / `final_rating_raw` / `rating_stability`
+  - `settle_logged_ratings()` 按多视界（默认 20/60/120 交易日）算事后收益与超额，**生效 vs 原始两套口径 A/B 对照**
+  - `ForwardReturnProvider` 前向收益按 `(基金, 日期, 视界)` 缓存，**只缓存已到期视界**；未到期计入 `immature_n` 而非当作 0 收益
+  - **绝不调 LLM、绝不重跑分析** —— 重跑会把「当时的判断」污染成「现在的判断」
+  - 报告首段声明「两套口径的差异只说明稳定化改变了什么，不证明变好或变坏」（智识诚实）
+- [x] **新增 `scripts/settle_ratings.py`**：输出 `results/validation/settled_{date}.md|json`，支持 `--results-dir/--hold-days/--horizons/--since/--until/--modes/--cache-path|--no-cache/--json/--no-write`
+- [x] **测试**：`tests/test_settlement.py`
+
+### P-C — 置信度确定性化（未开始）
+
+- [ ] **置信度改由代码从可复现证据推导，不再采信 LLM 自述**
+  - 现状问题：30 次评级里 29 次 Medium、1 次 High、从未 Low —— 这个字段目前不携带任何信息，冒烟测试也无法用它识别「模型在瞎猜」
+  - 方案：用确定性指标合成分数再映射到 `Low/Medium/High`：数据完整度（关键工具是否失败/降级）、估值锚是否存在（乐咕乐股只覆盖 12 个指数）、跟踪误差/折溢价是否越界、辩论分歧度（Bull/Bear 裁决差异）、稳定性历史一致度（连续同向次数）
+  - 保留 LLM 自述为 `confidence_llm_raw` 供对照，**不删除原始信号**
+  - 验收：同一份日志重算得到同一置信度（可复现）；置信度与事后超额有可见单调关系（分档校准不再是单桶）
+
+### P-D — 交易纪律层（未开始）
+
+- [ ] **把评级翻译成可执行的持仓动作，而不是让用户自己猜「BUY 是买多少」**
+  - 输出：目标仓位区间、单只上限、调仓触发条件（偏离阈值 + 冷静期）、与现有持仓的差额动作
+  - 只产生「建议动作 + 触发条件」，**不接券商、不下单**；跨境/债券/单只上限等约束复用 `portfolio/weights.py` 的确定性校验
+  - 验收：给定评级序列与持仓，动作是确定的、可回放的；与稳定性闸门联动（待确认期间不许给出加仓动作）
+
+### P-E — 邮件纳入新信号 + 性能（未开始）
+
+- [ ] **邮件把稳定化与结算结论带出来**：稳定性小节已有；补「本周结算摘要」与「待确认中」提醒
+- [ ] **压缩单次运行耗时**：deep 模式每只基金 2.5–4 分钟（5 只 12.5–21 分钟），实测 98.5% 时间在等 LLM
+  - 已做：辩论轮数默认 1（2 轮时辩论段独占 86%）、辩论历史截断、信号确定性解析替代 LLM 抽取
+  - 待评估：并发跑多只基金（注意 `py_mini_racer` 构造必须串行化）、`deep_simple` 兜底路径、数据工具缓存命中率

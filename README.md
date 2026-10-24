@@ -115,6 +115,8 @@ DEEPSEEK_API_KEY=...
 | `IFA_EMAIL_TO` | 收件人，逗号 / 分号 / 空白分隔 | 空 |
 | `IFA_SMTP_USE_SSL` | `true` = SMTPS(465)；`false` = STARTTLS(587) | `true` |
 | `IFA_SMTP_TIMEOUT` | SMTP 连接 / 发送超时（秒） | `30` |
+| `IFA_RATING_STABILITY` | 评级稳定化（去抖）开关；`false` = 直接用原始评级 | `true` |
+| `IFA_RATING_CONFIRM_RUNS` | 新评级需连续同向确认的次数 | `2` |
 
 ### 3. 配置项（`src/ifa/default_config.py`）
 
@@ -141,6 +143,10 @@ DEEPSEEK_API_KEY=...
 | `smtp_recipients` | `None` | 收件人列表（逗号 / 分号 / 空白分隔） |
 | `smtp_use_ssl` | `True` | `True` = SMTPS(465)；`False` = STARTTLS(587) |
 | `smtp_timeout` | `30` | SMTP 连接 / 发送超时（秒） |
+| `rating_history_dir` | `<local_data>/ratings` | 评级历史落盘目录（稳定化据此判断「上次生效的是什么」）；属于路径键，不写入用户配置文件；为空则只在单次运行内有历史 |
+| `rating_stability_enabled` | `True` | 评级稳定化（去抖）总开关；关掉后 `final_rating` 直接等于原始评级 |
+| `rating_stability_confirm_runs` | `2` | 原始评级要连续多少次分析同向出现才允许改生效评级（`SELL` 等硬红线不受限） |
+| `rating_stability_history_max_entries` | `120` | 每只基金保留的历史记录条数上限（FIFO 截断） |
 
 **切换提供方**（三种方式，优先级由低到高）：
 
@@ -522,6 +528,46 @@ python scripts/run_rating_validation.py --months-back 6 --hold-days 90
 3. **必须有基准对比**——全是 HOLD 的策略也能高命中率，必须对比随机基准与**该基金自己的**基准；回退到沪深300 的记录必须写明原因并计数
 4. **多视界不许互相冒充**——每个视界各自取数，扁平字段只在主视界可作回退（60 日收益不得填进 120 日）；公募基金同样可验证（累计净值、无截断）
 
+### 评级稳定化（去抖）
+
+日频多 Agent 辩论输出的评级在相邻交易日之间会反复翻转 —— 实测 5 只基金 × 6 个交易日，25 个相邻日对里 **11 次（44%）** 改了评级，其中 017641 是 BUY / UNDERWEIGHT 逐日交替。评级若每次都跟着单日辩论改口，「判断」就退化成了「采样」。
+
+`src/ifa/decisions/`（`stability.py` 纯函数规则 + `history.py` 落盘历史）用一条最小规则把评级拉回判断：
+
+- **连续确认**：原始评级与生效评级不同时，要求**连续 `rating_stability_confirm_runs`（默认 2）次分析都给出同一个原始评级**才生效；未达门槛则维持生效评级，并记录「待确认 1/2」。
+- **硬红线**：落到 `SELL` 立即生效 —— 风险事件不该排队等第二次确认。
+- **首次**：没有历史时直接采用原始评级（否则新基金永远发不出评级）。
+- **同日重跑覆盖**：历史按 `{local_data}/ratings/{code}.json` 每天一条，同一天重复跑**替换**当天那条（不是追加）—— 否则「连跑两次」会被算成「连续两次同向」；判定时用 `as_of_date` 只取更早的记录。
+
+为什么不用「跨 2 档才允许改」的阈值方案：BUY 与 UNDERWEIGHT 在 5 级词表里本就相差 2 档，阈值压不住逐日交替，只有连续确认能压住。也**不拿置信度做闸门**：实测 30 次评级里 29 次是 Medium，目前没有区分度（拿它当闸门等于没有闸门）。
+
+交付用的生效评级仍写 `final_rating`（报告 / 邮件 / 日志都用它），原始评级另存 `final_rating_raw`，判定细节存 `rating_stability`（状态、理由、待确认次数），三者都进结构化日志。关闭方式：`IFA_RATING_STABILITY=false`，或 `ifa config rating_stability_enabled false`。
+
+### 评级结算（基于已有日志，零重跑）
+
+`scripts/settle_ratings.py` 读 `results/logs/**/*.json` 里**已经跑过**的评级，取事后实际收益，回答「稳定化到底改变了什么」：
+
+```bash
+python scripts/settle_ratings.py                                   # 主视界 60 交易日
+python scripts/settle_ratings.py --hold-days 20 --horizons 20,60,120
+python scripts/settle_ratings.py --since 2026-09-01 --modes deep --json
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--results-dir` | `results` | 分析日志根目录（扫 `logs/*/*.json`） |
+| `--hold-days` | `60` | 主视界（交易日），与 `ifa validate` 同口径 |
+| `--horizons` | `20,60,120` | 多视界（交易日），自动排序去重并保证含 `--hold-days` |
+| `--since` / `--until` | — | 只结算该日期区间内的日志 |
+| `--modes` | 全部 | 逗号分隔的分析模式过滤（`deep,deep_simple` 等） |
+| `--cache-path` / `--no-cache` | `results/validation/forward_returns_cache.json` | 前向收益缓存（只缓存已到期的视界）；`--no-cache` 每次现取 |
+| `--json` | 关 | 输出 JSON（给下游脚本/看板） |
+| `--no-write` | 关 | 只打印报告，不写盘 |
+
+- 输出 `results/validation/settled_{YYYY-MM-DD}.md` / `.json`：**生效评级 vs 原始评级**两套命中率、评级变更次数对比（`effective_churn_reduction`）、每只基金的稳定性明细、被跳过的日志及原因。
+- **零重跑**：不调用任何 LLM，只取价格；同一份日志的价格结果按 `(基金, 日期, 视界)` 缓存，两条口径共用一套取数。
+- 未到期的视界显式计入 `immature_n`，**不混进统计**；报告首段是智识诚实声明：两套口径的差异只说明「稳定化改变了什么」，**不证明它变好或变坏**。
+
 ---
 
 ## 每日邮件报告（cron 定时）
@@ -546,7 +592,14 @@ python scripts/daily_analysis.py --date 2026-10-13 --force --email        # 指�
 - **非交易日**：不加 `--force` 时，**今天**不是交易日就直接跳过分析**且不发邮件**，退出码 `0`（休市不是故障）。
 - **分析日期**：不带 `--date` 时分析**前一交易日** —— 早上跑批时当天还没收盘，能拿到的完整数据属于前一交易日（周一 → 上周五，长假后 → 节前最后一个交易日）。交易日历取不到时按失败上报（退出码 `1`），不会静默什么都不做。
 - **配置**：`ifa config smtp_host smtp.qq.com` 等写进用户配置文件，或直接用上表的 `IFA_SMTP_*` / `IFA_EMAIL_TO` 环境变量（服务器上推荐环境变量，密码不落盘）。
-- **发信行为**：同一份内容发两个版本（`multipart/alternative`）——`text/html` 版把摘要渲染成真表格，并把报告 Markdown 现场渲染成 HTML（自写的 `src/ifa/notify/markdown.py`，纯标准库：标题/表格/列表/粗体/分隔线，其余降级为段落；所有文本先转义，链接只放行 http/https/mailto）；`text/plain` 版是等宽对齐的同一份摘要，给不认 HTML 的客户端兜底。两版都含「核心参数」表（基金代码/基金名称/净值(日期)/日涨跌/评级/置信度/耗时/状态）+「指数估值」表（跟踪指数/数据日期/PE(TTM)/PB/ROE/股息率/ERP，只覆盖乐咕乐股支持的那 12 个指数，且股息率是「上证A股」全市场参考值而非指数自身值）+ 失败明细。HTML 正文超过 12 万字符时**显式省略报告全文**并写明「见 .md 附件」（绝不静默省略）；完整报告始终作为 `.md` 附件（含程序硬注入的【智识诚实声明】）。
+- **发信行为**：同一份内容发两个版本（`multipart/alternative`）——`text/html` 版把摘要渲染成真表格，并把报告 Markdown 现场渲染成 HTML（自写的 `src/ifa/notify/markdown.py`，纯标准库：标题/表格/列表/粗体/分隔线，其余降级为段落；所有文本先转义，链接只放行 http/https/mailto）；`text/plain` 版是等宽对齐的同一份摘要，给不认 HTML 的客户端兜底。两版都含「核心参数」表（基金代码/基金名称/净值(日期)/日涨跌/评级/置信度/稳定性/耗时/状态）+「指数估值」表（跟踪指数/数据日期/PE(TTM)/PB/ROE/股息率/ERP，只覆盖乐咕乐股支持的那 12 个指数，且股息率是「上证A股」全市场参考值而非指数自身值）+ 失败明细。HTML 正文超过 12 万字符时**显式省略报告全文**并写明「见 .md 附件」（绝不静默省略）；完整报告始终作为 `.md` 附件（含程序硬注入的【智识诚实声明】）。
+- **评级稳定性**：邮件「核心参数」表与正文都带「稳定性」列/小节 —— 生效评级与原始评级不同时写明「生效 X（原始 Y）」，并注明「须连续多次同向判断才变更，SELL 等红线评级立即生效」。见下文「评级稳定化（去抖）」；
+- **评级结算（可选周任务）**：`settle_ratings.py` 读已有分析日志算事后收益，与每日邮件互不依赖：
+
+  ```cron
+  0 9 * * 6 cd /home/alan/index-fund-advisor && .venv/bin/python scripts/settle_ratings.py >> local_data/settle.log 2>&1
+  ```
+
 - **日涨跌兜底**：ETF 的日涨跌优先取场内行情表的「增长率」；还没发布时回退东财日线（`fund_etf_hist_em`），仍失败再回退新浪日线（`fund_etf_hist_sina`，用最近两个交易日收盘价算涨跌幅）—— 东财 `push2his` 在部分网络下会持续 `RemoteDisconnected`，换源兜底好过让这一列长期空着。
 - **服务器 cron**（工作日 08:00，分析前一交易日 —— 前一交易日的净值此时已公布）：
 
@@ -566,7 +619,7 @@ ruff format .
 # 类型检查
 mypy src
 
-# 测试（969 个测试，覆盖 40 个模块）
+# 测试（1027 个测试，覆盖 42 个模块）
 pytest
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 单个测试
 pytest -x                                                          # 遇到第一个失败即停
@@ -623,10 +676,11 @@ index-fund-advisor/
 │   │   ├── prompts/          # Agent prompt 模板
 │   │   └── memory.py         # BM25 情景记忆
 │   ├── graph/                # LangGraph 编排 + 反思 + 信号处理
+│   ├── decisions/            # 评级稳定化（去抖）：纯函数规则 + 按基金落盘的评级历史
 │   ├── dataflows/            # AkShare 封装（含重试、资产类型检测）
 │   ├── data_tools/           # 声明式工具注册表 + 缓存执行器
 │   ├── llm_clients/          # 多提供方 LLM 客户端工厂
-│   ├── backtest/             # 买入持有回测引擎（含费用建模）+ 评级验证（统计层 / 基准解析）
+│   ├── backtest/             # 买入持有回测引擎（含费用建模）+ 评级验证 + 评级结算（settlement.py）
 │   ├── observability/        # per-request tracing
 │   ├── portfolio/            # 风险偏好模型 + 配置策略 + 组合数学分析
 │   ├── notify/               # SMTP 邮件通知 + Markdown→HTML 渲染（纯标准库，摘要正文 + .md 附件）
@@ -637,8 +691,8 @@ index-fund-advisor/
 │   └── default_config.py     # 默认配置 + 运行时构建
 ├── web/                      # Streamlit 多页应用
 ├── api/                      # FastAPI 异步任务 + 鉴权
-├── tests/                    # 969 个测试（40 个模块）
-├── scripts/                  # 每日分析脚本（含 --email 定时邮件报告）
+├── tests/                    # 1027 个测试（42 个模块）
+├── scripts/                  # 每日分析（含 --email 定时邮件报告）+ 评级验证 + 评级结算脚本
 ├── release/                  # 轻量打包脚手架（assemble.py 带闭包自检，未发布到 PyPI）
 ├── pyproject.toml
 └── README.md / CLAUDE.md / MCP.md

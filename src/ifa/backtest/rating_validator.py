@@ -39,9 +39,11 @@ __all__ = [
     "RatingRecord",
     "RatingValidationResult",
     "add_trading_days",
+    "benchmark_return",
     "compute_statistics",
     "format_validation_report",
     "generate_monthly_dates",
+    "lookup_fund_names",
     "run_rating_validation",
     "wilson_ci",
 ]
@@ -372,6 +374,20 @@ def add_trading_days(date_str: str, days: int) -> str:
     return (dt + timedelta(days=calendar_days)).strftime("%Y-%m-%d")
 
 
+def benchmark_return(code: str, date: str, horizon: int) -> float | None:
+    """基准在「date 之后 horizon 个交易日」的收益率；失败返回 None（不抛）。
+
+    抽成模块级函数是为了让结算脚本（ifa.backtest.settlement）与验证器共用同一套
+    基准口径 —— 两处各写一遍迟早会算出不同的超额收益。
+    """
+    try:
+        bt = run_backtest(code, date, add_trading_days(date, horizon))
+    except Exception as exc:
+        logger.warning("基准收益获取失败 (%s %s +%d): %s", code, date, horizon, exc)
+        return None
+    return None if bt.error else bt.total_return_pct
+
+
 def generate_monthly_dates(months_back: int, end_date: str | None = None) -> list[str]:
     """生成过去 N 个月每月一个日期（15 号），最近一个月为 end_date 或今天。"""
     end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.now()
@@ -446,12 +462,7 @@ def run_rating_validation(
     def _benchmark_return(code: str, date: str, horizon: int) -> float | None:
         key = (code, date, horizon)
         if key not in bench_cache:
-            try:
-                bt = run_backtest(code, date, add_trading_days(date, horizon))
-                bench_cache[key] = None if bt.error else bt.total_return_pct
-            except Exception as exc:
-                logger.warning("基准收益获取失败 (%s %s +%d): %s", code, date, horizon, exc)
-                bench_cache[key] = None
+            bench_cache[key] = benchmark_return(code, date, horizon)
         return bench_cache[key]
 
     total_tasks = len(fund_codes) * len(analysis_dates)
@@ -599,6 +610,11 @@ def _lookup_fund_names(fund_codes: list[str]) -> dict[str, str]:
         logger.warning("基金名称查询失败，基准将退回默认值: %s", e)
         return {}
     return {code: str(data["name"]) for code, data in snapshots.items() if data.get("name")}
+
+
+def lookup_fund_names(fund_codes: list[str]) -> dict[str, str]:
+    """`_lookup_fund_names` 的公开入口（结算脚本等复用，避免直接依赖私有函数）。"""
+    return _lookup_fund_names(fund_codes)
 
 def _build_returns_summary(records: list[RatingRecord]) -> str:
     """把记录汇总成 Reflector 能理解的 returns_losses 字符串。"""

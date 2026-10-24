@@ -324,12 +324,19 @@ def analyze_single_fund(advisor, fund_code: str, analysis_date: str, mode: str =
         except Exception as e:
             logger.warning("评级提取失败 (%s): %s", fund_code, e)
 
+    # 评级稳定化信息：final_rating 是「生效评级」，final_rating_raw 是当日原始判断，
+    # rating_stability 解释「为什么维持不变」（见 ifa/decisions/stability.py）。
+    rating_raw = str(final_state.get("final_rating_raw") or rating)
+    stability = final_state.get("rating_stability") or {}
+
     # 检查是否有错误
     error = final_state.get("error", "")
 
     result = {
         "fund_code": fund_code,
         "rating": rating,
+        "rating_raw": rating_raw,
+        "stability": stability,
         "confidence": confidence,
         "report_path": report_path,
         "report": report,
@@ -341,9 +348,10 @@ def analyze_single_fund(advisor, fund_code: str, analysis_date: str, mode: str =
         logger.error("基金 %s 分析失败: %s", fund_code, error)
     else:
         logger.info(
-            "基金 %s 分析完成: %s / %s (%.1f 秒)",
+            "基金 %s 分析完成: 生效 %s / 原始 %s / %s (%.1f 秒)",
             fund_code,
             rating,
+            rating_raw,
             confidence,
             elapsed,
         )
@@ -365,6 +373,7 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
         table.add_column("基金代码", style="cyan", justify="center")
         table.add_column("评级", justify="center")
         table.add_column("置信度", justify="center")
+        table.add_column("稳定性", justify="center", max_width=28)
         table.add_column("PE(TTM)", justify="right")
         table.add_column("股息率(参考)", justify="right")
         table.add_column("ERP", justify="right")
@@ -388,6 +397,16 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
             status = "失败" if r["error"] else "成功"
             status_display = f"[red]{status}[/]" if r["error"] else f"[green]{status}[/]"
 
+            # 稳定性标签：维持/待确认用黄色，确认变更与红线用洋红，便于一眼看出
+            stability = r.get("stability") or {}
+            stability_label = str(stability.get("label") or "")
+            stability_style = ""
+            if stability.get("held"):
+                stability_style = "[yellow]"
+            elif stability.get("changed") or stability.get("status") == "red_line":
+                stability_style = "[magenta]"
+            stability_display = f"{stability_style}{stability_label}[/]" if stability_style else stability_label
+
             # 估值指标
             m = fund_metrics.get(r["fund_code"], {})
             pe_str = _fmt_val(m.get("pe_ttm"))
@@ -398,6 +417,7 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
                 r["fund_code"],
                 rating_display,
                 r["confidence"],
+                stability_display,
                 pe_str,
                 div_str,
                 erp_str,
@@ -424,7 +444,7 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
         print(f"  IFA 每日基金分析汇总 — {analysis_date}")
         print(f"{'=' * 90}")
         print(
-            f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'PE(TTM)':>8} {'股息率(参考)':>8} {'ERP':>8} {'耗时':>8}  {'状态'}"
+            f"  {'基金代码':<10} {'评级':<15} {'置信度':<10} {'稳定性':<22} {'PE(TTM)':>8} {'股息率(参考)':>8} {'ERP':>8} {'耗时':>8}  {'状态'}"
         )
         print(f"  {'-' * 86}")
         for r in results:
@@ -433,8 +453,9 @@ def print_summary(results: list[dict], analysis_date: str, fund_metrics: dict[st
             pe_str = _fmt_val(m.get("pe_ttm"))
             div_str = _fmt_val(m.get("dividend_yield"), "%")
             erp_str = _fmt_erp(m.get("erp"), markup=False)
+            stability_label = str((r.get("stability") or {}).get("label") or "")
             print(
-                f"  {r['fund_code']:<10} {r['rating']:<15} {r['confidence']:<10} "
+                f"  {r['fund_code']:<10} {r['rating']:<15} {r['confidence']:<10} {stability_label:<22} "
                 f"{pe_str:>8} {div_str:>8} {erp_str:>8} {r['elapsed']:>7.1f}s  {status}"
             )
         print(f"{'=' * 90}")

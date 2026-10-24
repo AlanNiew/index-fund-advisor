@@ -272,7 +272,7 @@ def _fund_info_rows(
     fund_snapshots: Mapping[str, Mapping[str, Any]],
 ) -> tuple[list[str], list[list[str]]]:
     """核心参数表的表头与数据行（纯文本 / HTML 两个渲染器共用同一份数据）。"""
-    headers = ["基金代码", "基金名称", "净值(日期)", "日涨跌", "评级", "置信度", "耗时", "状态"]
+    headers = ["基金代码", "基金名称", "净值(日期)", "日涨跌", "评级", "置信度", "稳定性", "耗时", "状态"]
     rows: list[list[str]] = []
     for result in results:
         code = str(result.get("fund_code", ""))
@@ -285,11 +285,46 @@ def _fund_info_rows(
                 _format_change(snapshot.get("change_pct")),
                 str(result.get("rating", "N/A")),
                 str(result.get("confidence", "N/A")),
+                _stability_label(result),
                 f"{float(result.get('elapsed') or 0):.1f}s",
                 "失败" if result.get("error") else "成功",
             ]
         )
     return headers, rows
+
+
+def _stability_label(result: Mapping[str, Any]) -> str:
+    """表格里的稳定性短标签；没有稳定化信息时留空而不是编一个「正常」。"""
+    stability = result.get("stability") or {}
+    if not isinstance(stability, Mapping):
+        return ""
+    return str(stability.get("label") or "")
+
+
+def _stability_lines(results: Sequence[Mapping[str, Any]]) -> list[str]:
+    """「评级稳定性」小节：生效 vs 原始 + 本次是否触发生效。
+
+    稳定的定义是「单次判断不直接生效」，所以收件人必须能看到原始判断，
+    否则「评级一直没变」会被误读成「模型一直这么看」。
+    未做稳定化（disabled / 多基金跳过）时不产生噪音。
+    """
+    lines: list[str] = []
+    for result in results:
+        stability = result.get("stability") or {}
+        if not isinstance(stability, Mapping):
+            continue
+        status = str(stability.get("status") or "")
+        if not status or status in {"disabled", "skipped"}:
+            continue
+        code = str(result.get("fund_code", ""))
+        effective = str(stability.get("effective_rating") or result.get("rating") or "N/A")
+        raw_rating = str(stability.get("raw_rating") or result.get("rating_raw") or effective)
+        label = str(stability.get("label") or "")
+        if raw_rating != effective:
+            lines.append(f"- {code}: 生效 {effective}（原始 {raw_rating}）— {label}")
+        else:
+            lines.append(f"- {code}: {effective} — {label}")
+    return lines
 
 
 def _fund_info_table(
@@ -439,6 +474,16 @@ def _build_html_body(
         _html_table(*_fund_info_rows(results, fund_snapshots)),
     ]
 
+    stability_lines = _stability_lines(results)
+    if stability_lines:
+        items = "".join(f"<li>{html.escape(line.lstrip('- '))}</li>" for line in stability_lines)
+        parts += [
+            "<h3>评级稳定性</h3>",
+            f"<ul>{items}</ul>",
+            '<p style="color:#777;font-size:12px">'
+            "注: 生效评级须连续多次同向判断才变更（debounce），SELL 等红线评级立即生效。</p>",
+        ]
+
     valuation = _valuation_rows(results, fund_metrics)
     if valuation is not None:
         parts += [
@@ -490,7 +535,9 @@ def build_daily_report_email(
     """组装每日报告邮件，返回 (主题, 纯文本正文, HTML 正文, 附件路径列表)。
 
     results 的每一项形如
-    `{"fund_code", "rating", "confidence", "elapsed", "error", "report_path", "report"}`，
+    `{"fund_code", "rating", "rating_raw", "stability", "confidence", "elapsed",
+    "error", "report_path", "report"}`（rating 为生效评级，rating_raw 为当日原始判断，
+    stability 为 ifa.decisions.StabilityDecision.to_dict()），
     与 `scripts/daily_analysis.py` 的结果字典一致。两个正文版本都含摘要表与失败明细，
     区别是 HTML 版还会把 `report` 里的 Markdown 现场渲染成 HTML（体积超上限时显式省略并
     指向附件）；`report_path` 指定的 `.md` 文件始终是唯一权威版本。
@@ -516,6 +563,15 @@ def build_daily_report_email(
         "== 核心参数 ==",
         _fund_info_table(results, snapshots),
     ]
+
+    stability_lines = _stability_lines(results)
+    if stability_lines:
+        parts += [
+            "",
+            "== 评级稳定性 ==",
+            *stability_lines,
+            "注: 生效评级须连续多次同向判断才变更（debounce），SELL 等红线评级立即生效。",
+        ]
 
     valuation = _valuation_table(results, metrics)
     if valuation:

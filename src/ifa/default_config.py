@@ -23,6 +23,7 @@ _PATH_KEYS = {
     "data_tools_snapshot_dir",
     "agent_output_dir",
     "memory_dir",
+    "rating_history_dir",
 }
 
 
@@ -89,6 +90,16 @@ DEFAULT_CONFIG = {
     # BM25 情景记忆落盘目录（见 agents/memory.py）。此前记忆只存在于内存，
     # 正常分析流程中 get_memories() 恒为空——落盘后 Reflector 的经验才能真正跨会话复用。
     "memory_dir": os.path.join(LOCAL_DATA_DIR, "memory"),
+    # 评级稳定化的「上次生效评级」账本（见 decisions/history.py）。
+    # 与 memory_dir 同样属于本地状态：换机器不迁移，故不进用户配置文件。
+    "rating_history_dir": os.path.join(LOCAL_DATA_DIR, "ratings"),
+    # 评级稳定化：单次判断不直接生效，须连续 rating_stability_confirm_runs 次
+    # 同向出现才改（debounce）；SELL 等红线评级跳过确认立即生效。
+    # 依据：6 个交易日实测 25 个相邻日对里 11 次评级翻转（44%），其中 017641
+    # 每天 BUY/UNDERWEIGHT 交替——跨档阈值压不住，只能靠连续确认。
+    "rating_stability_enabled": True,
+    "rating_stability_confirm_runs": 2,
+    "rating_stability_history_max_entries": 120,
     "market_region": "cn_a",
     # ── LLM 配置 ──
     # 注：quick_think_llm 用于工具调用与结构化输出解析，是数据采集链路的根基。
@@ -169,6 +180,8 @@ _ENV_OVERRIDES: tuple[tuple[str, str], ...] = (
     ("IFA_DEEP_TIMEOUT", "deep_timeout"),
     ("IFA_LLM_MAX_RETRIES", "llm_max_retries"),
     ("IFA_ENABLE_DEBATE", "enable_debate"),
+    ("IFA_RATING_STABILITY", "rating_stability_enabled"),
+    ("IFA_RATING_CONFIRM_RUNS", "rating_stability_confirm_runs"),
     # 邮件通知：密码只走环境变量也能工作（不改任何文件即可在服务器上发信）
     ("IFA_SMTP_HOST", "smtp_host"),
     ("IFA_SMTP_PORT", "smtp_port"),
@@ -188,12 +201,14 @@ _INT_KEYS = {
     "max_risk_discuss_rounds",
     "max_recur_limit",
     "ohlcv_cache_ttl_seconds",
+    "rating_stability_confirm_runs",
+    "rating_stability_history_max_entries",
     "smtp_port",
     "smtp_timeout",
 }
 
 #: 布尔键：ifa config / 环境变量传字符串，必须归一成 bool（否则 "false" 是真值）。
-_BOOL_KEYS = {"enable_debate", "smtp_use_ssl"}
+_BOOL_KEYS = {"enable_debate", "rating_stability_enabled", "smtp_use_ssl"}
 _BOOL_TRUE = {"1", "true", "yes", "on"}
 _BOOL_FALSE = {"0", "false", "no", "off"}
 
@@ -353,6 +368,7 @@ def build_runtime_config() -> dict:
     runtime_config["data_tools_snapshot_dir"] = os.path.join(LOCAL_DATA_DIR, "data_tools", "snapshots")
     runtime_config["agent_output_dir"] = os.path.join(LOCAL_DATA_DIR, "agents")
     runtime_config["memory_dir"] = os.path.join(LOCAL_DATA_DIR, "memory")
+    runtime_config["rating_history_dir"] = os.path.join(LOCAL_DATA_DIR, "ratings")
     _normalize_backend_url(runtime_config)
     validate_config(runtime_config)
     return runtime_config

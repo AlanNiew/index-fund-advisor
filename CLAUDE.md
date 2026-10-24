@@ -24,6 +24,7 @@ ifa tools                                # 列出全部数据工具与参数（3
 ifa tool get_index_valuation -p index_name=沪深300   # 直接调用一个数据工具
 ifa skill                                # 把内置 skill 安装到用户级目录（任意项目可用）
 python scripts/daily_analysis.py --email  # 批量分析 + 邮件报告（HTML 摘要正文 + .md 附件；cron 定时用；--mode deep_simple 跳过辩论）
+python scripts/settle_ratings.py     # 用已有分析日志结算评级（零重跑、不调 LLM；A/B 对照生效 vs 原始评级）
 
 # Web 界面
 ifa-web    # 启动 Streamlit（内部通过 subprocess 调用 streamlit run web/app.py）
@@ -35,7 +36,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（969 个，覆盖 40 个模块）
+pytest                # 全部测试（1027 个，覆盖 42 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -83,6 +84,10 @@ CLI / Web / API 三个接口层共用四个函数：
   - `propagation.py` — 状态初始化 (`Propagator`) 和图传播参数
   - `reflection.py` — 决策反思模块 (`Reflector`)，基于实际收益更新记忆
   - `signal_processing.py` — 信号处理 (`SignalProcessor`)。`parse_decision_signals()` 先做**确定性正则解析**（管理层裁决/最终报告里机器可读的 `Rating: X` / `Confidence: Y` 行，零 LLM 调用），解析不到才回退到 LLM 抽取；两条路径都经 `_normalize_rating()` / `_normalize_confidence()` 校验 + 模糊匹配，非法值 fallback 到 `HOLD` / `Medium`。合法评级固定 5 级：`STRONG_BUY / BUY / HOLD / UNDERWEIGHT / SELL`（`REDEEM` 之类的词不在词表内）
+- **决策层** (`src/ifa/decisions/`) — 报告之后、交付之前的评级稳定化（去抖），纯函数 + 落盘历史，不调 LLM
+  - `stability.py` 的 `decide()`：原始评级与生效评级不同时要求**连续 `confirm_runs`（默认 2）次同向**才改口，未达门槛维持生效评级并记「待确认 N/M」；`SELL` 属硬红线**跳过确认立即生效**；无历史时直接采用原始评级；非法评级原样透传（不改写、不猜）
+  - `history.py` 的 `RatingHistoryStore`：每只基金一个 `{rating_history_dir}/{code}.json`，**同一天重复跑替换当天那条**（追加会让「连跑两次」冒充「连续两天同向」），`directory=None` 即不落盘（单元测试无副作用），读失败按「无历史」降级
+  - 为什么不用「跨 2 档才允许改」的阈值：BUY 与 UNDERWEIGHT 在 5 级词表里本就相差 2 档，压不住逐日交替；也不用置信度做闸门 —— 实测 30 次评级 29 次是 Medium，目前无区分度
 - **数据工具层** (`src/ifa/data_tools/`) — 声明式注册表模式
   - `builtin.py` 定义 `_TOOL_SPECS` 列表（39 个工具的 name/handler/description 三元组），`create_default_data_tool_registry()` 一次性注册
   - `search_funds`（`search_funds_tool`）在**完整**基金列表上过滤：CLI / REST / MCP 的搜索必须走它，`get_fund_list()` 只返回前 30 行，**不能**用于搜索
@@ -100,7 +105,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **接口层** — `src/ifa/cli/`（Typer，作为 `ifa` 包子模块；`tools_cmd.py` 提供 `tools` / `tool` / `skill` 三个不经过 LLM 的命令）、`web/`（Streamlit 多页应用，含 Plotly 图表）、`api/`（FastAPI 异步任务 + API Key 认证）
 - **内置 skill** (`src/ifa/skills/fund.md`) — 随包分发（`pyproject.toml` 的 `[tool.setuptools.package-data]`），`ifa skill` 装到 `~/.claude/skills/`。文件里的工具表由 `ifa tools --markdown` 在 BEGIN/END 标记之间生成，**不要手写**；`tests/test_skill_doc.py` 校验它覆盖全部工具且不含 `cd` / `python -c`
 - **环境加载** (`src/ifa/env_loader.py`) — `user_config_dir()`（`IFA_CONFIG_DIR` → `%APPDATA%\ifa` → `~/.config/ifa`）与 `load_env_files()`（工作目录向上 6 层 + 用户级 `.env`，`override=False`）。四个入口都用它取代裸 `load_dotenv()`：否则全局安装后从任意目录启动会读不到 Key，报错却是 "Missing credentials"
-- **回测引擎** (`src/ifa/backtest/`) — 买入-持有（**只支持一次性投资，不定投**）策略回测。`engine.py` 的 `run_backtest()` 输出价格口径与投资者口径两套收益、真实无风险利率（中债 10 年期国债，取不到才退 2%）、最大回撤、Sharpe、月度收益与净值曲线；`fees.py` 解析真实申赎费率并显式建模交易成本（管理费/托管费已含在净值里，**绝不重复扣**）；`rating_validator.py` 做评级 vs 实际收益验证，`rating_stats.py` 是纯统计层（多视界/超额/rank IC/分档/置信度校准），`benchmarks.py` 逐基金解析基准指数
+- **回测引擎** (`src/ifa/backtest/`) — 买入-持有（**只支持一次性投资，不定投**）策略回测。`engine.py` 的 `run_backtest()` 输出价格口径与投资者口径两套收益、真实无风险利率（中债 10 年期国债，取不到才退 2%）、最大回撤、Sharpe、月度收益与净值曲线；`fees.py` 解析真实申赎费率并显式建模交易成本（管理费/托管费已含在净值里，**绝不重复扣**）；`rating_validator.py` 做评级 vs 实际收益验证，`rating_stats.py` 是纯统计层（多视界/超额/rank IC/分档/置信度校准），`benchmarks.py` 逐基金解析基准指数；`settlement.py` 读**已有分析日志**做评级结算（零重跑：不调 LLM、只取价格，生效 vs 原始两套口径 A/B 对照，前向收益按 `(基金, 日期, 视界)` 缓存且只缓存已到期视界）
 - **可观测性** (`src/ifa/observability/`) — 轻量级 per-request tracing，`RequestTracer` 自动追踪 `AdvisorGraph.run()` 执行，日志保存到 `results/traces/`
 - **组合模型** (`src/ifa/portfolio/`) — `RiskProfile` 数据模型（4 种风险偏好）+ 资产配置策略描述 + `weights.py`（权重的确定性解析与校验）+ `analytics.py`（相关性/协方差/风险贡献，从真实历史序列计算）
 
@@ -138,17 +143,25 @@ CLI / Web / API 三个接口层共用四个函数：
 - 每次运行自动保存结构化 JSON 日志到 `results/{fund_codes}/ifa_logs/state_log_{date}_{mode}.json`
 - 日志包含完整的分析报告、辩论历史、裁决结果
 
+### 评级稳定化与结算
+
+- `AdvisorGraph.run()` 在信号解析之后调 `_apply_rating_stability()`：生效评级仍写 `final_rating`（报告 / 邮件 / 日志都用它），原始评级写 `final_rating_raw`，判定细节写 `rating_stability`（`status` / `reason` / `pending_days` / `label`）；`run(..., stabilize=False)` 可单次关闭（历史回放类调用用它）
+- 关闭方式：`IFA_RATING_STABILITY=false` 或 `ifa config rating_stability_enabled false`；连续确认次数 `IFA_RATING_CONFIRM_RUNS` / `rating_stability_confirm_runs`（默认 2，最小 1）
+- 评级历史落盘在 `rating_history_dir`（默认 `local_data/ratings`，属于 `_PATH_KEYS`，不写用户配置文件）；**同一交易日重复跑覆盖当天记录**，判定时 `as_of_date` 只取更早记录
+- 结算：`scripts/settle_ratings.py` 读 `results/logs/**/*.json`（字段 `final_rating` / `final_rating_raw` / `rating_stability`）算事后收益，输出 `results/validation/settled_{date}.md|json`；**不调用 LLM**，未到期视界计入 `immature_n` 而不混入统计，报告首段声明「两套口径的差异只说明稳定化改变了什么，不证明变好或变坏」
+
 ### 配置系统
 
 - `src/ifa/default_config.py` — 默认配置 + `build_runtime_config()` 运行时配置构建；提供方清单来自 `src/ifa/providers.py`
 - 优先级：**环境变量 > 用户配置文件 > DEFAULT_CONFIG**（`build_runtime_config()` 依次 deepcopy → `load_last_config()` → `_env_overrides()` → 重算路径键 → 端点归一化 → `validate_config()`）
 - `ifa config <key> <value>` 真正落盘：`set_user_config()` / `unset_user_config()` 原子写用户配置文件（`IFA_CONFIG_DIR` → Windows `%APPDATA%\ifa\config.json`，否则 `~/.config/ifa/config.json`）；`save_last_config()` 写同一文件。可配置项 = `CONFIGURABLE_KEYS`（DEFAULT_CONFIG 中非路径键、非字典键）；旧版 `src/ifa/last_config.py` 仅只读兼容
-- 环境变量覆盖表 `_ENV_OVERRIDES`：`IFA_LLM_PROVIDER` / `IFA_DEEP_LLM` / `IFA_QUICK_LLM` / `IFA_BACKEND_URL` / `IFA_CUSTOM_API_KEY` / `IFA_ANALYSIS_MODE` / `IFA_AZURE_API_VERSION` / `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` / `IFA_LLM_MAX_RETRIES` / `IFA_DATA_SOURCE_TIMEOUT` / `IFA_ENABLE_DEBATE` / `IFA_SMTP_HOST` / `IFA_SMTP_PORT` / `IFA_SMTP_USER` / `IFA_SMTP_PASSWORD` / `IFA_SMTP_SENDER` / `IFA_EMAIL_TO` / `IFA_SMTP_USE_SSL` / `IFA_SMTP_TIMEOUT`（空白值视为未设置；整型/布尔键经 `_coerce_config_value` 转换，非法值抛 `ValueError`）
+- 环境变量覆盖表 `_ENV_OVERRIDES`：`IFA_LLM_PROVIDER` / `IFA_DEEP_LLM` / `IFA_QUICK_LLM` / `IFA_BACKEND_URL` / `IFA_CUSTOM_API_KEY` / `IFA_ANALYSIS_MODE` / `IFA_AZURE_API_VERSION` / `IFA_TIMEOUT` / `IFA_DEEP_TIMEOUT` / `IFA_LLM_MAX_RETRIES` / `IFA_DATA_SOURCE_TIMEOUT` / `IFA_ENABLE_DEBATE` / `IFA_RATING_STABILITY` / `IFA_RATING_CONFIRM_RUNS` / `IFA_SMTP_HOST` / `IFA_SMTP_PORT` / `IFA_SMTP_USER` / `IFA_SMTP_PASSWORD` / `IFA_SMTP_SENDER` / `IFA_EMAIL_TO` / `IFA_SMTP_USE_SSL` / `IFA_SMTP_TIMEOUT`（空白值视为未设置；整型/布尔键经 `_coerce_config_value` 转换，非法值抛 `ValueError`）
 - `backend_url` 归一化：残留的**别家**内置端点（历史漂移：provider=deepseek 却指向智谱）会被重置为所选提供方默认端点，用户自定义地址保留；`custom` 且地址为空时 `validate_config` 报错
 - 环境变量 `.env` 存放 API Key（参考 `.env.example`，支持 OPENCODE/OPENAI/AZURE/ANTHROPIC/GOOGLE/ZHIPUAI/DEEPSEEK/QWEN/XAI/OPENROUTER）。加载走 `ifa.env_loader.load_env_files()`：**工作目录向上 6 层优先，其次用户级 `.env`**（`IFA_CONFIG_DIR` → `%APPDATA%\ifa\.env` / `~/.config/ifa/.env`），`override=False` 故先加载者生效 —— `uv tool install` 的全局 CLI 与 MCP server 因此在任意 CWD 都能拿到 Key
 - 邮件通知配置：`smtp_host` / `smtp_port` / `smtp_user` / `smtp_password` / `smtp_sender` / `smtp_recipients` / `smtp_use_ssl` / `smtp_timeout`；`host` / `recipients` / `sender` 缺一不可，缺项抛 `EmailConfigError`（`smtp_port` / `smtp_use_ssl` / `smtp_timeout` 有默认值，不算「配过」的证据）。密码推荐只走 `IFA_SMTP_PASSWORD`，避免明文落进 `config.json`
 - `IFA_LOCAL_DATA_DIR` 可覆盖本地数据目录
 - 记忆落盘目录：`memory_dir`（默认 `local_data/memory`，随 `IFA_LOCAL_DATA_DIR` 变化；属于 `_PATH_KEYS`，不会被写入用户配置文件）
+- 评级稳定化：`rating_stability_enabled`（默认 `True`）、`rating_stability_confirm_runs`（默认 2）、`rating_stability_history_max_entries`（默认 120）、`rating_history_dir`（路径键，默认 `local_data/ratings`）；生效评级与原始评级同时保留，供结算脚本做 A/B 对照
 - 辩论相关配置：`enable_debate`（开关）、`max_debate_rounds`（研究辩论轮数，默认 1）、`max_risk_discuss_rounds`（风险辩论轮数，默认 2）
 - 延迟预算：`timeout`（quick 档 LLM 超时，默认 120 秒）、`deep_timeout`（deep 档——报告生成/裁决——默认 180 秒）、`llm_max_retries`（重试次数，默认 2，即最多 3 次尝试）。依据：2026-10 实测 510300 的 deep 运行 wall 30.4 分钟、**98.5% 花在等 LLM**，其中多个请求拖到 180 秒超时后重试；但合法成功调用最长也到过 119 秒，所以不能一刀切收紧到 60–90 秒
 
@@ -189,6 +202,8 @@ CLI / Web / API 三个接口层共用四个函数：
 - **股息率必须用指数自身口径** — `fetch_index_dividend_yield()` 走中证指数官方 `stock_zh_index_value_csindex`（列名被上游固定重命名为 `市盈率1/2`、`股息率1/2`，须先按日期取最新、忽略倒序与表头 NaN 行），`dividend_yield_source` 记录来源（如 `csindex:000300`）；未登记的指数返回 `available=False`，**绝不退回全市场 `stock_a_gxl_lg` 顶替**（历史上 5 只基金全显 2.73% 就是这么来的）。全市场值只作 `dividend_yield_reference` 参考
 - **回测必须标明价格口径与费用假设** — ETF 走前复权价、公募基金优先取「累计净值走势」（分红再投已计入；单位净值会把分红记成亏损），且**不再截断历史**（旧实现 `tail(120)` 把三年回测压成半年）；**发生过份额折算的基金**（如 161725）累计净值会一步跳变、不再可比，`cum_nav_is_comparable()` 检测到后改用前复权价（再退单位净值并显式标注），避免把折算当成收益。另外部分 ETF 联接/LOF 会被资产类型判定误分类成 STOCK（实测 000834），`_fetch_price_data` 对未知类型兜底走基金净值路径而不是返回空数据。价格口径（可与指数基准直接比较）与投资者口径（扣申购费/赎回费/券商佣金）同时给出，差额即费用拖累；管理费/托管费只作说明，**不从净值里再扣一次**。取不到费率时用保守默认值（申购 0.15% / 赎回 0.50% / 佣金 0.03% 单边）并写进 `notes`，绝不静默按 0 计；`ifa backtest --no-fees` 可回到纯价格口径
 - **评级验证必须看超额、多视界、逐基金基准** — 绝对命中率主要反映 beta，可证伪的是**超额命中率**；每个视界（默认 20/60/120 交易日）各自取数，**只有主视界允许回退到扁平字段**（60 日收益绝不许冒充 120 日）；基准逐基金解析（显式 override > 基金名识别 > 回退沪深300 并写清原因），报告里列明回退条数；另给 rank IC、5 档分档平均超额、单调性、置信度分档校准。多视界/多指标属多重比较，**只有主视界可当确认性结论**（免责声明里写明）
+- **评级不能跟着单日辩论改口（稳定化闸门）** — 实测 25 个相邻日对里 11 次（44%）翻转，其中一只基金逐日交替 BUY/UNDERWEIGHT。`decide()` 要求连续 `confirm_runs`（默认 2）次同向才改生效评级，`SELL` 硬红线立即生效；**历史必须同一天覆盖而不是追加**，否则「连跑两次」会被算成「连续两次同向」；判定要传 `as_of_date` 以排除当天记录。生效评级写 `final_rating`、原始评级写 `final_rating_raw`，**不要只保留一个**（否则无法结算 A/B）
+- **结算脚本不许重跑分析** — `settlement.py` 只读已有日志 + 取事后价格：不调 LLM（重跑会把「当时的判断」污染成「现在的判断」），未到期视界计入 `immature_n` 而不是当作 0 收益，两条口径（生效 / 原始）共用同一套价格取数
 - **Analyst 报告 fallback** — 当 Agent 有 tool_calls 但同时返回文本内容时，使用文本内容作为报告
 
 ### 关键约定
@@ -200,5 +215,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：969 个测试覆盖 40 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py` 等）
-- 优化路线图见 `TODO.md`：P0-P3 全部完成
+- 测试：1027 个测试覆盖 42 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py`、决策稳定化 `test_rating_stability.py` / 结算 `test_settlement.py` 等）
+- 优化路线图见 `TODO.md`：第一~三轮（P0–P3 / S1–S7 / R1–R7）已完成；第四轮「判断质量」P-A（评级稳定化）、P-B（评级结算）已完成，P-C/P-D/P-E 待做

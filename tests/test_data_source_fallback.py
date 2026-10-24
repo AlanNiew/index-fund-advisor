@@ -11,6 +11,8 @@
 - 东财正常但确实无数据时，仍保持「未找到」语义。
 """
 
+from types import SimpleNamespace
+
 import akshare as ak
 import pandas as pd
 import pytest
@@ -210,3 +212,85 @@ class TestSeriesFallback:
     def test_index_close_series_degrades_when_all_sources_fail(self, monkeypatch):
         _patch_sources(monkeypatch, eastmoney=RuntimeError("em down"), sina=RuntimeError("sina down"))
         assert ix._index_close_series("000300", "2024-01-01", "2024-03-01") is None
+
+
+class TestEastmoneyBreaker:
+    """东财熔断：机房 IP 上东财 100% 失败且每次要重试 3 次（索引约 17s）。
+
+    没有熔断时，一个结算批次几百次取价几乎全在等超时；熔断后连续失败即暂时跳过东财，
+    冷却窗口过后再给东财一次机会（避免把「临时抖动」永久当作「不可用」）。
+    """
+
+    def test_breaker_opens_after_threshold_and_skips_eastmoney(self, monkeypatch):
+        calls = _patch_sources(monkeypatch, eastmoney=ConnectionError("blocked"), tencent=_TX.copy())
+        for _ in range(3):
+            _frame, source = ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+            assert source == ix._SOURCE_TENCENT
+        names = [name for name, _ in calls]
+        # 第三次不再打东财（省掉 3 次重试的等待），但备用源每次都照取
+        assert names.count("fund_etf_hist_em") == ix._EASTMONEY_FAILURE_THRESHOLD
+        assert names.count("stock_zh_a_hist_tx") == 3
+        assert ix.eastmoney_breaker_open() is True
+
+    def test_success_resets_consecutive_failures(self, monkeypatch):
+        _patch_sources(monkeypatch, eastmoney=ConnectionError("blocked"), tencent=_TX.copy())
+        ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        assert ix._eastmoney_consecutive_failures == 1
+        assert ix.eastmoney_breaker_open() is False
+
+        calls = _patch_sources(monkeypatch, eastmoney=_OHLCV.copy())
+        _frame, source = ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        assert source == ix._SOURCE_EASTMONEY
+        assert ix._eastmoney_consecutive_failures == 0
+        assert ix.eastmoney_breaker_open() is False
+        assert [name for name, _ in calls] == ["fund_etf_hist_em"]
+
+    def test_cooldown_expiry_retries_eastmoney(self, monkeypatch):
+        _patch_sources(monkeypatch, eastmoney=ConnectionError("blocked"), tencent=_TX.copy())
+        for _ in range(2):
+            ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        assert ix.eastmoney_breaker_open() is True
+
+        # 用假的 monotonic 跳过冷却窗口，避免真的等 5 分钟
+        blocked_until = ix._eastmoney_blocked_until
+        monkeypatch.setattr(ix, "time", SimpleNamespace(monotonic=lambda: blocked_until + 1.0))
+        assert ix.eastmoney_breaker_open() is False
+        calls = _patch_sources(monkeypatch, eastmoney=_OHLCV.copy())
+        _frame, source = ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        assert source == ix._SOURCE_EASTMONEY
+        assert [name for name, _ in calls] == ["fund_etf_hist_em"]
+
+    def test_breaker_open_with_both_sources_down_reports_both_reasons(self, monkeypatch):
+        _patch_sources(monkeypatch, eastmoney=ConnectionError("blocked"), tencent=RuntimeError("tx down"))
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        with pytest.raises(RuntimeError) as excinfo:
+            ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        text = str(excinfo.value)
+        # 熔断跳过东财时，也要把「跳过」和备用源失败两段原因都写清楚
+        assert "熔断" in text
+        assert "腾讯前复权日线" in text
+        assert "tx down" in text
+
+    def test_empty_eastmoney_response_keeps_not_found_semantics(self, monkeypatch):
+        calls = _patch_sources(monkeypatch, eastmoney=pd.DataFrame())
+        frame, source = ix.fetch_etf_hist_frame("510300", "2024-01-01", "2024-03-01")
+        assert source == ix._SOURCE_NONE
+        assert frame.empty
+        # 东财正常应答（只是没数据）不算失败：不累计失败数、不开熔断，
+        # 否则「无数据」会被误判成「数据源挂了」，把查无此项变成报错。
+        assert ix._eastmoney_consecutive_failures == 0
+        assert ix.eastmoney_breaker_open() is False
+        # 东财空数据仍会给备用源一次机会（可能是东财区间口径或部分节点异常）
+        names = [name for name, _ in calls]
+        assert names[0] == "fund_etf_hist_em"
+        assert "stock_zh_a_hist_tx" in names
+
+    def test_index_path_shares_the_same_breaker(self, monkeypatch):
+        calls = _patch_sources(monkeypatch, eastmoney=RuntimeError("blocked"), sina=_SINA.copy())
+        for _ in range(3):
+            _frame, source = ix.fetch_index_hist_frame("000300", "2024-01-01", "2024-03-01")
+            assert source == ix._SOURCE_SINA
+        assert ix.eastmoney_breaker_open() is True
+        assert [name for name, _ in calls].count("index_zh_a_hist") == ix._EASTMONEY_FAILURE_THRESHOLD

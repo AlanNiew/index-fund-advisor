@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -48,6 +49,55 @@ _SOURCE_TENCENT = "tencent"
 _SOURCE_SINA = "sina"
 _SOURCE_NONE = "none"
 
+# 东财熔断：该接口在机房 IP 上 100% 失败，每次失败要重试 3 次（ETF 约 4s、指数约 17s），
+# 而一个结算批次会取几百次价 —— 不做熔断的话时间几乎全花在等超时上。
+# 连续失败达到阈值后，短时窗口内直接走备用源；窗口过后再给东财一次机会（可能已恢复）。
+_EASTMONEY_FAILURE_THRESHOLD = 2
+_EASTMONEY_COOLDOWN_SECONDS = 300.0
+
+_eastmoney_consecutive_failures = 0
+_eastmoney_blocked_until = 0.0
+
+
+def eastmoney_breaker_open() -> bool:
+    """东财行情熔断是否打开（打开时跳过东财，直接用备用源）。"""
+    return time.monotonic() < _eastmoney_blocked_until
+
+
+def reset_eastmoney_breaker() -> None:
+    """清空熔断状态（测试用；长驻进程也可手动恢复）。"""
+    global _eastmoney_consecutive_failures, _eastmoney_blocked_until
+    _eastmoney_consecutive_failures = 0
+    _eastmoney_blocked_until = 0.0
+
+
+def _record_eastmoney_result(ok: bool) -> None:
+    """记录一次东财取数结果：成功即清零，连续失败达阈值则打开熔断窗口。"""
+    global _eastmoney_consecutive_failures, _eastmoney_blocked_until
+    if ok:
+        _eastmoney_consecutive_failures = 0
+        _eastmoney_blocked_until = 0.0
+        return
+    _eastmoney_consecutive_failures += 1
+    if _eastmoney_consecutive_failures >= _EASTMONEY_FAILURE_THRESHOLD:
+        _eastmoney_blocked_until = time.monotonic() + _EASTMONEY_COOLDOWN_SECONDS
+
+
+def _fetch_eastmoney_frame(func: Any, **kwargs: Any) -> tuple[pd.DataFrame | None, str]:
+    """取一次东财行情帧，附带失败原因。
+
+    frame 非 None 表示东财正常应答（可能为空表，空表交由调用方判「未找到」）；
+    reason 非空表示这次没拿到应答（接口异常，或熔断直接跳过）。
+    """
+    if eastmoney_breaker_open():
+        return None, "东财熔断中（连续失败，暂时直接走备用源）"
+    try:
+        frame = _call_akshare_api(func, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        _record_eastmoney_result(False)
+        return None, f"东财 {type(exc).__name__}: {exc}"
+    _record_eastmoney_result(True)
+    return frame, ""
 
 def market_prefixed_code(symbol: str, *, is_index: bool) -> str:
     """转成新浪/腾讯行情接口需要的「市场前缀 + 6 位代码」（如 sh510300 / sz159919）。
@@ -153,20 +203,16 @@ def fetch_etf_hist_frame(symbol: str, start_date: str, end_date: str) -> tuple[p
     东财异常且回退也拿不到数据 → 抛 RuntimeError，避免把「数据源全挂」误报成「查无数据」。
     """
     errors: list[str] = []
-    eastmoney_failed = False
-    try:
-        frame = _call_akshare_api(
-            ak.fund_etf_hist_em,
-            symbol=safe_plain_code(symbol),
-            period="daily",
-            start_date=format_date_for_api(start_date),
-            end_date=format_date_for_api(end_date),
-            adjust="qfq",
-        )
-    except Exception as exc:  # noqa: BLE001
-        eastmoney_failed = True
-        errors.append(f"东财 {type(exc).__name__}: {exc}")
-        frame = None
+    frame, em_reason = _fetch_eastmoney_frame(
+        ak.fund_etf_hist_em,
+        symbol=safe_plain_code(symbol),
+        period="daily",
+        start_date=format_date_for_api(start_date),
+        end_date=format_date_for_api(end_date),
+        adjust="qfq",
+    )
+    if em_reason:
+        errors.append(em_reason)
     if frame is not None and not frame.empty:
         return frame, _SOURCE_EASTMONEY
 
@@ -174,7 +220,7 @@ def fetch_etf_hist_frame(symbol: str, start_date: str, end_date: str) -> tuple[p
     if fallback is not None and not fallback.empty:
         return fallback, _SOURCE_TENCENT
     errors.append(f"腾讯前复权日线: {reason}")
-    if eastmoney_failed:
+    if em_reason:
         raise RuntimeError("；".join(errors))
     return pd.DataFrame(), _SOURCE_NONE
 
@@ -185,19 +231,15 @@ def fetch_index_hist_frame(symbol: str, start_date: str, end_date: str) -> tuple
     返回 (行情表, 来源)，语义与 fetch_etf_hist_frame 一致。
     """
     errors: list[str] = []
-    eastmoney_failed = False
-    try:
-        frame = _call_akshare_api(
-            ak.index_zh_a_hist,
-            symbol=safe_plain_code(symbol),
-            period="daily",
-            start_date=format_date_for_api(start_date),
-            end_date=format_date_for_api(end_date),
-        )
-    except Exception as exc:  # noqa: BLE001
-        eastmoney_failed = True
-        errors.append(f"东财 {type(exc).__name__}: {exc}")
-        frame = None
+    frame, em_reason = _fetch_eastmoney_frame(
+        ak.index_zh_a_hist,
+        symbol=safe_plain_code(symbol),
+        period="daily",
+        start_date=format_date_for_api(start_date),
+        end_date=format_date_for_api(end_date),
+    )
+    if em_reason:
+        errors.append(em_reason)
     if frame is not None and not frame.empty:
         return frame, _SOURCE_EASTMONEY
 
@@ -205,7 +247,7 @@ def fetch_index_hist_frame(symbol: str, start_date: str, end_date: str) -> tuple
     if fallback is not None and not fallback.empty:
         return fallback, _SOURCE_SINA
     errors.append(f"新浪指数日线: {reason}")
-    if eastmoney_failed:
+    if em_reason:
         raise RuntimeError("；".join(errors))
     return pd.DataFrame(), _SOURCE_NONE
 

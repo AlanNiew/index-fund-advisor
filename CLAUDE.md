@@ -36,7 +36,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000
 ruff check .          # lint
 ruff format .         # 格式化
 mypy src              # 类型检查
-pytest                # 全部测试（1049 个，覆盖 43 个模块）
+pytest                # 全部测试（1055 个，覆盖 43 个模块）
 pytest tests/test_core.py::TestBacktestEngine::test_max_drawdown   # 运行单个测试
 pytest -x             # 遇到第一个失败即停止
 ```
@@ -96,7 +96,7 @@ CLI / Web / API 三个接口层共用四个函数：
 - **数据流层** (`src/ifa/dataflows/`) — AkShare API 封装，含重试逻辑和资产类型自动检测
   - `data_cleaning.py` — 统一清洗管道（`clean_dataframe`: datetime 解析 → 类型转换 → ffill/bfill）和报告截断（`truncate_report`）
   - **市场指标（P2）**：`get_etf_premium_discount()` 用东财场内行情算折溢价率（**溢价率 = -「基金折价率」列**，该列是折价口径；缺列时退到 `最新价 / IOPV实时估值 - 1`），|溢价率| ≥ 1% 会告警；`get_tracking_error()` 算年化 TE/TD/日均绝对偏离/相关系数，指数代码留空时按基金名识别，识别不到**明确报错而不是拿别的指数顶替**（纳指/标普等海外指数没有 A 股行情数据源）；`get_fx_rate()` 取中国银行牌价，窗口限 5~90 天（该接口按月循环请求），区间变动以「中行折算价」为准（央行中间价周末为空，只作参考）
-  - **行情源回退（机房 IP 必需）**：东财的 `push2his` / `push2` / `push2delay` 行情域名对机房 IP 有限流/封锁（2026-10 实测华为云：TLS 握手成功后立即断连，curl 报 52 Empty reply / requests 报 RemoteDisconnected；同机腾讯、新浪正常，家宽 IP 访问东财正常）。所以 `a_share_index_fund.py` 的 `fetch_etf_hist_frame()` / `fetch_index_hist_frame()` 统一「东财优先 + 回退」：ETF 回退腾讯前复权日线 `stock_zh_a_hist_tx`（与东财 qfq 逐日 diff 0.0000%），指数回退新浪 `stock_zh_index_daily`（价格指数口径）。契约：东财正常但无数据 → 仍是「未找到」；东财异常且回退也无数据 → 抛错并把**两段原因**都拼进「数据源访问失败」；回退生效时输出头加 `# Source:` 且不含成交量/成交额（单位与东财不同）。**不要**拿 `fund_etf_hist_sina` 当 ETF 回退源（不复权，510300 上偏差 21.66%）
+  - **行情源回退（机房 IP 必需）**：东财的 `push2his` / `push2` / `push2delay` 行情域名对机房 IP 有限流/封锁（2026-10 实测华为云：TLS 握手成功后立即断连，curl 报 52 Empty reply / requests 报 RemoteDisconnected；同机腾讯、新浪正常，家宽 IP 访问东财正常）。所以 `a_share_index_fund.py` 的 `fetch_etf_hist_frame()` / `fetch_index_hist_frame()` 统一「东财优先 + 回退」：ETF 回退腾讯前复权日线 `stock_zh_a_hist_tx`（与东财 qfq 逐日 diff 0.0000%），指数回退新浪 `stock_zh_index_daily`（价格指数口径）。契约：东财正常但无数据 → 仍是「未找到」；东财异常且回退也无数据 → 抛错并把**两段原因**都拼进「数据源访问失败」；回退生效时输出头加 `# Source:` 且不含成交量/成交额（单位与东财不同）。**不要**拿 `fund_etf_hist_sina` 当 ETF 回退源（不复权，510300 上偏差 21.66%）。另有**东财熔断**（`_EASTMONEY_FAILURE_THRESHOLD = 2` / `_EASTMONEY_COOLDOWN_SECONDS = 300`）：连续 2 次失败后 5 分钟内直接走备用源、不再重试东财，`eastmoney_breaker_open()` 可查状态、`reset_eastmoney_breaker()` 可清零（`tests/conftest.py` 每例自动清零）；熔断只省时延，不改上述三条契约
   - **数据源能力边界（易踩）**：ETF 基本信息（`get_fund_basic_info` / `get_etf_fund_info`）必须走东财场内行情表 `fund_etf_fund_daily_em` —— 蛋卷 `fund_individual_basic_info_xq` 只有场外基金库，对 510300 直接 `KeyError: 'data'`；`fund_etf_fund_info_em` 是上游坏接口（14/13 列长度不匹配，默认日期区间下要跑约 2 分钟才失败）。中证成分股（`get_index_constituents*`）按**指数代码**寻址，ETF 代码（510300）与深证指数代码（399006）在该站点返回 404（响应体是 JPEG，pandas 只报 "Excel file format cannot be determined"），故取数失败时抛带可操作说明的 `ValueError`，原始异常留在 `__cause__`
 - **LLM 客户端层** (`src/ifa/llm_clients/`) — 工厂模式（`create_llm_client`），`OpenAIClient` 统一兼容 OpenAI 协议的多个提供方（openai/azure/ollama/openrouter/xai/qwen/zhipu/deepseek/opencode/**custom**），另有 Anthropic/Google 独立客户端
   - 提供方清单是单一事实来源：`src/ifa/providers.py` 的 `PROVIDER_CONFIG`（base_url / api_key_env / 展示名）与 `OPENAI_COMPATIBLE_PROVIDERS`。该模块**零依赖**且位于包顶层，`default_config` 只能从它取提供方信息 —— 若放进 `llm_clients/` 会让 `ifa config` / `search` / `info` 连带拉起 langchain 全栈
@@ -216,5 +216,5 @@ CLI / Web / API 三个接口层共用四个函数：
 - 内部语言为英文（辩论 Agent 始终用英文以确保推理质量），最终输出由配置决定（默认中文）
 - Ruff 规则：忽略 E501（行长度）、F403/F405（星号导入）、E402（模块级导入顺序）
 - `isort.known-first-party`：`["ifa", "api", "web"]`
-- 测试：1049 个测试覆盖 43 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py`、决策稳定化 `test_rating_stability.py` / 结算 `test_settlement.py` 等）
+- 测试：1055 个测试覆盖 43 个模块（数据层 `test_public_fund_data.py` / `test_index_fund_data.py` / `test_macro_data.py`、图与状态 `test_core.py` / `test_advisor_graph.py`、接口 `test_api_and_thread_safety.py`、回测与验证 `test_backtest_fees.py` / `test_rating_stats.py` / `test_benchmarks.py` / `test_rating_validator.py`、组合 `test_portfolio_weights.py` / `test_portfolio_analytics.py`、通知 `test_notify_email.py` / `test_markdown.py`、决策稳定化 `test_rating_stability.py` / 结算 `test_settlement.py` 等）
 - 优化路线图见 `TODO.md`：第一~三轮（P0–P3 / S1–S7 / R1–R7）已完成；第四轮「判断质量」P-A（评级稳定化）、P-B（评级结算）已完成，P-C/P-D/P-E 待做
